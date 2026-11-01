@@ -8,7 +8,11 @@ window.ShiguangGalaxyMenu=function(player,touch,log){
  function clean(x,gal){if(!x||typeof x!=="object")return null;var v={name:String(x.name||"未命名").slice(0,32),x:valid(x.x)?x.x:null,y:valid(x.y)?x.y:null};if(gal)v.planets=Array.isArray(x.planets)?x.planets.slice(0,60).map(function(p){return clean(p,false);}).filter(Boolean):[];return v;}
  groups=defaults();
  try{var d=JSON.parse(localStorage.getItem(key)||"null");if(d&&Array.isArray(d.groups)&&d.groups.length&&d.groups.length<=60){groups=d.groups.map(function(p){return clean(p,true);}).filter(Boolean);if(!groups.length)groups=defaults();gidx=Math.max(0,Math.min(groups.length-1,Number(d.gidx)||0));auto=d.auto!==false;}}catch(_){}
- function save(){try{localStorage.setItem(key,JSON.stringify({groups:groups,gidx:gidx,auto:auto}));}catch(e){log("地图收藏：保存失败 "+String(e).slice(0,100));}}
+ function save(){
+  var data=JSON.stringify({groups:groups,gidx:gidx,auto:auto});
+  try{localStorage.setItem(key,data);}catch(e){log("地图收藏：本地缓存写入失败 "+String(e).slice(0,90));}
+  try{window.webkit.messageHandlers.galaxyBookmarks.postMessage({action:"save",data:data});}catch(_){}
+ }
  function E(tag,parent,txt){var n=document.createElement(tag);if(txt!==undefined)n.textContent=txt;parent.appendChild(n);return n;}
  function B(parent,txt,fn){var b=E("button",parent,txt);b.type="button";b.onclick=function(ev){ev.preventDefault();ev.stopPropagation();fn();};return b;}
  var style=E("style",document.head);
@@ -172,7 +176,22 @@ window.ShiguangGalaxyMenu=function(player,touch,log){
   if(on){close();zoom=1.5;dx=dy=0;applyZoom();zoomBar.style.display="flex";notice("放大模式：直接手指触碰画面，是真实触控事件");}
   else{zoom=1;dx=dy=0;applyZoom();zoomBar.style.display="none";}
  }
- render();log("星系收藏 v4.6 已初始化；星系→星球两级选择，坐标保存在本机");
+ window.ShiguangNativeBookmarks={receive:function(raw){
+   try{
+     var data=JSON.parse(raw);
+     if(data&&Array.isArray(data.groups)&&data.groups.length&&data.groups.length<=60){
+       var cleaned=data.groups.map(function(g){return clean(g,true);}).filter(Boolean);
+       if(cleaned.length){
+         groups=cleaned;gidx=Math.max(0,Math.min(groups.length-1,Number(data.gidx)||0));
+         pidx=0;auto=data.auto!==false;autoBtn.textContent="自动弹出："+(auto?"开":"关");
+         render();log("地图收藏：已从 iPad 文件夹恢复星系和星球位置");
+       }
+     }
+   }catch(e){log("地图收藏：本机备份内容无效，继续使用当前本地缓存");}
+ }};
+ render();
+ try{window.webkit.messageHandlers.galaxyBookmarks.postMessage({action:"load"});}catch(_){}
+ log("星系收藏 v4.6 已初始化；星系→星球两级选择，书签备份到 iPad 文件夹");
  return {open:open,close:close,setZoom:setZoom,isOpen:function(){return active;}};
 };
 })();
