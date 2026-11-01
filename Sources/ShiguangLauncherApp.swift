@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v2.4")
+                        Text("v2.5")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -291,11 +291,21 @@ struct GameView: View {
     @State private var server: GameServer?
     @State private var errorText: String?
     @State private var gameStatus = "正在启动本地游戏服务…"
+    @State private var reloadGeneration = 0
+    @State private var showingCacheConfirmation = false
+    @State private var isClearingWebCache = false
+    @State private var showingDiagnostics = false
 
+    // Two non-destructive game controls inspired by the compact xin计划 UI.
+    // The underlying .srom remains in Application Support/Game at all times.
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        ZStack {
             Color.black.ignoresSafeArea()
-            if let server, let url = server.playURL(for: entry) {
+            if isClearingWebCache {
+                ProgressView("正在清理网页缓存…")
+                    .foregroundStyle(.white)
+                    .tint(.white)
+            } else if let server, let url = server.playURL(for: entry) {
                 GameWebView(url: url, onStatus: { message in
                     gameStatus = message
                     LaunchDiagnostics.log("网页状态：" + message)
@@ -303,31 +313,78 @@ struct GameView: View {
                     errorText = message
                     LaunchDiagnostics.log("网页错误：" + message)
                 })
-                    .ignoresSafeArea()
+                .id(reloadGeneration) // recreate WKWebView and Flash, leave HTTP service/resources intact
+                .ignoresSafeArea()
             } else if let errorText {
                 Text(errorText).foregroundStyle(.white).padding(24)
             } else {
                 ProgressView("正在启动…").tint(.white)
             }
-            if server != nil {
-                VStack {
-                    Spacer()
-                    HStack(spacing: 7) {
-                        Image(systemName: "waveform.path.ecg")
-                        Text(gameStatus)
-                            .lineLimit(2)
-                            .textSelection(.enabled)
-                        Spacer(minLength: 0)
+
+            // Preserve the entire viewport for the game. Controls float above it.
+            VStack {
+                HStack(alignment: .top) {
+                    Button(action: close) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 19, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.82))
+                            .frame(width: 48, height: 48)
+                            .background(.white.opacity(0.94), in: Circle())
+                            .shadow(color: .black.opacity(0.18), radius: 9, y: 3)
                     }
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white)
-                    .padding(10)
-                    .background(Color.gray.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, errorText == nil ? 22 : 0)
+                    .accessibilityLabel("返回拾光号启动器")
+                    Spacer()
+                    VStack(spacing: 12) {
+                        Button(action: reloadGame) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 21, weight: .semibold))
+                                .foregroundStyle(Color(red: 0.06, green: 0.50, blue: 0.98))
+                                .frame(width: 51, height: 51)
+                                .background(.white.opacity(0.97), in: Circle())
+                                .shadow(color: .black.opacity(0.16), radius: 10, y: 3)
+                        }
+                        .disabled(server == nil || isClearingWebCache)
+                        .accessibilityLabel("刷新游戏")
+                        Button { showingCacheConfirmation = true } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(Color(red: 0.60, green: 0.16, blue: 0.80))
+                                .frame(width: 51, height: 51)
+                                .background(.white.opacity(0.97), in: Circle())
+                                .shadow(color: .black.opacity(0.16), radius: 10, y: 3)
+                        }
+                        .disabled(isClearingWebCache)
+                        .accessibilityLabel("清理网页缓存")
+                    }
                 }
+                .padding(.top, 14)
+                Spacer(minLength: 12)
+                HStack(alignment: .bottom, spacing: 9) {
+                    Button { showingDiagnostics.toggle() } label: {
+                        Image(systemName: showingDiagnostics ? "waveform.path.ecg.rectangle" : "waveform.path.ecg")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: 36, height: 36)
+                            .background(.black.opacity(0.38), in: Circle())
+                    }
+                    .accessibilityLabel(showingDiagnostics ? "隐藏诊断状态" : "显示诊断状态")
+                    if showingDiagnostics {
+                        Text(gameStatus)
+                            .lineLimit(3)
+                            .font(.system(size: 12, weight: .medium))
+                            .textSelection(.enabled)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 11))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.bottom, 14)
             }
-            if let errorText, server != nil {
+            .padding(.horizontal, 18)
+
+            if let errorText {
                 VStack {
                     Spacer()
                     Text(errorText)
@@ -336,18 +393,20 @@ struct GameView: View {
                         .textSelection(.enabled)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.red.opacity(0.86), in: RoundedRectangle(cornerRadius: 12))
-                        .padding(16)
+                        .background(.red.opacity(0.88), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 57)
                 }
             }
-            Button(action: close) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.white)
-                    .shadow(radius: 4)
-            }
-            .padding(14)
-            .accessibilityLabel("返回启动器")
+        }
+        .statusBarHidden(true)
+        .persistentSystemOverlays(.hidden)
+        .confirmationDialog("清理游戏网页缓存？", isPresented: $showingCacheConfirmation,
+                            titleVisibility: .visible) {
+            Button("清理网页缓存并刷新游戏", role: .destructive) { clearWebCache() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("仅清理本应用 WebKit 的网页磁盘及内存缓存，不删除美化包、已安装游戏资源、账号数据或保存的 diagnostics.txt。")
         }
         .task {
             LaunchDiagnostics.log("进入游戏：\(entry)")
@@ -388,6 +447,32 @@ struct GameView: View {
             }
         }
         .onDisappear { server = nil }
+    }
+
+    private func reloadGame() {
+        guard server != nil && !isClearingWebCache else { return }
+        errorText = nil
+        gameStatus = "正在刷新游戏…"
+        reloadGeneration += 1
+        LaunchDiagnostics.log("[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
+    }
+
+    private func clearWebCache() {
+        guard !isClearingWebCache else { return }
+        isClearingWebCache = true
+        errorText = nil
+        gameStatus = "正在清理网页缓存…"
+        LaunchDiagnostics.log("[游戏控制] 用户确认清理 WebKit 网页缓存：不会删除 Application Support/Game")
+        // Avoid allWebsiteDataTypes(): cookies, localStorage and saved login data are NOT removed.
+        let types: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
+        WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) {
+            DispatchQueue.main.async {
+                self.isClearingWebCache = false
+                self.gameStatus = "网页缓存已清理，游戏正在重新加载…"
+                self.reloadGeneration += 1
+                LaunchDiagnostics.log("[游戏控制] WebKit 内存/磁盘缓存清理完成，已重建 WKWebView；已安装游戏资源未受影响")
+            }
+        }
     }
 }
 

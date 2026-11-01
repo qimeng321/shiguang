@@ -258,6 +258,21 @@ final class GameServer {
         }
         // Only this known host/port is mapped. No system-wide proxy or arbitrary relay.
         let bootstrap = #"""
+        <style id="shiguang-immersive-game">
+          html, body, #root {
+            width: 100%; height: 100%; margin: 0; padding: 0;
+            overflow: hidden; background: #000;
+          }
+          /* Fit the original 960x560 game to the available iPad viewport,
+             preserving its aspect ratio rather than stretching or cropping. */
+          object[data$=".swf"], embed[src$=".swf"],
+          ruffle-player, ruffle-object, ruffle-embed {
+            width: min(100vw, 171.4286dvh) !important;
+            height: min(100dvh, 58.3333vw) !important;
+            max-width: 100vw !important;
+            max-height: 100dvh !important;
+          }
+        </style>
         <script>
           window.RufflePlayer = window.RufflePlayer || {};
           window.RufflePlayer.config = Object.assign({}, window.RufflePlayer.config || {}, {

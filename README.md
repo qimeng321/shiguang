@@ -1,3 +1,13 @@
+# 拾光号 v2.5 — 全屏游戏与右上角网页控制
+
+参考用户提供的 xin计划 IPA 实际内容，确认其 Flutter + flutter_inappwebview_ios（WKWebView）+ Ruffle 架构。本项目保持 SwiftUI + WKWebView + Ruffle，不必为了界面重写 Flutter。
+
+- 游戏全屏页面：隐藏状态栏，沉浸式黑色背景；按 960:560 比例自适应 WebView 内 Flash 对象，不拉伸/裁切画面。
+- 左上角：返回启动器。右上角：圆形「刷新游戏」「清理网页缓存」悬浮按钮；左下角小波形图标可展开原有调试状态，不再长期遮挡画面。
+- 刷新游戏：重建 WKWebView，重启 Flash 页面；本地服务器与 Application Support/Game 资源不受影响。
+- 清理缓存：二次确认后仅删除 WebKit 的 DiskCache/MemoryCache，然后重启页面；**不删除 cookies、localStorage、已导入的 .srom、美化包、诊断日志**。不会恢复因服务器或 SWF 兼容性导致的卡 Logo。
+- v2.4 真机日志仍只有两次 version.swf GET，头部分段传输未解决此启动阻塞；该兼容性问题仍在排查中。
+
 # 拾光号 v2.4：PVM 分阶段传输实验
 
 根据 v2.3 真机日志（version.swf 前缀 4B 50 04 D4 00 00 78 DA；读取版本文件两次后停止），结合游戏的 PVM_Loader.as 源码，确认表项数为 0 并非必然损坏。实验性调整版本文件的本地 HTTP 传输：前6字节单独发送，延迟120毫秒后继续发送剩余数据，使 Ruffle URLStream 更可能触发增量进度回调。不改变文件字节内容，其他 HTTP 资源不受影响。增加版本 URL 请求阶段分类（不记录实际参数）、第三次 version.swf 请求识别，并修正 PVM 文件头误报。
