@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v4.7")
+                        Text("v4.8")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -116,9 +116,11 @@ struct LauncherView: View {
 
                     VStack(spacing: 10) {
                         HStack(spacing: 8) {
-                            Image(systemName: launcher.canStartGame ? "checkmark.circle.fill" : "info.circle.fill")
-                                .foregroundStyle(launcher.canStartGame ? green : blue)
-                            Text(launcher.canStartGame ? "美化包已就绪" : "请先导入美化包")
+                            Image(systemName: launcher.isImporting ? "arrow.down.circle.fill" :
+                                  (launcher.canStartGame ? "checkmark.circle.fill" : "info.circle.fill"))
+                                .foregroundStyle(launcher.canStartGame && !launcher.isImporting ? green : blue)
+                            Text(launcher.isImporting ? "正在安装美化包" :
+                                 (launcher.canStartGame ? "美化包已就绪" : "请先导入美化包"))
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(ink)
                             Spacer(minLength: 0)
@@ -139,8 +141,23 @@ struct LauncherView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
                         }
-                        if launcher.isImporting || launcher.isClearing {
-                            ProgressView()
+                        if launcher.isImporting {
+                            HStack {
+                                Text(launcher.importPhase)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(ink)
+                                Spacer()
+                                Text("\(Int((launcher.importProgress * 100).rounded(.down)))%")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(blue)
+                            }
+                            ProgressView(value: launcher.importProgress, total: 1.0)
+                                .progressViewStyle(.linear)
+                                .tint(blue)
+                                .accessibilityLabel("美化包导入实际进度")
+                        } else if launcher.isClearing {
+                            ProgressView("正在清除美化包…")
                                 .tint(blue)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -304,8 +321,6 @@ struct GameView: View {
     @State private var controlGeneration = 0
     @State private var controlAction = ""
     @State private var virtualMouseEnabled = false
-    @State private var mapSwipeEnabled = false
-    @State private var touchZoomEnabled = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -363,10 +378,6 @@ struct GameView: View {
                                 }
                                 gameTool("cursorarrow", virtualMouseEnabled ? "关闭精准鼠标" : "精准鼠标") {
                                     virtualMouseEnabled.toggle()
-                                    if virtualMouseEnabled {
-                                        mapSwipeEnabled = false
-                                        touchZoomEnabled = false
-                                    }
                                     sendControl(virtualMouseEnabled ? "enableMouse" : "disableMouse")
                                 }
                                 if virtualMouseEnabled {
@@ -376,26 +387,6 @@ struct GameView: View {
                                     gameTool("gauge", "切换鼠标速度") {
                                         sendControl("cycleSpeed")
                                     }
-                                }
-                                gameTool("map", "打开地图收藏") {
-                                    mapSwipeEnabled = true
-                                    virtualMouseEnabled = false
-                                    touchZoomEnabled = false
-                                    sendControl("enableMapSwipe")
-                                }
-                                if mapSwipeEnabled {
-                                    gameTool("map-pin-off", "关闭地图辅助") {
-                                        mapSwipeEnabled = false
-                                        sendControl("disableMapSwipe")
-                                    }
-                                }
-                                gameTool("zoom-in", touchZoomEnabled ? "关闭触控放大" : "触控放大（真实点击）") {
-                                    touchZoomEnabled.toggle()
-                                    if touchZoomEnabled {
-                                        virtualMouseEnabled = false
-                                        mapSwipeEnabled = false
-                                    }
-                                    sendControl(touchZoomEnabled ? "enableZoom" : "disableZoom")
                                 }
                                 Divider().padding(.vertical, 3)
                                 gameTool("arrow.clockwise", "刷新游戏") {
@@ -530,8 +521,6 @@ struct GameView: View {
         guard server != nil && !isClearingWebCache else { return }
         errorText = nil
         virtualMouseEnabled = false
-        mapSwipeEnabled = false
-        touchZoomEnabled = false
         reloadGeneration += 1
         LaunchDiagnostics.log("[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
     }
@@ -541,8 +530,6 @@ struct GameView: View {
         isClearingWebCache = true
         errorText = nil
         virtualMouseEnabled = false
-        mapSwipeEnabled = false
-        touchZoomEnabled = false
         LaunchDiagnostics.log("[游戏控制] 用户确认清理 WebKit 网页缓存：不会删除 Application Support/Game")
         // Avoid allWebsiteDataTypes(): cookies, localStorage and saved login data are NOT removed.
         let types: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
@@ -567,7 +554,6 @@ struct GameWebView: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         configuration.userContentController.add(context.coordinator, name: "gameDiagnostics")
-        configuration.userContentController.add(context.coordinator, name: "galaxyBookmarks")
         let diagnostics = #"""
             (function () {
               function report(message) {
@@ -707,8 +693,7 @@ struct GameWebView: UIViewRepresentable {
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
         let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
-                       "enableMapSwipe", "disableMapSwipe", "resetCursor", "cycleSpeed",
-                       "enableZoom", "disableZoom"]
+                       "resetCursor", "cycleSpeed"]
         guard allowed.contains(controlAction) else { return }
         let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"
         webView.evaluateJavaScript(js) { _, error in
@@ -721,7 +706,6 @@ struct GameWebView: UIViewRepresentable {
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "gameDiagnostics")
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: "galaxyBookmarks")
     }
     func makeCoordinator() -> Coordinator { Coordinator(onStatus: onStatus, onError: onError) }
 
@@ -733,45 +717,8 @@ struct GameWebView: UIViewRepresentable {
             self.onStatus = onStatus
             self.onError = onError
         }
-        private func handleGalaxyBookmarks(_ message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any],
-                  let action = body["action"] as? String else { return }
-            // Bookmarks are names and normalized map coordinates only.
-            // Store away from .srom assets so an import/refresh cannot erase them.
-            let file = LaunchDiagnostics.documents.appendingPathComponent("galaxy-bookmarks.json")
-            if action == "save" {
-                guard let raw = body["data"] as? String,
-                      let data = raw.data(using: .utf8),
-                      data.count <= 128_000,
-                      (try? JSONSerialization.jsonObject(with: data)) != nil else { return }
-                do {
-                    try data.write(to: file, options: .atomic)
-                } catch {
-                    LaunchDiagnostics.log("地图收藏备份失败：" + error.localizedDescription)
-                }
-            } else if action == "load" {
-                guard let data = try? Data(contentsOf: file),
-                      data.count <= 128_000,
-                      let content = String(data: data, encoding: .utf8),
-                      let arrayData = try? JSONSerialization.data(withJSONObject: [content]),
-                      let arrayJSON = String(data: arrayData, encoding: .utf8) else { return }
-                let literal = String(arrayJSON.dropFirst().dropLast())
-                message.webView?.evaluateJavaScript(
-                    "window.ShiguangNativeBookmarks && window.ShiguangNativeBookmarks.receive(" + literal + ")"
-                ) { _, error in
-                    if let error {
-                        LaunchDiagnostics.log("地图收藏恢复失败：" + error.localizedDescription)
-                    }
-                }
-            }
-        }
-
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
-            if message.name == "galaxyBookmarks" {
-                handleGalaxyBookmarks(message)
-                return
-            }
             guard let details = message.body as? String else { return }
             if details.hasPrefix("状态：") { onStatus(String(details.dropFirst(3))) }
             else if details.hasPrefix("错误：") { onError(String(details.dropFirst(3))) }

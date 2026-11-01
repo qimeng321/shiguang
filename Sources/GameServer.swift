@@ -662,8 +662,7 @@ final class GameServer {
           };
         </script><script src="/ruffle/ruffle.js"></script>
         <script src="/ruffle/pvm-compat.js"></script>
-        <script src="/ruffle/touch-controls.js"></script>
-        <script src="/ruffle/galaxy-navigation.js"></script></head>
+        <script src="/ruffle/touch-controls.js"></script></head>
         <body><div id="game"></div><div id="message">正在载入游戏资源…</div>
         <script>
         (async function(){
@@ -797,33 +796,19 @@ final class GameServer {
           // Native three-dot menu sends fixed, allowlisted commands.
           // The mouse/map implementation lives in a separately syntax-checked
           // script, and creates its overlays only when explicitly enabled.
-          var touchControls=null,galaxyMenu=null;
+          var touchControls=null;
           function toggleKeyboard(){
             if(!prepareKeyboard()){report("输入栏：Ruffle 输入组件未就绪");return;}
             if(touchControls)touchControls.hideAll();
-            if(galaxyMenu)galaxyMenu.close();
             setDockVisible(!inputShown,"三点菜单切换输入栏");
           }
           window.ShiguangControls={
             toggleKeyboard:toggleKeyboard,
             enableMouse:function(){
-              if(inputShown)setDockVisible(false,"已启用虚拟鼠标");
-              if(galaxyMenu){galaxyMenu.close();galaxyMenu.setZoom(false);}
+              if(inputShown)setDockVisible(false,"启用虚拟鼠标");
               if(touchControls)touchControls.enableMouse();
             },
             disableMouse:function(){if(touchControls)touchControls.disableMouse();},
-            enableMapSwipe:function(){
-              if(inputShown)setDockVisible(false,"已启用星系/星球选择");
-              if(touchControls){touchControls.disableMouse();touchControls.deactivateMapLegacy();}
-              if(galaxyMenu)galaxyMenu.open();
-            },
-            disableMapSwipe:function(){if(galaxyMenu)galaxyMenu.close();},
-            enableZoom:function(){
-              if(inputShown)setDockVisible(false,"放大后真实触控");
-              if(touchControls)touchControls.hideAll();
-              if(galaxyMenu)galaxyMenu.setZoom(true);
-            },
-            disableZoom:function(){if(galaxyMenu)galaxyMenu.setZoom(false);},
             resetCursor:function(){if(touchControls)touchControls.resetCursor();},
             cycleSpeed:function(){if(touchControls)touchControls.cycleSpeed();}
           };
@@ -859,11 +844,6 @@ final class GameServer {
             try{
               if(window.ShiguangTouchControls){
                 touchControls=window.ShiguangTouchControls(player,report);
-                if(window.ShiguangGalaxyMenu){
-                  galaxyMenu=window.ShiguangGalaxyMenu(player,touchControls,report);
-                }else{
-                  report("地图收藏模块缺失，原地图仍可手动点选");
-                }
               }else{
                 report("触控辅助：脚本缺失，触控增强暂不可用（不影响游戏启动）");
               }
