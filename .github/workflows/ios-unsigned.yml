@@ -71,11 +71,11 @@ jobs:
           source = Path("Sources/GameServer.swift").read_text(encoding="utf-8")
           page = source.split("private func page(swfURL:", 1)[1]
           html = page.split('return """', 1)[1].split('"""', 1)[0]
-          scripts = re.findall(r'<script(?:\\s[^>]*)?>([\\s\\S]*?)</script>', html)
+          scripts = re.findall(r'<script(?:\s[^>]*)?>([\s\S]*?)</script>', html)
           assert len(scripts) >= 2, "Expected inline Ruffle config and touch controls"
           for index, script in enumerate(scripts):
-              script = script.replace(r'\\(json(swfURL))', '"/Client.swf"')
-              script = script.replace(r'\\(json(baseURL))', '"/"')
+              script = script.replace(r'\(json(swfURL))', '"/Client.swf"')
+              script = script.replace(r'\(json(baseURL))', '"/"')
               with tempfile.NamedTemporaryFile(suffix=".js", mode="w", encoding="utf-8") as out:
                   out.write(script)
                   out.flush()
