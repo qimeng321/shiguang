@@ -174,6 +174,8 @@ enum ImportError: LocalizedError {
 final class LauncherModel: ObservableObject {
     @Published var status = "选择导入美化包，将 .srom 游戏资源安装到本机。"
     @Published var isImporting = false
+    @Published private(set) var importProgress: Double = 0
+    @Published private(set) var importPhase = ""
     @Published var localPackages: [URL] = []
     @Published var entries: [String] = []
     @Published var selectedEntry = ""
@@ -190,9 +192,20 @@ final class LauncherModel: ObservableObject {
     }
     var hasInstalledPackage: Bool { gameRoot != nil }
 
+    private func reportImportProgress(_ value: Double, phase: String) {
+        guard isImporting, value.isFinite else { return }
+        let normalized = min(1, max(0, value))
+        // Multiple background tasks may report completion out of order.
+        // Never let the visible bar go backward during an active import.
+        if normalized + 0.00001 >= importProgress {
+            importProgress = max(importProgress, normalized)
+            if importPhase != phase { importPhase = phase }
+        }
+    }
+
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 v4.7 启动；已启用真实相对路径扫描与文件校验；旧资源路径不变")
+        LaunchDiagnostics.log("启动器 v4.8 启动；已启用真实相对路径扫描与文件校验；旧资源路径不变")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -252,6 +265,8 @@ final class LauncherModel: ObservableObject {
             return
         }
         isImporting = true
+        importProgress = 0
+        importPhase = "复制资源包"
         LaunchDiagnostics.log("开始导入美化包：\(source.lastPathComponent)")
         status = "正在复制美化包到应用空间，请勿关闭应用…"
         // Acquire the security-scoped bookmark permission before leaving the
@@ -264,22 +279,56 @@ final class LauncherModel: ObservableObject {
             do {
                 // First coordinate a copy into our own sandbox. Reading a file
                 // provider URL directly for a long unzip is not always reliable.
-                let localArchive = try Self.copyIntoSandbox(source)
+                let localArchive = try Self.copyIntoSandbox(source) { fraction in
+                    Task { @MainActor in
+                        self.reportImportProgress(0.20 * fraction, phase: "正在复制资源包")
+                    }
+                }
                 defer { try? FileManager.default.removeItem(at: localArchive) }
-                await MainActor.run { self.status = "正在校验并解压美化包…较大文件可能需要几分钟" }
-                let entries = try Self.extractPackage(localArchive)
                 await MainActor.run {
+                    self.reportImportProgress(0.20, phase: "正在检查压缩包")
+                    self.status = "正在解压美化包并校验文件完整性…"
+                }
+                let unzipProgress = Progress(totalUnitCount: 0)
+                // ZIPFoundation supplies real completed/total byte counts as each
+                // archive entry is decompressed. Poll on a non-main task.
+                let monitor = Task.detached(priority: .utility) {
+                    while !Task.isCancelled {
+                        let fraction = unzipProgress.totalUnitCount > 0
+                            ? min(1.0, max(0.0, unzipProgress.fractionCompleted))
+                            : 0.0
+                        await MainActor.run {
+                            self.reportImportProgress(0.20 + fraction * 0.73,
+                                                      phase: "正在解压并校验")
+                        }
+                        try? await Task.sleep(nanoseconds: 180_000_000)
+                    }
+                }
+                let entries: [String]
+                do {
+                    entries = try Self.extractPackage(localArchive, progress: unzipProgress)
+                } catch {
+                    monitor.cancel()
+                    await monitor.value
+                    throw error
+                }
+                monitor.cancel()
+                await monitor.value
+                await MainActor.run {
+                    self.reportImportProgress(0.96, phase: "正在核对游戏入口")
                     self.gameRoot = Self.savedGameRoot
                     self.entries = entries
                     self.selectedEntry = Self.preferredEntry(in: entries)
                     self.status = "美化包已安装，已验证 \(entries.count) 个实际游戏入口。"
                     self.refreshResourceCheck()
                     LaunchDiagnostics.log("资源导入完成：\(entries.count) 个可启动入口")
+                    self.reportImportProgress(1.0, phase: "安装完成")
                     self.isImporting = false
                 }
             } catch {
                 await MainActor.run {
                     self.status = "导入失败：\(error.localizedDescription)"
+                    self.importPhase = "导入失败"
                     LaunchDiagnostics.log("资源导入失败：\(error.localizedDescription)")
                     self.isImporting = false
                 }
@@ -318,7 +367,9 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    private nonisolated static func copyIntoSandbox(_ source: URL) throws -> URL {
+    private nonisolated static func copyIntoSandbox(
+        _ source: URL, onProgress: (Double) -> Void
+    ) throws -> URL {
         let manager = FileManager.default
         let support = savedGameRoot.deletingLastPathComponent()
         let incoming = support.appendingPathComponent("ImportIncoming", isDirectory: true)
@@ -331,8 +382,34 @@ final class LauncherModel: ObservableObject {
         var copyError: Error?
         let coordinator = NSFileCoordinator(filePresenter: nil)
         coordinator.coordinate(readingItemAt: source, options: [], error: &coordinationError) { readableURL in
-            do { try manager.copyItem(at: readableURL, to: destination) }
-            catch { copyError = error }
+            do {
+                // Stream the file in 1 MiB chunks to avoid reading a multi-GB
+                // .srom into memory and to expose REAL bytes copied.
+                guard manager.createFile(atPath: destination.path, contents: nil) else {
+                    throw ImportError.invalidArchive
+                }
+                let reader = try FileHandle(forReadingFrom: readableURL)
+                defer { try? reader.close() }
+                let writer = try FileHandle(forWritingTo: destination)
+                defer { try? writer.close() }
+                let attributes = try manager.attributesOfItem(atPath: readableURL.path)
+                let totalBytes = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+                var copied: Int64 = 0
+                var lastPercent = -1
+                while let chunk = try reader.read(upToCount: 1_048_576), !chunk.isEmpty {
+                    try writer.write(contentsOf: chunk)
+                    copied += Int64(chunk.count)
+                    if totalBytes > 0 {
+                        let fraction = min(1.0, Double(copied) / Double(totalBytes))
+                        let percent = Int(fraction * 100)
+                        if percent != lastPercent {
+                            lastPercent = percent
+                            onProgress(fraction)
+                        }
+                    }
+                }
+                onProgress(1.0)
+            } catch { copyError = error }
         }
         if let copyError {
             try? manager.removeItem(at: destination)
@@ -353,7 +430,7 @@ final class LauncherModel: ObservableObject {
             .appendingPathComponent("Game", isDirectory: true)
     }
 
-    private nonisolated static func extractPackage(_ source: URL) throws -> [String] {
+    private nonisolated static func extractPackage(_ source: URL, progress: Progress) throws -> [String] {
         let manager = FileManager.default
         // The extension .srom alone does not prove the file is ZIP-based.
         // Read only the signature, not the entire (possibly multi-GB) package.
@@ -385,7 +462,7 @@ final class LauncherModel: ObservableObject {
         try manager.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? manager.removeItem(at: staging) }
 
-        try manager.unzipItem(at: source, to: staging, skipCRC32: false)
+        try manager.unzipItem(at: source, to: staging, skipCRC32: false, progress: progress)
         let entries = findEntries(in: staging)
         guard !entries.isEmpty else { throw ImportError.noGameFiles }
         LaunchDiagnostics.log("临时解压目录已验证：\(entries.joined(separator: ", "))")
