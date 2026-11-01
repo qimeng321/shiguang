@@ -48,11 +48,11 @@ jobs:
           find "$RUNNER_TEMP/ffdec-src" -type f -name ffdec.jar -print
           jar_path="$(find "$RUNNER_TEMP/ffdec-src" -type f -name ffdec.jar -print -quit)"
           test -n "$jar_path"
-          cp "$jar_path" /tmp/ffdec-analysis.jar
+          cp "$RUNNER_TEMP/ffdec.zip" /tmp/ffdec-full.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: ffdec-analysis-tool
-          path: /tmp/ffdec-analysis.jar
+          name: ffdec-analysis-tool-full
+          path: /tmp/ffdec-full.zip
           if-no-files-found: error
       - name: Build for iPhone and iPad
         run: |
