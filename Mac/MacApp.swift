@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import WebKit
+import UniformTypeIdentifiers
 
 @main
 struct ShiguangMacApp: App {
@@ -348,7 +349,7 @@ struct MacWebView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "gameDiagnostics")
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
-        webView.setValue(false, forKey: "drawsBackground")
+        webView.underPageBackgroundColor = .black
         webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
         return webView
     }
