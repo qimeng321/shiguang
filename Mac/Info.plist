@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>拾光号 Mac</string>
+  <key>CFBundleDisplayName</key><string>拾光号 Mac</string>
+  <key>CFBundleIdentifier</key><string>cn.shiguanghao.mac</string>
+  <key>CFBundleExecutable</key><string>ShiguangMac</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleSignature</key><string>????</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>100</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>NSAppTransportSecurity</key>
+  <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>拾光号资源包</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSItemContentTypes</key>
+      <array><string>public.zip-archive</string></array>
+    </dict>
+  </array>
+</dict>
+</plist>
