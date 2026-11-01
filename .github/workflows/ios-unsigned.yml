@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - fix/ios-font-baseline-build101
 
 jobs:
   build:
@@ -56,11 +57,27 @@ jobs:
             --output Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
           actual="$(git hash-object Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)"
           test "$actual" = "dc15562470b4f842321894787a0d066879ccff8b"
+          # Preserve original outline/width data; adjust only OpenType hhea
+          # ascent/descent by equal amounts (80 of 1000 unitsPerEm).
+          python3 Patches/raise_cjk_baseline.py Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
           curl --fail --location --show-error --retry 4 \
             "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE" \
             --output Resources/Ruffle/fonts/OFL-LICENSE.txt
           test -s Resources/Ruffle/fonts/OFL-LICENSE.txt
           test "$(stat -f%z Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)" -gt 16000000
+          python3 - <<'PY_FONT'
+          import pathlib,struct
+          p=pathlib.Path("Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf")
+          data=p.read_bytes()
+          n=struct.unpack_from(">H",data,4)[0]
+          records={}
+          for i in range(n):
+              tag,_,offset,length=struct.unpack_from(">4sIII",data,12+16*i)
+              records[tag]=(offset,length)
+          o,_=records[b"hhea"]
+          assert struct.unpack_from(">hh",data,o+4)==(1080,-368)
+          print("Noto CJK baseline up 80 font units; metrics validated.")
+          PY_FONT
           echo "Verified Noto Sans CJK SC font and OFL license"
       - name: Validate Canvas touch controls module
         shell: bash
@@ -134,7 +151,7 @@ jobs:
       - name: Check formal version and build metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '100'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '101'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.0 project source ZIP
@@ -144,11 +161,11 @@ jobs:
           unzip -Z -1 /tmp/ShiguangLauncher-v1.0-source.zip | grep -Fx 'ShiguangLauncher-v1.0/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0-unsigned-ipa
+          name: ShiguangLauncher-v1.0-build101-unsigned-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0-source
+          name: ShiguangLauncher-v1.0-build101-source
           path: /tmp/ShiguangLauncher-v1.0-source.zip
           if-no-files-found: error
