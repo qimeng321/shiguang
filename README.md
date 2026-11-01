@@ -1,3 +1,19 @@
+# 拾光号启动器 · 正式版 1.0（Build 100）
+
+这是稳定版的版本标识更新，沿用已经确认可用的 v4.8 代码，不再增加功能或修改游戏核心逻辑。
+
+- 应用首页显示「正式版 1.0」，Info.plist、Xcode Debug/Release 构建版本统一为 1.0（100）。
+- 保留已修复的虚拟鼠标、虚拟鼠标与手指点击交替使用、首页美化包导入真实进度条。
+- 地图快捷选择已移除，原游戏星图继续使用。
+- Bundle ID 保持 `cn.shiguanghao.launcher`，以便原应用覆盖升级；请不要先卸载，否则可能丢失本机导入的 .srom 资源。
+- GitHub Actions 同时上传未签名 IPA 安装包及完整 Git 跟踪源码 ZIP（含 Xcode 项目、Swift、补丁、资源与工作流）。源码包不包含用户自己的 .srom、美化包导入数据或签名证书。CI 会下载或安装部分外部依赖，构建时需要联网。
+- 未签名 IPA 仍需使用你已有的签名侧载方式安装；macOS/Xcode 构建成功不代表已经进行 iPad 真机回归测试。
+
+## 源码与构建
+GitHub 仓库：`qimeng321/shiguang`。源码 ZIP 是正式版对应 Git 提交的完整仓库快照，在 GitHub Actions 的 `ShiguangLauncher-v1.0-source` Artifacts 中提供。IPA 为 `ShiguangLauncher-v1.0-unsigned-ipa`。
+
+---
+
 # v4.8 — 删除地图选择、修复手指与虚拟鼠标交替、真实导入进度
 
 - **地图模块已移除**：删除快捷地图收藏菜单、星系/星球选择、旧九点星图控制、导航 JS、原生 Swift 收藏桥接，以及相关 CI 打包。原始 Flash 地图完全保留。
