@@ -1,3 +1,14 @@
+# v3.3 — iPad 键盘去重与登录链路诊断（需真机验证）
+
+2026-11-01 日志中 Client.swf、version.swf、NieoCore.swf、Login.swf 均 HTTP 200，但尚无游戏服务器连接成功的证据；ip.txt 404 与登录转圈的因果关系未经确认。
+
+- 键盘触发只处理 click，取消 touchend + click 双次调用；不再对已经聚焦的 Ruffle 输入框 blur/focus。收起/弹出键盘引起的视口高度收缩不改变游戏原有尺寸；旋转/分屏仍适配。
+- 新增按键事件种类的计数诊断（不记录字符、账户、密码）。
+- 登录新增本地 WebSocket 握手、远端 TCP 连接、首个双向数据包字节数（不记录负载）的阶段日志。如果进入游戏22秒仍没有 Flash 连接本地代理，记录明确诊断。
+- 不修改或清除 .srom，不构造假的 ip.txt，不更换 Ruffle 0.7.1 或 PVM / ByteLoader 补丁。
+
+覆盖安装测试：依次点 Flash 账号输入框和右上角 ⌨，测试单个英文字符、删除、中文与密码输入，然后尝试登录。导出 diagnostics.txt 并查看 [登录网络] 与 键盘事件计数。编译通过不代表游戏登录已修好。
+
 # v3.2 — iPad 触屏键盘兼容性修复
 
 v3.1 已通过用户真机验证能进入登录页面，但点击 Flash 输入框不能调出 iPad 系统键盘。Ruffle 0.7.1 `web/packages/core/src/internal/ui/static-styles.css` 把 `#virtual-keyboard` 放在 `top:-100px;width:1px;height:1px;opacity:0`，在 iOS 26.4 及之后的 WebKit 中容易无法触发系统软键盘。Ruffle 官方亦有 iOS 文本输入焦点问题报告 #23509、#23675。

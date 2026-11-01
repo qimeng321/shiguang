@@ -215,6 +215,13 @@ final class GameServer {
             versionGetCount = 0
             proceededBeyondVersion = false
             inspectedVersionHeader = false
+            if let bridge {
+                queue.asyncAfter(deadline: .now() + 22) {
+                    if !bridge.hasReceivedClient {
+                        LaunchDiagnostics.log("[登录网络诊断] 启动后22秒未出现 Flash→WebSocket 本地连接；请核对游戏实际 Socket 目标与 Ruffle 代理映射")
+                    }
+                }
+            }
             let html = page(swfURL: "/Client.swf", baseURL: "/")
             LaunchDiagnostics.log("[启动模式] 直接启动 Client.swf；PVM 计数已按本次启动重置")
             send(data: Data(html.utf8), mime: "text/html; charset=utf-8",
@@ -666,6 +673,22 @@ final class GameServer {
             input.setAttribute("autocapitalize","none");
             input.setAttribute("spellcheck","false");
             input.setAttribute("enterkeyhint","done");
+            if(!input.__shiguangInputProbe){
+              // Event type counts only; NEVER log credentials, characters or clipboard.
+              input.__shiguangInputProbe=true;
+              var counts={keydown:0,keyup:0,beforeinput:0,input:0,compositionstart:0,compositionend:0},total=0;
+              Object.keys(counts).forEach(function(type){
+                input.addEventListener(type,function(){
+                  counts[type]++;total++;
+                  if(total===4||total%16===0){
+                    report("键盘事件计数（不含输入内容）：keydown="+counts.keydown+
+                      " keyup="+counts.keyup+" beforeinput="+counts.beforeinput+
+                      " input="+counts.input+" compositionstart="+counts.compositionstart+
+                      " compositionend="+counts.compositionend);
+                  }
+                },true);
+              });
+            }
             return input;
           }
           function openKeyboard(event){
@@ -677,15 +700,14 @@ final class GameServer {
               // iOS requires synchronous focus during a real user gesture.
               // Refocus if Flash already focused the off-screen input but
               // iPadOS refused to display its software keyboard.
-              if(input.getRootNode().activeElement===input)input.blur();
-              input.focus({preventScroll:true});
+              // Do not blur already-focused Ruffle inputs: it can restart IME composition.
+              if(input.getRootNode().activeElement!==input)input.focus({preventScroll:true});
               document.getElementById("keyboard-actions").style.display="flex";
               report("虚拟键盘：已手动请求唤起 iPad 键盘");
             }catch(err){report("虚拟键盘：唤起失败："+String(err).slice(0,120))}
           }
           var trigger=document.getElementById("keyboard-trigger");
-          trigger.addEventListener("pointerdown",function(e){if(e.cancelable)e.preventDefault()},{passive:false});
-          trigger.addEventListener("touchend",openKeyboard,{passive:false});
+          // iOS synthesizes click after touchend. Never handle both.
           trigger.addEventListener("click",openKeyboard);
           function virtualKey(key,code){
             var input=keyboardInput();
@@ -704,14 +726,26 @@ final class GameServer {
               e.preventDefault();virtualKey(binding[1],binding[2]);
             });
           });
+          var stableViewport=null;
           function fit(){
-            var v=window.visualViewport,w=v?v.width:window.innerWidth,h=v?v.height:window.innerHeight;
+            var v=window.visualViewport,rawW=v?v.width:window.innerWidth,rawH=v?v.height:window.innerHeight;
+            var input=keyboardInput(),focused=!!(input&&input.getRootNode().activeElement===input);
+            // The iPad software keyboard shrinks visualViewport without rotating the device.
+            // Keep the game size unchanged while composing text; allow width changes.
+            var keyboardShrink=focused&&stableViewport&&
+              Math.abs(rawW-stableViewport.w)<80&&rawH<stableViewport.h*0.8;
+            if(!keyboardShrink)stableViewport={w:rawW,h:rawH};
+            var w=stableViewport.w,h=stableViewport.h;
             var factor=Math.min(w/960,h/560),pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
             document.documentElement.style.setProperty("--game-w",pw+"px");
             document.documentElement.style.setProperty("--game-h",ph+"px");
             if(player){player.style.width=pw+"px";player.style.height=ph+"px"}
             var d=pw+"×"+ph+"；视口 "+Math.round(w)+"×"+Math.round(h);
             if(d!==last){last=d;report("动态屏幕适配："+d+"；等比居中")}
+            if(keyboardShrink&&!fit.didLogFreeze){
+              fit.didLogFreeze=true;report("键盘弹出：游戏画面尺寸已锁定");
+            }
+            if(!keyboardShrink)fit.didLogFreeze=false;
           }
           window.addEventListener("resize",fit);
           window.addEventListener("orientationchange",fit);
