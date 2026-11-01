@@ -563,6 +563,7 @@ struct GameWebView: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         configuration.userContentController.add(context.coordinator, name: "gameDiagnostics")
+        configuration.userContentController.add(context.coordinator, name: "galaxyBookmarks")
         let diagnostics = #"""
             (function () {
               function report(message) {
@@ -716,6 +717,7 @@ struct GameWebView: UIViewRepresentable {
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "gameDiagnostics")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "galaxyBookmarks")
     }
     func makeCoordinator() -> Coordinator { Coordinator(onStatus: onStatus, onError: onError) }
 
@@ -727,8 +729,45 @@ struct GameWebView: UIViewRepresentable {
             self.onStatus = onStatus
             self.onError = onError
         }
+        private func handleGalaxyBookmarks(_ message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any],
+                  let action = body["action"] as? String else { return }
+            // Bookmarks are names and normalized map coordinates only.
+            // Store away from .srom assets so an import/refresh cannot erase them.
+            let file = LaunchDiagnostics.documents.appendingPathComponent("galaxy-bookmarks.json")
+            if action == "save" {
+                guard let raw = body["data"] as? String,
+                      let data = raw.data(using: .utf8),
+                      data.count <= 128_000,
+                      (try? JSONSerialization.jsonObject(with: data)) != nil else { return }
+                do {
+                    try data.write(to: file, options: .atomic)
+                } catch {
+                    LaunchDiagnostics.log("地图收藏备份失败：" + error.localizedDescription)
+                }
+            } else if action == "load" {
+                guard let data = try? Data(contentsOf: file),
+                      data.count <= 128_000,
+                      let content = String(data: data, encoding: .utf8),
+                      let arrayData = try? JSONSerialization.data(withJSONObject: [content]),
+                      let arrayJSON = String(data: arrayData, encoding: .utf8) else { return }
+                let literal = String(arrayJSON.dropFirst().dropLast())
+                message.webView?.evaluateJavaScript(
+                    "window.ShiguangNativeBookmarks && window.ShiguangNativeBookmarks.receive(" + literal + ")"
+                ) { _, error in
+                    if let error {
+                        LaunchDiagnostics.log("地图收藏恢复失败：" + error.localizedDescription)
+                    }
+                }
+            }
+        }
+
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
+            if message.name == "galaxyBookmarks" {
+                handleGalaxyBookmarks(message)
+                return
+            }
             guard let details = message.body as? String else { return }
             if details.hasPrefix("状态：") { onStatus(String(details.dropFirst(3))) }
             else if details.hasPrefix("错误：") { onError(String(details.dropFirst(3))) }
