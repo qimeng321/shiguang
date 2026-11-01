@@ -1,381 +1,215 @@
-/* Shiguang iPad touch assistance v4.5
- * Ruffle 0.7.1 web/src/lib.rs attaches pointer handlers to the inner CANVAS.
- * These helpers never inspect SWF memory, credentials, or network payloads.
- */
-(function () {
-  "use strict";
-  window.ShiguangTouchControls = function install(player, report, onKeyboard) {
-    var root = player && player.shadowRoot;
-    var canvasWarned = false, hoverPrimed = false, clicks = 0;
-    var mouseEnabled = false, mapEnabled = false, dragging = false;
-    var mousePoint = null, padPointer = null, headerPointer = null;
-    var speeds = [0.85, 1.45, 2.2], speedIndex = 1;
-    var markers = [
-      [0.164,0.47],[0.233,0.408],[0.376,0.376],
-      [0.517,0.426],[0.665,0.363],[0.784,0.538],
-      [0.688,0.681],[0.577,0.674],[0.465,0.683]
-    ];
-    var custom = false, selection = 0, marking = false;
-    var mapPointer = null, statusHideTimer = null;
-    try {
-      var savedSpeed = parseInt(localStorage.getItem("shiguang.mouseSpeed"), 10);
-      if (savedSpeed >= 0 && savedSpeed < speeds.length) speedIndex = savedSpeed;
-      var savedMarkers = JSON.parse(localStorage.getItem("shiguang.mapMarkers") || "null");
-      if (Array.isArray(savedMarkers) && savedMarkers.length > 0 && savedMarkers.length <= 30 &&
-          savedMarkers.every(function(p){ return Array.isArray(p) && p.length===2 &&
-            p.every(function(v){ return typeof v==="number" && Number.isFinite(v) && v>=0 && v<=1; }); })) {
-        markers = savedMarkers; custom = true;
-      }
-    } catch (_) {}
-    var style = document.createElement("style");
-    style.id = "shiguang-touch-v45";
-    style.textContent = [
-      "#sh-touch-mouse{position:fixed;left:17px;top:34%;z-index:2147482800;width:239px;display:none;",
-      "background:rgba(13,31,61,.89);border:1px solid rgba(133,206,255,.9);border-radius:16px;",
-      "color:white;box-shadow:0 5px 19px #0008;font:13px -apple-system,sans-serif;touch-action:none;user-select:none}",
-      "#sh-touch-head{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;",
-      "background:rgba(33,105,172,.55);border-radius:16px 16px 0 0;touch-action:none;cursor:move}",
-      "#sh-touch-track{margin:8px;border-radius:10px;height:101px;background:rgba(140,190,231,.15);",
-      "border:1px dashed rgba(161,217,255,.7);display:flex;align-items:center;justify-content:center;",
-      "color:#b9dcf4;touch-action:none;cursor:crosshair}",
-      "#sh-touch-row{display:flex;flex-wrap:wrap;gap:5px;padding:0 8px 8px}",
-      "#sh-touch-row button,#sh-map-toolbar button{border:0;border-radius:8px;padding:8px 9px;",
-      "background:#e4f5ff;color:#164773;font-weight:650;font-size:12px;touch-action:manipulation}",
-      "#sh-touch-row button.active{background:#fbe76b;color:#1e324c}",
-      "#sh-touch-cursor,#sh-map-marker{display:none;pointer-events:none;position:fixed;",
-      "z-index:2147482850;transform:translate(-50%,-50%);width:21px;height:21px;",
-      "border-radius:50%;border:2px solid #fff277;background:rgba(34,68,108,.3);",
-      "box-shadow:0 0 0 2px #122a4a,0 0 8px #000c}",
-      "#sh-touch-cursor:before,#sh-map-marker:before{content:'';position:absolute;",
-      "width:3px;height:32px;background:#fff277;left:7px;top:-8px}",
-      "#sh-touch-cursor:after,#sh-map-marker:after{content:'';position:absolute;",
-      "height:3px;width:32px;background:#fff277;top:7px;left:-8px}",
-      "#sh-map-layer{position:fixed;inset:0;display:none;z-index:2147482790;",
-      "touch-action:none;background:transparent}",
-      "#sh-map-toolbar{position:fixed;bottom:95px;left:50%;transform:translateX(-50%);",
-      "display:none;z-index:2147482840;align-items:center;gap:5px;padding:7px;border-radius:12px;",
-      "color:white;font:12px -apple-system,sans-serif;background:rgba(10,30,65,.9);",
-      "box-shadow:0 4px 16px #0009;max-width:calc(100vw - 20px)}",
-      "#sh-map-status{position:fixed;top:94px;left:50%;transform:translateX(-50%);",
-      "display:none;z-index:2147482842;padding:7px 13px;border-radius:20px;",
-      "font:12px -apple-system,sans-serif;color:white;background:rgba(11,34,70,.85);",
-      "max-width:80vw;white-space:nowrap}",
-      "#sh-touch-tip{position:fixed;left:50%;top:102px;transform:translateX(-50%);",
-      "display:none;z-index:2147482900;color:white;background:rgba(0,0,0,.79);",
-      "border-radius:12px;padding:8px 13px;font:12px -apple-system,sans-serif;pointer-events:none}"
-    ].join("");
-    document.head.appendChild(style);
-
-    function element(tag, id, parent, content) {
-      var e = document.createElement(tag); e.id = id;
-      if (content != null) e.textContent = content;
-      parent.appendChild(e); return e;
+/* Shiguang v4.8: precision mouse. No map or location controls.
+   Ruffle 0.7.1 reads PointerEvent.offsetX/Y from its inner canvas. */
+(function(){
+"use strict";
+window.ShiguangTouchControls=function(player,report){
+  var root=player&&player.shadowRoot,canvas=null,hover=false,enabled=false,drag=false;
+  var pos=null,padGesture=null,headerGesture=null,clickPending=null,clickTimer=null;
+  var count=0,recoveries=0,lastMissing=false,speedIndex=1;
+  var speeds=[0.85,1.45,2.2],tipTimer=null;
+  try{
+    var saved=Number(localStorage.getItem("shiguang.mouseSpeed"));
+    if(Number.isInteger(saved)&&saved>=0&&saved<speeds.length)speedIndex=saved;
+  }catch(e){}
+  var style=document.createElement("style");style.id="sh-mouse-v48";
+  style.textContent=[
+    "#sh-mouse{position:fixed;top:34%;left:17px;width:239px;display:none;z-index:2147482800;",
+    "background:rgba(13,31,61,.91);color:#fff;border:1px solid #8bc6ff;border-radius:16px;",
+    "box-shadow:0 5px 18px #0008;font:13px -apple-system,sans-serif;user-select:none;touch-action:none}",
+    "#sh-mouse-head{padding:9px 12px;border-radius:15px 15px 0 0;background:rgba(33,105,172,.58);",
+    "cursor:move;touch-action:none}",
+    "#sh-mouse-track{height:101px;margin:8px;border:1px dashed #a1d9ff;border-radius:10px;",
+    "display:flex;align-items:center;justify-content:center;background:#9bc9f125;color:#cbe8f9;",
+    "touch-action:none;cursor:crosshair}",
+    "#sh-mouse-row{padding:0 8px 8px;display:flex;flex-wrap:wrap;gap:5px}",
+    "#sh-mouse-row button{border:0;border-radius:8px;padding:8px 9px;background:#e4f5ff;",
+    "color:#164773;font-weight:650;font-size:12px;touch-action:manipulation}",
+    "#sh-mouse-row button.active{background:#fbe76b}",
+    "#sh-mouse-cursor{position:fixed;display:none;pointer-events:none;z-index:2147482850;",
+    "transform:translate(-50%,-50%);width:21px;height:21px;border:2px solid #fff277;",
+    "border-radius:50%;background:rgba(34,68,108,.30);box-shadow:0 0 0 2px #122a4a,0 0 8px #000c}",
+    "#sh-mouse-cursor:before{content:'';position:absolute;width:3px;height:32px;",
+    "background:#fff277;left:7px;top:-8px}",
+    "#sh-mouse-cursor:after{content:'';position:absolute;height:3px;width:32px;",
+    "background:#fff277;left:-8px;top:7px}",
+    "#sh-mouse-tip{position:fixed;display:none;pointer-events:none;z-index:2147482900;",
+    "top:102px;left:50%;transform:translateX(-50%);padding:8px 12px;background:#000c;",
+    "color:#fff;border-radius:12px;font:12px -apple-system,sans-serif;white-space:nowrap}"
+  ].join("");
+  document.head.appendChild(style);
+  function el(tag,id,parent,text){
+    var x=document.createElement(tag);x.id=id;
+    if(text!==undefined)x.textContent=text;parent.appendChild(x);return x;
+  }
+  function btn(id,parent,label,callback){
+    var x=el("button",id,parent,label);x.type="button";
+    x.addEventListener("click",function(ev){ev.preventDefault();ev.stopPropagation();callback();});
+    return x;
+  }
+  var box=el("div","sh-mouse",document.body);
+  var header=el("div","sh-mouse-head",box,"鼠标触控板 · 拖动标题可移位");
+  var track=el("div","sh-mouse-track",box,"滑动移动准星，轻点点击");
+  var row=el("div","sh-mouse-row",box);
+  btn("sh-mouse-click",row,"点击",click);
+  var dragBtn=btn("sh-mouse-drag",row,"按住拖动",function(){setDrag(!drag);});
+  btn("sh-mouse-center",row,"准星居中",center);
+  var speedBtn=btn("sh-mouse-speed",row,"速度 "+speeds[speedIndex]+"×",function(){
+    speedIndex=(speedIndex+1)%speeds.length;
+    speedBtn.textContent="速度 "+speeds[speedIndex]+"×";
+    try{localStorage.setItem("shiguang.mouseSpeed",String(speedIndex));}catch(e){}
+    tip("速度 "+speeds[speedIndex]+"×");
+  });
+  btn("sh-mouse-close",row,"关闭",function(){setMode(false);});
+  var cursor=el("div","sh-mouse-cursor",document.body);
+  var toast=el("div","sh-mouse-tip",document.body);
+  function tip(text){
+    toast.textContent=text;toast.style.display="block";
+    if(tipTimer!==null)clearTimeout(tipTimer);
+    tipTimer=setTimeout(function(){toast.style.display="none";},2400);
+  }
+  function canvasNow(){
+    var candidates=root&&root.querySelectorAll("canvas"),best=null;
+    if(candidates)for(var i=0;i<candidates.length;i++){
+      var c=candidates[i],r=c.getBoundingClientRect();
+      if(c.isConnected&&r.width>80&&r.height>80&&(!best||r.width>best.getBoundingClientRect().width))best=c;
     }
-    function button(id, parent, text, handler) {
-      var el = element("button", id, parent, text);
-      el.type = "button";
-      el.addEventListener("click", function(ev){ev.preventDefault();ev.stopPropagation();handler();});
-      return el;
+    if(!best){
+      if(!lastMissing){lastMissing=true;report("鼠标：Ruffle Canvas 尚未就绪");}
+      return null;
     }
-    var mouseBox = element("div", "sh-touch-mouse", document.body);
-    var header = element("div", "sh-touch-head", mouseBox);
-    element("span","sh-touch-title",header,"鼠标触控板 · 拖动标题可移位");
-    var track = element("div","sh-touch-track",mouseBox,"手指滑动 → 移动准星");
-    var mouseRow = element("div","sh-touch-row",mouseBox);
-    var leftButton = button("sh-touch-click",mouseRow,"点击",function(){clickAt(mousePoint,0);});
-    var dragButton = button("sh-touch-drag",mouseRow,"按住拖动",function(){setDragging(!dragging);});
-    button("sh-touch-reset",mouseRow,"准星居中",function(){centerCursor();});
-    var speedButton = button("sh-touch-speed",mouseRow,"速度 1.45×",function(){
-      speedIndex=(speedIndex+1)%speeds.length;
-      speedButton.textContent="速度 "+speeds[speedIndex]+"×";
-      try {localStorage.setItem("shiguang.mouseSpeed",String(speedIndex));}catch(_){}
-      showTip("鼠标速度 "+speeds[speedIndex]+"×");
-    });
-    button("sh-touch-exit",mouseRow,"关闭",function(){setMouseMode(false);});
-    speedButton.textContent="速度 "+speeds[speedIndex]+"×";
-    var cursor = element("div","sh-touch-cursor",document.body);
-    var mapLayer = element("div","sh-map-layer",document.body);
-    var mapMark = element("div","sh-map-marker",document.body);
-    var mapBar = element("div","sh-map-toolbar",document.body);
-    var mapStatus = element("div","sh-map-status",document.body);
-    var tip = element("div","sh-touch-tip",document.body);
-    button("sh-map-prev",mapBar,"◀ 上一个",function(){cycle(-1);});
-    button("sh-map-next",mapBar,"下一个 ▶",function(){cycle(1);});
-    button("sh-map-enter",mapBar,"进入",function(){enterSelected();});
-    var markButton = button("sh-map-add",mapBar,"标记星球",function(){
-      marking=!marking;
-      markButton.textContent=marking?"点击星球标记":"标记星球";
-      updateMapStatus();
-      showTip(marking?"点击地图中的星球中心，完成自定义选点":"标记已取消");
-    });
-    button("sh-map-reset",mapBar,"恢复模板",function(){
-      markers=[[0.164,0.47],[0.233,0.408],[0.376,0.376],
-        [0.517,0.426],[0.665,0.363],[0.784,0.538],
-        [0.688,0.681],[0.577,0.674],[0.465,0.683]];
-      custom=false;marking=false;selection=0;markButton.textContent="标记星球";
-      try{localStorage.removeItem("shiguang.mapMarkers");}catch(_){}
-      refreshMarker();showTip("恢复截图星图的九个参考选点");
-    });
-    button("sh-map-exit",mapBar,"退出",function(){setMapMode(false);});
-
-    function showTip(message) {
-      tip.textContent=message;tip.style.display="block";
-      clearTimeout(statusHideTimer);
-      statusHideTimer=setTimeout(function(){tip.style.display="none";},2400);
-    }
-    var syntheticReceived=0, realReceived=0, lastTrackedCanvas=null;
-    function getCanvas() {
-      // Ruffle may replace its renderer canvas on a reload. Resolve each time.
-      var all=root && root.querySelectorAll("canvas");
-      var c=null;
-      if(all)for(var i=0;i<all.length;i++){
-        var test=all[i],rect=test.getBoundingClientRect();
-        if(test.isConnected && rect.width>80 && rect.height>80 && (!c||rect.width>c.getBoundingClientRect().width))c=test;
-      }
-      if(!c) {
-        if (!canvasWarned){canvasWarned=true;report("触控诊断：Ruffle Canvas 未就绪");}
-        return null;
-      }
-      canvasWarned=false;
-      if(lastTrackedCanvas!==c){
-        lastTrackedCanvas=c;hoverPrimed=false;
-        // This listener verifies DOM delivery, NOT whether Flash executed a click.
-        c.addEventListener("pointerdown",function(ev){
-          if(ev.isTrusted)realReceived++;else syntheticReceived++;
-          if(realReceived<=2 && ev.isTrusted)
-            report("触控诊断：收到真实屏幕触摸，第 "+realReceived+" 次");
-          if(syntheticReceived<=3 && !ev.isTrusted)
-            report("触控诊断：Canvas 已接收合成按下事件，第 "+syntheticReceived+" 次，offset="+
-                   Math.round(ev.offsetX)+","+Math.round(ev.offsetY));
-        },true);
-      }
-      return c;
-    }
-    function bounds() {
-      var c=getCanvas();return c?c.getBoundingClientRect():null;
-    }
-    function clampPoint(point) {
-      var r=bounds();
-      if(!r || !point)return null;
-      return {x:Math.max(r.left+2,Math.min(r.right-2,point.x)),
-              y:Math.max(r.top+2,Math.min(r.bottom-2,point.y))};
-    }
-    function sendPointer(type,point,buttons,buttonCode) {
-      var c=getCanvas();if(!c||!point)return false;
-      var p=clampPoint(point);if(!p)return false;
-      var rect=c.getBoundingClientRect();
-      // Ruffle 0.7.1 Rust uses js_event.offset_x/offset_y * DPR, NOT clientX.
-      // In iOS WKWebView synthetic PointerEvent.offsetX may be 0 or wrong when
-      // a canvas lives under a transformed custom-element ShadowRoot.
-      var localX=(p.x-rect.left)*(c.offsetWidth||rect.width)/rect.width;
-      var localY=(p.y-rect.top)*(c.offsetHeight||rect.height)/rect.height;
-      var event=new PointerEvent(type,{
-        bubbles:true,composed:true,cancelable:true,
-        pointerId:77,pointerType:"mouse",isPrimary:true,
-        button:buttonCode===undefined?(type==="pointermove"?-1:0):buttonCode,
-        buttons:buttons,clientX:p.x,clientY:p.y,
-        screenX:p.x,screenY:p.y
+    lastMissing=false;
+    if(best!==canvas){
+      canvas=best;hover=false;
+      canvas.addEventListener("pointerdown",function(ev){
+        if(!ev.isTrusted)return;
+        hover=false;
+        endClick();
+        if(drag)endDrag();
+        if(enabled&&++recoveries<=5)report("鼠标：检测到真实手指点击，自动重新同步鼠标进入状态");
+      },true);
+      ["pointerup","pointercancel","pointerleave"].forEach(function(type){
+        canvas.addEventListener(type,function(ev){if(ev.isTrusted)hover=false;},true);
       });
-      // Override WebKit's derived properties for this synthetic event only.
-      try {
-        Object.defineProperty(event,"offsetX",{configurable:true,value:localX});
-        Object.defineProperty(event,"offsetY",{configurable:true,value:localY});
-      }catch(e){if(clicks<2)report("触控诊断：offset 修正不可用："+String(e).slice(0,70));}
-      if(!hoverPrimed){
-        hoverPrimed=true;
-        var enter=new PointerEvent("pointerenter",{
-          pointerId:77,pointerType:"mouse",isPrimary:true,clientX:p.x,clientY:p.y
-        });
-        c.dispatchEvent(enter);
-      }
-      c.dispatchEvent(event);
-      return true;
     }
-    function positionCursor(point) {
-      var p=clampPoint(point);if(!p)return;
-      mousePoint=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";
-      sendPointer("pointermove",p,dragging?1:0);
+    return canvas;
+  }
+  function bounds(){var c=canvasNow();return c?c.getBoundingClientRect():null;}
+  function clamp(point){
+    var r=bounds();if(!r||!point)return null;
+    return {x:Math.max(r.left+2,Math.min(r.right-2,point.x)),
+            y:Math.max(r.top+2,Math.min(r.bottom-2,point.y))};
+  }
+  function emit(type,point,buttons,code){
+    var c=canvasNow(),p=clamp(point);if(!c||!p)return false;
+    var r=c.getBoundingClientRect();
+    var x=(p.x-r.left)*(c.offsetWidth||r.width)/r.width;
+    var y=(p.y-r.top)*(c.offsetHeight||r.height)/r.height;
+    if(!hover||type==="pointerdown"){
+      hover=true;
+      c.dispatchEvent(new PointerEvent("pointerenter",{
+        pointerId:77,pointerType:"mouse",isPrimary:true,clientX:p.x,clientY:p.y
+      }));
     }
-    function centerCursor() {
-      var r=bounds();if(!r)return;
-      positionCursor({x:r.left+r.width/2,y:r.top+r.height/2});
-      showTip("准星已回到游戏画面中心");
-    }
-    function clickAt(point,buttonCode) {
-      if(!point||dragging)return;
-      if(!sendPointer("pointermove",point,0))return;
-      sendPointer("pointerdown",point,buttonCode===2?2:1,buttonCode);
-      // Leave at least several frames for slower iPads to observe the pressed state.
-      setTimeout(function(){sendPointer("pointerup",point,0,buttonCode);},125);
-      clicks++;
-      if(clicks<=4||clicks%10===0)report("虚拟鼠标：已发送 Canvas 点击 "+clicks+" 次（无账号或点击内容）");
-    }
-    function setDragging(yes) {
-      if(!mousePoint)return;
-      if(yes&&!dragging){
-        if(sendPointer("pointerdown",mousePoint,1,0)){
-          dragging=true;dragButton.classList.add("active");
-          dragButton.textContent="松开拖动";
-          showTip("已按住左键，滑动触控板拖拽");
-        }
-      }else if(!yes&&dragging){
-        dragging=false;
-        sendPointer("pointerup",mousePoint,0,0);
-        dragButton.classList.remove("active");
-        dragButton.textContent="按住拖动";
-      }
-    }
-    function dragBox(ev) {
-      if(!headerPointer||headerPointer.id!==ev.pointerId)return;
-      ev.preventDefault();
-      var x=headerPointer.baseX+ev.clientX-headerPointer.startX;
-      var y=headerPointer.baseY+ev.clientY-headerPointer.startY;
-      x=Math.max(5,Math.min(window.innerWidth-mouseBox.offsetWidth-5,x));
-      y=Math.max(5,Math.min(window.innerHeight-mouseBox.offsetHeight-5,y));
-      mouseBox.style.left=x+"px";mouseBox.style.top=y+"px";
-    }
-    header.addEventListener("pointerdown",function(ev){
-      ev.preventDefault();
-      var r=mouseBox.getBoundingClientRect();
-      headerPointer={id:ev.pointerId,startX:ev.clientX,startY:ev.clientY,baseX:r.left,baseY:r.top};
-      try{header.setPointerCapture(ev.pointerId);}catch(_){}
+    var ev=new PointerEvent(type,{
+      bubbles:true,composed:true,cancelable:true,pointerId:77,pointerType:"mouse",
+      isPrimary:true,button:code===undefined?(type==="pointermove"?-1:0):code,
+      buttons:buttons,clientX:p.x,clientY:p.y,screenX:p.x,screenY:p.y
     });
-    header.addEventListener("pointermove",dragBox);
-    header.addEventListener("pointerup",function(){headerPointer=null;});
-    header.addEventListener("pointercancel",function(){headerPointer=null;});
-    track.addEventListener("pointerdown",function(ev){
-      ev.preventDefault();
-      padPointer={id:ev.pointerId,x:ev.clientX,y:ev.clientY,total:0};
-      try{track.setPointerCapture(ev.pointerId);}catch(_){}
-    });
-    track.addEventListener("pointermove",function(ev){
-      if(!padPointer||ev.pointerId!==padPointer.id)return;
-      ev.preventDefault();
-      var dx=ev.clientX-padPointer.x,dy=ev.clientY-padPointer.y;
-      padPointer.x=ev.clientX;padPointer.y=ev.clientY;
-      padPointer.total+=Math.abs(dx)+Math.abs(dy);
-      if(!mousePoint)centerCursor();
-      if(mousePoint)positionCursor({x:mousePoint.x+dx*speeds[speedIndex],
-                                   y:mousePoint.y+dy*speeds[speedIndex]});
-    });
-    track.addEventListener("pointerup",function(ev){
-      if(!padPointer||ev.pointerId!==padPointer.id)return;
-      var total=padPointer.total;padPointer=null;
-      if(total<10)clickAt(mousePoint,0);
-    });
-    track.addEventListener("pointercancel",function(){padPointer=null;});
-    function setMouseMode(yes) {
-      if(!!yes===mouseEnabled)return;
-      if(yes&&mapEnabled)setMapMode(false);
-      mouseEnabled=!!yes;
-      mouseBox.style.display=mouseEnabled?"block":"none";
-      cursor.style.display=mouseEnabled?"block":"none";
-      if(mouseEnabled){centerCursor();showTip("滑动触控板控制准星，轻点或按「点击」操作");}
-      else{setDragging(false);padPointer=null;}
-      report("触控辅助：鼠标面板"+(mouseEnabled?"开启":"关闭")+"，事件目标=Canvas");
+    try{
+      Object.defineProperty(ev,"offsetX",{configurable:true,value:x});
+      Object.defineProperty(ev,"offsetY",{configurable:true,value:y});
+    }catch(e){if(count<2)report("鼠标：局部坐标设置异常 "+String(e).slice(0,90));}
+    c.dispatchEvent(ev);return true;
+  }
+  function move(point){
+    var p=clamp(point);if(!p)return;
+    pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";
+    emit("pointermove",p,drag?1:0);
+  }
+  function center(){var r=bounds();if(r)move({x:r.left+r.width/2,y:r.top+r.height/2});}
+  function endClick(){
+    if(clickTimer!==null){clearTimeout(clickTimer);clickTimer=null;}
+    if(!clickPending)return;
+    var p=clickPending;clickPending=null;
+    emit("pointerup",p,0,0);
+  }
+  function click(){
+    if(!enabled||drag||!pos)return;
+    endClick();hover=false;
+    if(!emit("pointermove",pos,0))return;
+    if(!emit("pointerdown",pos,1,0))return;
+    clickPending={x:pos.x,y:pos.y};
+    clickTimer=setTimeout(endClick,125);
+    count++;
+    if(count<=5||count%15===0)report("鼠标：已点击 "+count+" 次；手指交替可继续使用");
+  }
+  function endDrag(){
+    if(!drag)return;
+    drag=false;emit("pointerup",pos,0,0);
+    dragBtn.textContent="按住拖动";dragBtn.classList.remove("active");
+  }
+  function setDrag(v){
+    if(!enabled||!pos)return;
+    if(!v){endDrag();return;}
+    if(drag)return;
+    endClick();hover=false;emit("pointermove",pos,0);
+    if(emit("pointerdown",pos,1,0)){
+      drag=true;dragBtn.textContent="松开拖动";dragBtn.classList.add("active");
     }
-    function markerPosition(index) {
-      var r=bounds(),m=markers[index];
-      if(!r||!m)return null;
-      return {x:r.left+m[0]*r.width,y:r.top+m[1]*r.height};
+  }
+  header.addEventListener("pointerdown",function(e){
+    e.preventDefault();var r=box.getBoundingClientRect();
+    headerGesture={id:e.pointerId,x:e.clientX,y:e.clientY,left:r.left,top:r.top};
+    try{header.setPointerCapture(e.pointerId);}catch(_){}
+  });
+  header.addEventListener("pointermove",function(e){
+    if(!headerGesture||e.pointerId!==headerGesture.id)return;
+    e.preventDefault();
+    var x=headerGesture.left+e.clientX-headerGesture.x;
+    var y=headerGesture.top+e.clientY-headerGesture.y;
+    box.style.left=Math.max(5,Math.min(window.innerWidth-box.offsetWidth-5,x))+"px";
+    box.style.top=Math.max(5,Math.min(window.innerHeight-box.offsetHeight-5,y))+"px";
+  });
+  ["pointerup","pointercancel"].forEach(function(type){
+    header.addEventListener(type,function(){headerGesture=null;});
+  });
+  track.addEventListener("pointerdown",function(e){
+    e.preventDefault();padGesture={id:e.pointerId,x:e.clientX,y:e.clientY,distance:0};
+    try{track.setPointerCapture(e.pointerId);}catch(_){}
+  });
+  track.addEventListener("pointermove",function(e){
+    if(!padGesture||e.pointerId!==padGesture.id)return;
+    e.preventDefault();
+    var dx=e.clientX-padGesture.x,dy=e.clientY-padGesture.y;
+    padGesture.x=e.clientX;padGesture.y=e.clientY;
+    padGesture.distance+=Math.abs(dx)+Math.abs(dy);
+    if(!pos)center();
+    if(pos)move({x:pos.x+dx*speeds[speedIndex],y:pos.y+dy*speeds[speedIndex]});
+  });
+  track.addEventListener("pointerup",function(e){
+    if(!padGesture||e.pointerId!==padGesture.id)return;
+    var distance=padGesture.distance;padGesture=null;
+    if(distance<10)click();
+  });
+  track.addEventListener("pointercancel",function(){padGesture=null;});
+  function setMode(on){
+    if(enabled===!!on){
+      if(on){hover=false;if(pos)move(pos);}
+      return;
     }
-    function updateMapStatus() {
-      var name=custom?"自定义":"星图参考";
-      mapStatus.textContent=marking?"标记模式：点击星球中心":
-        "星图 "+name+" · "+(selection+1)+"/"+markers.length+" · 左右滑动切换";
-    }
-    function refreshMarker() {
-      if(!mapEnabled || !markers.length)return;
-      var p=markerPosition(selection);
-      if(p){mapMark.style.left=p.x+"px";mapMark.style.top=p.y+"px";}
-      updateMapStatus();
-      if(p)sendPointer("pointermove",p,0);
-    }
-    function cycle(direction) {
-      if(!markers.length)return;
-      selection=(selection+direction+markers.length)%markers.length;
-      refreshMarker();
-    }
-    function enterSelected() {
-      var p=markerPosition(selection);
-      if(p){clickAt(p,0);showTip("已向游戏发出星球点击；如未打开请自定义标记位置");}
-    }
-    function saveMarkerAt(clientX,clientY) {
-      var r=bounds();if(!r)return;
-      var p=clampPoint({x:clientX,y:clientY});if(!p)return;
-      if(!custom){markers=[];selection=0;custom=true;}
-      if(markers.length>=30){showTip("最多保存30个星球点");return;}
-      markers.push([(p.x-r.left)/r.width,(p.y-r.top)/r.height]);
-      selection=markers.length-1;
-      try{localStorage.setItem("shiguang.mapMarkers",JSON.stringify(markers));}catch(_){}
-      showTip("已标记第 "+markers.length+" 个星球点");
-      refreshMarker();
-    }
-    mapLayer.addEventListener("pointerdown",function(ev){
-      if(!mapEnabled)return;ev.preventDefault();
-      mapPointer={id:ev.pointerId,x:ev.clientX,y:ev.clientY};
-      try{mapLayer.setPointerCapture(ev.pointerId);}catch(_){}
-    });
-    mapLayer.addEventListener("pointerup",function(ev){
-      if(!mapEnabled||!mapPointer||ev.pointerId!==mapPointer.id)return;
-      ev.preventDefault();
-      var p=mapPointer;mapPointer=null;
-      var dx=ev.clientX-p.x,dy=ev.clientY-p.y;
-      if(Math.abs(dx)>58 && Math.abs(dx)>1.25*Math.abs(dy)){
-        cycle(dx<0?1:-1);
-      }else if(Math.abs(dx)<20&&Math.abs(dy)<20){
-        if(marking)saveMarkerAt(ev.clientX,ev.clientY);
-        else{
-          // Direct tap remains useful when the supplied screenshot map has
-          // icons outside the reference marker set.
-          clickAt({x:ev.clientX,y:ev.clientY},0);
-        }
-      }
-    });
-    mapLayer.addEventListener("pointercancel",function(){mapPointer=null;});
-    function setMapMode(yes){
-      if(!!yes===mapEnabled)return;
-      if(yes&&mouseEnabled)setMouseMode(false);
-      mapEnabled=!!yes;
-      mapLayer.style.display=mapEnabled?"block":"none";
-      mapBar.style.display=mapEnabled?"flex":"none";
-      mapMark.style.display=mapEnabled?"block":"none";
-      mapStatus.style.display=mapEnabled?"block":"none";
-      if(mapEnabled){
-        refreshMarker();
-        showTip("左右划星图或点上一颗/下一颗；点「进入」发送真实 Canvas 点击");
-      }else{mapPointer=null;marking=false;markButton.textContent="标记星球";}
-      report("触控辅助：星图选点"+(mapEnabled?"开启":"关闭")+
-        (custom?"（自定义星球点）":"（截图参考星图九点）"));
-    }
-    var resizeObserver=null;
-    try {
-      resizeObserver=new ResizeObserver(function(){
-        if(mouseEnabled&&mousePoint){
-          var clamped=clampPoint(mousePoint);
-          if(clamped){mousePoint=clamped;cursor.style.left=clamped.x+"px";cursor.style.top=clamped.y+"px";}
-        }
-        if(mapEnabled)refreshMarker();
-      });
-      resizeObserver.observe(player);
-    }catch(_){}
-    report("触控辅助 v4.6 已安装：Canvas 局部坐标修正/真实触摸对照；保留原游戏资源");
-    return {
-      enableMouse:function(){setMouseMode(true);},
-      disableMouse:function(){setMouseMode(false);},
-      enableMapSwipe:function(){setMapMode(true);},
-      disableMapSwipe:function(){setMapMode(false);},
-      resetCursor:centerCursor,
-      getBounds:bounds,
-      clickCanvas:function(x,y){return clickAt({x:x,y:y},0);},
-      clickNormalized:function(nx,ny){
-        var rect=bounds();
-        if(!rect)return false;
-        return clickAt({x:rect.left+nx*rect.width,y:rect.top+ny*rect.height},0);
-      },
-      deactivateMapLegacy:function(){setMapMode(false);},
-      cycleSpeed:function(){speedButton.click();},
-      hideAll:function(){setMouseMode(false);setMapMode(false);}
-    };
-  };
+    enabled=!!on;
+    box.style.display=enabled?"block":"none";
+    cursor.style.display=enabled?"block":"none";
+    if(enabled){hover=false;if(pos)move(pos);else center();tip("手指点完游戏后，可继续操作触控板");}
+    else{endClick();endDrag();padGesture=null;hover=false;}
+    report("鼠标："+(enabled?"开启":"关闭")+"；真实触摸后的状态自动恢复");
+  }
+  try{new ResizeObserver(function(){
+    if(enabled&&pos){var p=clamp(pos);if(p){pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";}}
+  }).observe(player);}catch(e){}
+  report("鼠标 v4.8：已加载无地图版，支持手指与虚拟鼠标交替使用");
+  return {enableMouse:function(){setMode(true);},disableMouse:function(){setMode(false);},
+    hideAll:function(){setMode(false);},resetCursor:center,
+    cycleSpeed:function(){speedBtn.click();}};
+};
 })();
