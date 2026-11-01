@@ -31,6 +31,8 @@ jobs:
           # No game resources are modified in the user's .srom.
           cp Patches/pvm-compat.js Resources/Ruffle/pvm-compat.js
           cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
+          cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
+          test -s Resources/Ruffle/byte-loader-followup.b64
           test -s Resources/Ruffle/pvm-compat.js
           test -s Resources/Ruffle/pvm-compat.b64
           test -f Resources/Ruffle/ruffle.js
