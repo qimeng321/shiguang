@@ -1,0 +1,132 @@
+name: Build macOS Universal App
+on:
+  push:
+    branches:
+      - main
+      - feature/mac-universal-1.0
+    paths:
+      - 'Mac/**'
+      - 'Sources/**'
+      - 'Patches/**'
+      - 'Resources/**'
+      - '.github/workflows/mac-universal.yml'
+  workflow_dispatch:
+
+jobs:
+  mac-universal:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare shared SwiftPM source package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mac-src/Sources"
+          cp Mac/Package.swift "$RUNNER_TEMP/mac-src/Package.swift"
+          cp Mac/MacApp.swift "$RUNNER_TEMP/mac-src/Sources/MacApp.swift"
+          cp Sources/GameServer.swift Sources/GameSocketBridge.swift Sources/LauncherModel.swift "$RUNNER_TEMP/mac-src/Sources/"
+          echo "SwiftPM macOS 12 shared sources prepared"
+      - name: Compile Intel x86_64 and Apple Silicon arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/mac-src"
+          swift build --package-path "$SRC" --arch x86_64 --arch arm64 \
+            -c release --product ShiguangMac --build-path "$RUNNER_TEMP/mac-build"
+          BIN="$(swift build --package-path "$SRC" --arch x86_64 --arch arm64 \
+            -c release --show-bin-path --build-path "$RUNNER_TEMP/mac-build")/ShiguangMac"
+          test -f "$BIN"
+          lipo -archs "$BIN" | tee "$RUNNER_TEMP/mac-architectures.txt"
+          lipo -verify_arch x86_64 arm64 "$BIN"
+          mkdir -p "$RUNNER_TEMP/mac-output"
+          cp "$BIN" "$RUNNER_TEMP/mac-output/ShiguangMac"
+      - name: Prepare Ruffle 0.7.1 and Chinese font
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --retry 3 \
+            "https://github.com/ruffle-rs/ruffle/releases/download/v0.7.1/ruffle-0.7.1-web-selfhosted.zip" \
+            -o "$RUNNER_TEMP/ruffle-mac.zip"
+          mkdir -p "$RUNNER_TEMP/ruffle-src" "$RUNNER_TEMP/ruffle-bundle"
+          unzip -q "$RUNNER_TEMP/ruffle-mac.zip" -d "$RUNNER_TEMP/ruffle-src"
+          JS="$(find "$RUNNER_TEMP/ruffle-src" -name ruffle.js -type f -print -quit)"
+          test -n "$JS"
+          ditto "$(dirname "$JS")" "$RUNNER_TEMP/ruffle-bundle"
+          echo 'Ruffle Web 0.7.1 (desktop WKWebView)' > "$RUNNER_TEMP/ruffle-bundle/engine-version.txt"
+          cp Patches/pvm-compat.js Patches/pvm-compat.b64 \
+             Patches/byte-loader-followup.b64 Patches/touch-controls.js \
+             "$RUNNER_TEMP/ruffle-bundle/"
+          mkdir -p "$RUNNER_TEMP/ruffle-bundle/fonts"
+          curl --fail --location --show-error --retry 4 \
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+            -o "$RUNNER_TEMP/ruffle-bundle/fonts/NotoSansCJKsc-Regular.otf"
+          curl --fail --location --show-error --retry 4 \
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE" \
+            -o "$RUNNER_TEMP/ruffle-bundle/fonts/OFL-LICENSE.txt"
+          test "$(git hash-object "$RUNNER_TEMP/ruffle-bundle/fonts/NotoSansCJKsc-Regular.otf")" = \
+               "dc15562470b4f842321894787a0d066879ccff8b"
+          test -f "$RUNNER_TEMP/ruffle-bundle/ruffle.js"
+          test -f "$RUNNER_TEMP/ruffle-bundle/touch-controls.js"
+          test -f "$RUNNER_TEMP/ruffle-bundle/pvm-compat.js"
+          node --check "$RUNNER_TEMP/ruffle-bundle/pvm-compat.js"
+          node --check "$RUNNER_TEMP/ruffle-bundle/touch-controls.js"
+      - name: Assemble macOS .app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/mac-output/拾光号 Mac.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp "$RUNNER_TEMP/mac-output/ShiguangMac" "$APP/Contents/MacOS/ShiguangMac"
+          chmod 755 "$APP/Contents/MacOS/ShiguangMac"
+          cp Mac/Info.plist "$APP/Contents/Info.plist"
+          ditto "$RUNNER_TEMP/ruffle-bundle" "$APP/Contents/Resources/Ruffle"
+          ICON=Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
+          mkdir -p "$RUNNER_TEMP/AppIcon.iconset"
+          for size in 16 32 128 256 512; do
+            sips -z "$size" "$size" "$ICON" \
+              --out "$RUNNER_TEMP/AppIcon.iconset/icon_$size"x"$size.png" >/dev/null
+          done
+          for size in 16 32 128 256 512; do
+            double=$((size*2))
+            if [ "$double" -le 1024 ]; then
+              sips -z "$double" "$double" "$ICON" \
+                --out "$RUNNER_TEMP/AppIcon.iconset/icon_$size"x"$size@2x.png" >/dev/null
+            fi
+          done
+          iconutil --convert icns "$RUNNER_TEMP/AppIcon.iconset" \
+            --output "$APP/Contents/Resources/AppIcon.icns"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" | grep -Fx '1.0'
+          /usr/libexec/PlistBuddy -c 'Print LSMinimumSystemVersion' "$APP/Contents/Info.plist" | grep -Fx '12.0'
+          lipo -verify_arch x86_64 arm64 "$APP/Contents/MacOS/ShiguangMac"
+          test -s "$APP/Contents/Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          echo "Ad-hoc signed for packaging only (not notarized)"
+      - name: Package macOS ZIP and DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/mac-output/拾光号 Mac.app"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" \
+            "$RUNNER_TEMP/ShiguangMac-v1.0-Universal.app.zip"
+          mkdir -p "$RUNNER_TEMP/dmg-source"
+          ditto "$APP" "$RUNNER_TEMP/dmg-source/拾光号 Mac.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-source/Applications"
+          hdiutil create -volname "拾光号 Mac 1.0" -srcfolder "$RUNNER_TEMP/dmg-source" \
+            -ov -format UDZO "$RUNNER_TEMP/ShiguangMac-v1.0-Universal.dmg"
+          unzip -tq "$RUNNER_TEMP/ShiguangMac-v1.0-Universal.app.zip"
+          cp "$RUNNER_TEMP/ShiguangMac-v1.0-Universal.app.zip" /tmp/
+          cp "$RUNNER_TEMP/ShiguangMac-v1.0-Universal.dmg" /tmp/
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangMac-v1.0-Universal-DMG
+          path: /tmp/ShiguangMac-v1.0-Universal.dmg
+          if-no-files-found: error
+      - name: Upload macOS APP ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangMac-v1.0-Universal-APP
+          path: /tmp/ShiguangMac-v1.0-Universal.app.zip
+          if-no-files-found: error
