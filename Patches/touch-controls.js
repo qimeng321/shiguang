@@ -123,11 +123,31 @@
       clearTimeout(statusHideTimer);
       statusHideTimer=setTimeout(function(){tip.style.display="none";},2400);
     }
+    var syntheticReceived=0, realReceived=0, lastTrackedCanvas=null;
     function getCanvas() {
-      var c=root && root.querySelector("canvas");
-      if (!c || !c.isConnected || c.getBoundingClientRect().width<10) {
-        if (!canvasWarned){canvasWarned=true;report("虚拟鼠标：等待 Ruffle 内部 Canvas 初始化");}
+      // Ruffle may replace its renderer canvas on a reload. Resolve each time.
+      var all=root && root.querySelectorAll("canvas");
+      var c=null;
+      if(all)for(var i=0;i<all.length;i++){
+        var test=all[i],rect=test.getBoundingClientRect();
+        if(test.isConnected && rect.width>80 && rect.height>80 && (!c||rect.width>c.getBoundingClientRect().width))c=test;
+      }
+      if(!c) {
+        if (!canvasWarned){canvasWarned=true;report("触控诊断：Ruffle Canvas 未就绪");}
         return null;
+      }
+      canvasWarned=false;
+      if(lastTrackedCanvas!==c){
+        lastTrackedCanvas=c;hoverPrimed=false;
+        // This listener verifies DOM delivery, NOT whether Flash executed a click.
+        c.addEventListener("pointerdown",function(ev){
+          if(ev.isTrusted)realReceived++;else syntheticReceived++;
+          if(realReceived<=2 && ev.isTrusted)
+            report("触控诊断：收到真实屏幕触摸，第 "+realReceived+" 次");
+          if(syntheticReceived<=3 && !ev.isTrusted)
+            report("触控诊断：Canvas 已接收合成按下事件，第 "+syntheticReceived+" 次，offset="+
+                   Math.round(ev.offsetX)+","+Math.round(ev.offsetY));
+        },true);
       }
       return c;
     }
@@ -141,21 +161,33 @@
               y:Math.max(r.top+2,Math.min(r.bottom-2,point.y))};
     }
     function sendPointer(type,point,buttons,buttonCode) {
-      var c=getCanvas(); if(!c || !point)return false;
+      var c=getCanvas();if(!c||!point)return false;
       var p=clampPoint(point);if(!p)return false;
-      // Rust web/src/lib.rs explicitly registers pointermove/down/up on canvas.
-      // Host.dispatchEvent() does NOT travel downward into the shadow canvas.
-      // Use one pointer event only; synthetic click/mouse events would duplicate input.
-      if(!hoverPrimed){hoverPrimed=true;c.dispatchEvent(new PointerEvent("pointerenter",{
-        pointerId:77,pointerType:"mouse",isPrimary:true,clientX:p.x,clientY:p.y
-      }));}
+      var rect=c.getBoundingClientRect();
+      // Ruffle 0.7.1 Rust uses js_event.offset_x/offset_y * DPR, NOT clientX.
+      // In iOS WKWebView synthetic PointerEvent.offsetX may be 0 or wrong when
+      // a canvas lives under a transformed custom-element ShadowRoot.
+      var localX=(p.x-rect.left)*(c.offsetWidth||rect.width)/rect.width;
+      var localY=(p.y-rect.top)*(c.offsetHeight||rect.height)/rect.height;
       var event=new PointerEvent(type,{
         bubbles:true,composed:true,cancelable:true,
         pointerId:77,pointerType:"mouse",isPrimary:true,
-        button:buttonCode===undefined ? (type==="pointermove"?-1:0) : buttonCode,
+        button:buttonCode===undefined?(type==="pointermove"?-1:0):buttonCode,
         buttons:buttons,clientX:p.x,clientY:p.y,
         screenX:p.x,screenY:p.y
       });
+      // Override WebKit's derived properties for this synthetic event only.
+      try {
+        Object.defineProperty(event,"offsetX",{configurable:true,value:localX});
+        Object.defineProperty(event,"offsetY",{configurable:true,value:localY});
+      }catch(e){if(clicks<2)report("触控诊断：offset 修正不可用："+String(e).slice(0,70));}
+      if(!hoverPrimed){
+        hoverPrimed=true;
+        var enter=new PointerEvent("pointerenter",{
+          pointerId:77,pointerType:"mouse",isPrimary:true,clientX:p.x,clientY:p.y
+        });
+        c.dispatchEvent(enter);
+      }
       c.dispatchEvent(event);
       return true;
     }
@@ -173,7 +205,8 @@
       if(!point||dragging)return;
       if(!sendPointer("pointermove",point,0))return;
       sendPointer("pointerdown",point,buttonCode===2?2:1,buttonCode);
-      setTimeout(function(){sendPointer("pointerup",point,0,buttonCode);},55);
+      // Leave at least several frames for slower iPads to observe the pressed state.
+      setTimeout(function(){sendPointer("pointerup",point,0,buttonCode);},125);
       clicks++;
       if(clicks<=4||clicks%10===0)report("虚拟鼠标：已发送 Canvas 点击 "+clicks+" 次（无账号或点击内容）");
     }
@@ -326,13 +359,21 @@
       });
       resizeObserver.observe(player);
     }catch(_){}
-    report("触控辅助 v4.5 已安装：Canvas 定位/触控板/星图选点；保留真实游戏资源");
+    report("触控辅助 v4.6 已安装：Canvas 局部坐标修正/真实触摸对照；保留原游戏资源");
     return {
       enableMouse:function(){setMouseMode(true);},
       disableMouse:function(){setMouseMode(false);},
       enableMapSwipe:function(){setMapMode(true);},
       disableMapSwipe:function(){setMapMode(false);},
       resetCursor:centerCursor,
+      getBounds:bounds,
+      clickCanvas:function(x,y){return clickAt({x:x,y:y},0);},
+      clickNormalized:function(nx,ny){
+        var rect=bounds();
+        if(!rect)return false;
+        return clickAt({x:rect.left+nx*rect.width,y:rect.top+ny*rect.height},0);
+      },
+      deactivateMapLegacy:function(){setMapMode(false);},
       cycleSpeed:function(){speedButton.click();},
       hideAll:function(){setMouseMode(false);setMapMode(false);}
     };
