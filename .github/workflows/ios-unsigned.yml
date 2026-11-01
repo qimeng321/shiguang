@@ -92,8 +92,8 @@ jobs:
           assert 'if(!active||!auto||mode==="planet")return;' in galaxy
           assert 'groups=[]' in galaxy
           assert 'var base=' not in galaxy
-          assert '"打开地图收藏"' in swift
           swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
+          assert '"打开地图收藏"' in swift
           assert 'galaxy-bookmarks.json' in swift
           assert 'handleGalaxyBookmarks' in swift
           assert 'player.dispatchEvent(new PointerEvent(' not in html
