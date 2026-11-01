@@ -1,3 +1,18 @@
+# 拾光号 iOS 启动器 v2.0 — 游戏入口路径修复
+
+这次重点修复 v1.9 日志中出现的路径截取异常：`rt/Game/NieoData/Client.swf` 可能来自绝对路径按字符长度截取造成的错误，而非 ZIP 中的真实位置。
+
+- 扫描资源时使用 `FileManager.enumerator(atPath:)`，直接读取系统给出的**相对路径**，不再使用 `dropFirst(root.path.count + 1)`。
+- 只接受实存、可读的 SWF 文件作为启动入口。
+- 暂存解压完成后检查入口；安装后再次验证真实入口，否则不报告导入成功。
+- 安装新资源时保留旧目录备份直到最终验证成功。
+- 诊断日志记录临时目录与最终已验证的入口文件路径。
+- 保留原有三个按钮、iPad 布局、Ruffle、HTTP/Socket 服务、共享文件夹及 GitHub Actions。
+
+**注意**：v1.9 最新日志显示用户已清除美化包，因此本次升级后需要重新导入一次 `.srom`。请优先使用相同签名和 Bundle ID 覆盖安装，勿先卸载 App。
+
+本项目在 Linux 环境执行 Swift 源码语法解析和文件一致性检查，不等同于 macOS Xcode 编译或 iPad 真机验证。
+
 # 拾光号 iOS 启动器 v1.9 — 依据 v1.8 真机日志修复“假成功黑屏”
 
 2026-11-01 的 v1.8 `diagnostics.txt` 表明：本地 HTTP 18765 端口已运行、只有 GET /index.html 请求；未出现 Ruffle 或 SWF 请求；且 SWF 检查显示 `[缺失] Client.swf`。

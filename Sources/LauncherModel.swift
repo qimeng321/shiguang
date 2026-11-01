@@ -121,10 +121,12 @@ enum LaunchDiagnostics {
         if !webMode {
             lines.append("[诊断] index.html 未在 SWF 同级目录出现：\(webRoot.path)")
             // Inspect only the first few matches for a misplaced web root.
-            if let scan = manager.enumerator(at: root, includingPropertiesForKeys: nil) {
+            if let scan = manager.enumerator(atPath: root.path) {
                 var matches: [String] = []
-                for case let url as URL in scan where url.lastPathComponent.lowercased() == "index.html" {
-                    matches.append(String(url.path.dropFirst(root.path.count + 1)))
+                while let relative = scan.nextObject() as? String {
+                    guard (relative as NSString).lastPathComponent.lowercased() == "index.html" else { continue }
+                    let actual = root.appendingPathComponent(relative)
+                    if manager.fileExists(atPath: actual.path) { matches.append(relative) }
                     if matches.count == 5 { break }
                 }
                 lines.append("[诊断] 已安装资源内其他网页入口：\(matches.isEmpty ? "无" : matches.joined(separator: ", "))")
@@ -190,7 +192,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 v1.9 启动；已创建 Documents/Import 和 diagnostics.txt；旧资源路径不变")
+        LaunchDiagnostics.log("启动器 v2.0 启动；已启用真实相对路径扫描与文件校验；旧资源路径不变")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -270,7 +272,7 @@ final class LauncherModel: ObservableObject {
                     self.gameRoot = Self.savedGameRoot
                     self.entries = entries
                     self.selectedEntry = Self.preferredEntry(in: entries)
-                    self.status = "美化包导入成功，已识别 \(entries.count) 个游戏入口，可点击“进入游戏”。"
+                    self.status = "美化包已安装，已验证 \(entries.count) 个实际游戏入口。"
                     self.refreshResourceCheck()
                     LaunchDiagnostics.log("资源导入完成：\(entries.count) 个可启动入口")
                     self.isImporting = false
@@ -386,6 +388,7 @@ final class LauncherModel: ObservableObject {
         try manager.unzipItem(at: source, to: staging, skipCRC32: false)
         let entries = findEntries(in: staging)
         guard !entries.isEmpty else { throw ImportError.noGameFiles }
+        LaunchDiagnostics.log("临时解压目录已验证：\(entries.joined(separator: ", "))")
 
         if manager.fileExists(atPath: backup.path) {
             try manager.removeItem(at: backup)
@@ -394,7 +397,6 @@ final class LauncherModel: ObservableObject {
         if existing { try manager.moveItem(at: savedGameRoot, to: backup) }
         do {
             try manager.moveItem(at: staging, to: savedGameRoot)
-            if existing { try? manager.removeItem(at: backup) }
         } catch {
             if existing { try? manager.moveItem(at: backup, to: savedGameRoot) }
             throw error
@@ -403,32 +405,52 @@ final class LauncherModel: ObservableObject {
         // rather than assuming every staging relative path still resolves.
         // This also catches a partial package or an unexpected ZIP wrapper.
         let installedEntries = findEntries(in: savedGameRoot)
-        guard !installedEntries.isEmpty else { throw ImportError.noGameFiles }
+        guard !installedEntries.isEmpty else {
+            // Never leave a broken installation in place after replacing an old one.
+            try? manager.removeItem(at: savedGameRoot)
+            if existing && manager.fileExists(atPath: backup.path) {
+                try? manager.moveItem(at: backup, to: savedGameRoot)
+            }
+            throw ImportError.noGameFiles
+        }
+        for relative in installedEntries {
+            let actual = savedGameRoot.appendingPathComponent(relative)
+            guard manager.fileExists(atPath: actual.path) else {
+                throw ImportError.invalidPackage
+            }
+        }
+        LaunchDiagnostics.log("安装后路径校验完成：\(installedEntries.joined(separator: ", "))")
+        if existing { try? manager.removeItem(at: backup) }
         return installedEntries
     }
 
+    // FileManager.enumerator(atPath:) returns paths RELATIVE to `root.path`.
+    // The URL-based enumerator's `url.path` is not guaranteed to have the same
+    // textual prefix as the input root URL (e.g. /var vs /private/var), so
+    // `dropFirst(root.path.count + 1)` can yield a truncated, nonexistent path.
     private nonisolated static func findEntries(in root: URL) -> [String] {
         let manager = FileManager.default
-        guard let enumerator = manager.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+        var isDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: root.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              let enumerator = manager.enumerator(atPath: root.path) else { return [] }
 
-        var result: [String] = []
-        for case let url as URL in enumerator {
-            guard url.pathExtension.lowercased() == "swf",
-                  let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
-                  values.isRegularFile == true,
-                  values.isSymbolicLink != true else { continue }
-            let relative = String(url.path.dropFirst(root.path.count + 1))
-            result.append(relative)
+        var found: [String] = []
+        while let relative = enumerator.nextObject() as? String {
+            guard (relative as NSString).pathExtension.lowercased() == "swf" else { continue }
+            // Validate the actual target before exposing a launch entry.
+            let file = root.appendingPathComponent(relative)
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isRegularFile == true, values.isSymbolicLink != true,
+                  manager.isReadableFile(atPath: file.path) else { continue }
+            found.append(relative)
         }
-        let candidates = result.filter { path in
+
+        let candidates = found.filter { path in
             ["client.swf", "main.swf", "game.swf"].contains(path.lastPathComponent.lowercased())
         }
         let launchable = candidates.isEmpty
-            ? result.filter { $0.split(separator: "/").count <= 2 }
+            ? found.filter { $0.split(separator: "/").count <= 2 }
             : candidates
         return launchable.sorted { a, b in
             let folderA = (a as NSString).deletingLastPathComponent
