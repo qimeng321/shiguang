@@ -1,3 +1,11 @@
+# v3.2 — iPad 触屏键盘兼容性修复
+
+v3.1 已通过用户真机验证能进入登录页面，但点击 Flash 输入框不能调出 iPad 系统键盘。Ruffle 0.7.1 `web/packages/core/src/internal/ui/static-styles.css` 把 `#virtual-keyboard` 放在 `top:-100px;width:1px;height:1px;opacity:0`，在 iOS 26.4 及之后的 WebKit 中容易无法触发系统软键盘。Ruffle 官方亦有 iOS 文本输入焦点问题报告 #23509、#23675。
+
+修复：保留原 v3.1 Ruffle 0.7.1、PVM + ByteLoader 双补丁、`/__micro/game.html` 直启、HTTP 和 WS/TCP 代理。创建右上角第三个原生网页触摸键盘按钮（位于刷新、清缓存下方），通过用户实际触摸事件同步聚焦 Ruffle 自己的 Shadow DOM `#virtual-keyboard`。将该输入框移回画面内且赋予非零大小、不完全透明，解决离屏隐藏输入拒绝键盘的问题。Ruffle 自带的 `virtualKeyboardInput()` 负责把实际键入文字转为 Flash 键盘事件；另加小型“退格/回车”操作，兼容部分触屏键盘退格键。使用真实事件处理器而非 Swift 异步 WebView JavaScript 调用，以避免失去 iOS 用户手势激活上下文。
+
+**使用方法：先点击 Flash 账号/密码输入框，再点右上角蓝色 ⌨ 按钮**，在系统键盘输入文字。键盘按钮只补足系统唤起，不会自己定位游戏内输入目标。不会记录账号、密码或键入文本，也不会修改美化包。仍需 iPad 真机测试键盘是否弹出及文字是否写入 Flash；编译成功不能视为输入修复验证。
+
 # v3.0 — 针对 Ruffle URLStream 的 Flash PVM 事件兼容补丁
 
 从真实 Client.as / ByteLoader.as / PVM_Loader.as 和 Ruffle v0.7.1 代码交叉分析，发现 Ruffle URLStream 借助 URLLoader 完整下载后一次性分发 PROGRESS/COMPLETE，而 URLLoader.close() 是占位实现。原始 PVM 在 PROGRESS 内 close() 并 reload，先前旧请求可能继续发 COMPLETE，干扰版本管理器。v2.9 改为 TCP FIN 依旧无法解决。Windows 微端含 Ruffle 桌面执行路径及 Windows Flash ActiveX 路径，单纯认为它只用 Ruffle 并不准确。

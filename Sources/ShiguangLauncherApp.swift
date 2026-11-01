@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v3.1")
+                        Text("v3.2")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)

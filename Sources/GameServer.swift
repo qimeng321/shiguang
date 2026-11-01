@@ -596,6 +596,27 @@ final class GameServer {
           ruffle-player{display:block;flex:none;width:var(--game-w)!important;height:var(--game-h)!important}
           #message{position:fixed;inset:0;display:flex;justify-content:center;align-items:center;
                    background:#000;color:#b9c1d0;font:14px -apple-system,sans-serif;pointer-events:none}
+          /* A real HTML touch target inside WKWebView retains user activation.
+             iPad Safari may refuse to open the keyboard from a Flash callback. */
+          #keyboard-trigger{
+            position:fixed;right:18px;top:150px;z-index:2147483000;
+            width:51px;height:51px;border-radius:50%;border:0;
+            background:rgba(255,255,255,.98);color:#2877e9;
+            box-shadow:0 3px 10px rgba(0,0,0,.2);
+            display:grid;place-items:center;font-size:25px;
+            cursor:pointer;-webkit-tap-highlight-color:transparent;
+            touch-action:manipulation;
+          }
+          #keyboard-trigger:active{background:#e1edff}
+          #keyboard-actions{
+            display:none;position:fixed;right:18px;top:211px;z-index:2147483000;
+            gap:5px;align-items:center;
+          }
+          #keyboard-actions button{
+            border:0;border-radius:13px;background:rgba(255,255,255,.96);
+            color:#1c497e;padding:9px 10px;font-size:13px;font-weight:600;
+            box-shadow:0 3px 9px rgba(0,0,0,.17);touch-action:manipulation;
+          }
         </style>
         <script>
           window.RufflePlayer=window.RufflePlayer||{};
@@ -608,10 +629,81 @@ final class GameServer {
         </script><script src="/ruffle/ruffle.js"></script>
         <script src="/ruffle/pvm-compat.js"></script></head>
         <body><div id="game"></div><div id="message">正在载入游戏资源…</div>
+        <button id="keyboard-trigger" type="button" title="显示 iPad 键盘"
+                aria-label="打开输入键盘">⌨</button>
+        <div id="keyboard-actions" aria-label="游戏键盘辅助键">
+          <button id="keyboard-backspace" type="button">退格</button>
+          <button id="keyboard-enter" type="button">回车</button>
+        </div>
         <script>
         (async function(){
           var player,message=document.getElementById("message"),last="";
           function report(x){try{window.webkit.messageHandlers.gameDiagnostics.postMessage("状态："+x)}catch(e){}}
+          // Ruffle 0.7.1 creates its own #virtual-keyboard inside an OPEN
+          // ShadowRoot, but hides it at top:-100px, 1px, opacity:0.
+          // iPad WebKit can reject focus on a completely off-screen input.
+          function keyboardInput(){
+            var p=player||document.querySelector("ruffle-player");
+            var root=p&&p.shadowRoot;
+            return root&&root.getElementById("virtual-keyboard");
+          }
+          function prepareKeyboard(){
+            var input=keyboardInput();
+            if(!input)return null;
+            // The input belongs to Ruffle; typing dispatches its native
+            // KeyboardEvents to the active Flash TextField, without logging.
+            var props={
+              position:"fixed",top:"auto",bottom:"12px",left:"12px",
+              width:"20px",height:"20px",opacity:"0.015",
+              display:"block",visibility:"visible",pointerEvents:"none"
+            };
+            Object.keys(props).forEach(function(k){
+              input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),
+                                      props[k],"important");
+            });
+            input.setAttribute("autocomplete","off");
+            input.setAttribute("autocorrect","off");
+            input.setAttribute("autocapitalize","none");
+            input.setAttribute("spellcheck","false");
+            input.setAttribute("enterkeyhint","done");
+            return input;
+          }
+          function openKeyboard(event){
+            if(event&&event.cancelable)event.preventDefault();
+            if(event)event.stopPropagation();
+            var input=prepareKeyboard();
+            if(!input){report("虚拟键盘：Ruffle 输入组件尚未就绪");return}
+            try{
+              // iOS requires synchronous focus during a real user gesture.
+              // Refocus if Flash already focused the off-screen input but
+              // iPadOS refused to display its software keyboard.
+              if(input.getRootNode().activeElement===input)input.blur();
+              input.focus({preventScroll:true});
+              document.getElementById("keyboard-actions").style.display="flex";
+              report("虚拟键盘：已手动请求唤起 iPad 键盘");
+            }catch(err){report("虚拟键盘：唤起失败："+String(err).slice(0,120))}
+          }
+          var trigger=document.getElementById("keyboard-trigger");
+          trigger.addEventListener("pointerdown",function(e){if(e.cancelable)e.preventDefault()},{passive:false});
+          trigger.addEventListener("touchend",openKeyboard,{passive:false});
+          trigger.addEventListener("click",openKeyboard);
+          function virtualKey(key,code){
+            var input=keyboardInput();
+            if(!player||!input)return;
+            // Dispatch the same DOM KeyboardEvent that Ruffle listens to.
+            for(var type of ["keydown","keyup"]){
+              player.dispatchEvent(new KeyboardEvent(type,{key:key,code:code,bubbles:true}));
+            }
+            input.focus({preventScroll:true});
+          }
+          [["keyboard-backspace","Backspace","Backspace"],
+           ["keyboard-enter","Enter","Enter"]].forEach(function(binding){
+            var button=document.getElementById(binding[0]);
+            button.addEventListener("pointerdown",function(e){if(e.cancelable)e.preventDefault()},{passive:false});
+            button.addEventListener("click",function(e){
+              e.preventDefault();virtualKey(binding[1],binding[2]);
+            });
+          });
           function fit(){
             var v=window.visualViewport,w=v?v.width:window.innerWidth,h=v?v.height:window.innerHeight;
             var factor=Math.min(w/960,h/560),pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
@@ -628,7 +720,7 @@ final class GameServer {
           try{
             if(!window.RufflePlayer||!window.RufflePlayer.newest)throw Error("Ruffle JS 未加载");
             player=window.RufflePlayer.newest().createPlayer();
-            document.getElementById("game").appendChild(player);fit();
+            document.getElementById("game").appendChild(player);fit();prepareKeyboard();
             report("微端式直启：Client.swf（不加载 React 网页）");
             var prepared=null;
             try {
