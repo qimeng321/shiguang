@@ -42,11 +42,32 @@ window.ShiguangPVMCompat = async function (resourceURL, report) {
   }
   result.set(body.subarray(src), dst); dst += body.length - src;
   if (dst !== result.length) throw Error('兼容补丁长度校验失败');
+  // v3.1 second stage: replace ByteLoader's stale COMPLETE cleanup.
+  // First-stage PVM patch is retained; the original .srom is never edited.
+  const byteResponse = await fetch('/ruffle/byte-loader-followup.b64', {cache: 'no-store'});
+  if (!byteResponse.ok) throw Error('ByteLoader 兼容补丁不可用：HTTP ' + byteResponse.status);
+  const bytePack = Uint8Array.from(atob((await byteResponse.text()).trim()), c => c.charCodeAt(0));
+  const byteChanges = JSON.parse(new TextDecoder().decode(await inflate(bytePack)));
+  const combined = new Uint8Array(132272);
+  let from = 0, to = 0;
+  for (const [start, end, replacement] of byteChanges) {
+    if (start < from || end < start || end > result.length) throw Error('ByteLoader 补丁偏移异常');
+    combined.set(result.subarray(from, start), to); to += start - from;
+    const bytes = Uint8Array.from(atob(replacement), c => c.charCodeAt(0));
+    combined.set(bytes, to); to += bytes.length; from = end;
+  }
+  combined.set(result.subarray(from), to); to += result.length - from;
+  if (to !== combined.length) throw Error('ByteLoader 补丁长度校验失败');
   // Ruffle supports in-memory FWS via DataLoadOptions.
-  const movie = new Uint8Array(8 + result.length);
+  const movie = new Uint8Array(8 + combined.length);
   movie[0] = 70; movie[1] = 87; movie[2] = 83; movie[3] = original[3];
   new DataView(movie.buffer).setUint32(4, movie.length, true);
-  movie.set(result, 8);
-  report('已对原版 Client.swf 应用 PVM 事件兼容补丁（仅内存、不改资源包）');
+  movie.set(combined, 8);
+  const sha = await crypto.subtle.digest('SHA-256', movie);
+  const computed = [...new Uint8Array(sha)].map(n => n.toString(16).padStart(2, '0')).join('');
+  if (computed !== 'b4a6db67d2af3d47f079e2f24f84c13000eff2517165b889dd7d57287a6256af') {
+    throw Error('ByteLoader 兼容补丁哈希校验不通过');
+  }
+  report('已应用 PVM + ByteLoader 双层事件兼容补丁（内存校验通过）');
   return movie;
 };
