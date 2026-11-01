@@ -1,3 +1,19 @@
+# 拾光号 v2.6 — 真全屏游戏 / 精简启动体验
+
+根据用户 v2.5 真机截图与原网页打包的 React `index.js`：
+- 原网页 Flash object 属性为 `width=960 height=560`，并有 `scale=noScale` Flash 参数。
+- v2.5 CSS 使用 `min()` 保持 960:560 比例，仍可能留下黑边或矩形边界。
+- Ruffle 仍配置 `unmuteOverlay="visible"`，因而显示“点击取消静音”；默认 `splashScreen` 会出现蓝色 Ruffle Logo/进度条。
+
+v2.6 修改：
+1. Ruffle `unmuteOverlay="hidden"`，`splashScreen=false`，`preloader=false`，去除两种内置启动遮罩（Flash 尚未就绪时只显示黑色背景，不意味着跳过真实加载）。
+2. 原网页/游戏元素 CSS 强制 100vw × 100dvh，无边距、无最大尺寸/原始比例限制。
+3. Ruffle `scale="exactfit"` + `forceScale=true`，覆盖网页原来的 `noScale`，确保 Flash 内容而不只是外层播放器铺满可用区域。因不维持原始宽高比，可能稍有变形；不裁切游戏按钮。
+4. 左上角返回、右上角刷新/清理缓存、左下角诊断入口均保留，资源、登录设置、WebSocket 与 PVM 实验保持原样。
+5. 缓存清理只针对 WebKit 内存/磁盘缓存，不会删除 `Application Support/Game` 下的游戏资源。
+
+注意：v2.5 日志仍显示 PVM 的 version.swf 两次 GET 后未进入登录；v2.6 仅修复 UI 与显示，不保证登录问题解决。若画面拉伸或按钮触控映射仍有问题，提供横屏截图和 diagnostics.txt。
+
 # 拾光号 v2.5 — 全屏游戏与右上角网页控制
 
 参考用户提供的 xin计划 IPA 实际内容，确认其 Flutter + flutter_inappwebview_ios（WKWebView）+ Ruffle 架构。本项目保持 SwiftUI + WKWebView + Ruffle，不必为了界面重写 Flutter。
