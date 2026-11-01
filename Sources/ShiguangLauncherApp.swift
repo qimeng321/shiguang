@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v2.7")
+                        Text("v2.8")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -556,6 +556,19 @@ struct GameWebView: UIViewRepresentable {
               window.addEventListener('DOMContentLoaded', function () {
                 setTimeout(function () { reportPlayerState('启动5秒'); }, 5000);
                 setTimeout(function () { reportPlayerState('启动20秒'); }, 20000);
+                // Verify the actual Ruffle host position on iPad: this catches
+                // future layout regressions without reading any game/account data.
+                setTimeout(function () {
+                  var host = document.querySelector('ruffle-object,ruffle-player,ruffle-embed,object[data$=".swf"]');
+                  if (!host) { status('布局检查：未找到游戏画布'); return; }
+                  var rect = host.getBoundingClientRect();
+                  var vw = window.innerWidth, vh = window.innerHeight;
+                  var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+                  status('布局检查：画面=' + Math.round(rect.width) + '×' + Math.round(rect.height) +
+                    '；中心=' + Math.round(cx) + ',' + Math.round(cy) +
+                    '；屏幕=' + vw + '×' + vh +
+                    '；偏移=' + Math.round(cx - vw/2) + ',' + Math.round(cy - vh/2));
+                }, 8000);
               });
               window.addEventListener('error', function (event) {
                 if (event.message) fail('网页脚本错误：' + event.message);

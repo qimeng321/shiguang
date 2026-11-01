@@ -264,50 +264,48 @@ final class GameServer {
         }
         // Only this known host/port is mapped. No system-wide proxy or arbitrary relay.
         let bootstrap = #"""
-        <style id="shiguang-immersive-game">
-          /* The React page is already 100vw/100vh, but its Flash object has
-             hard-coded 960 x 560 HTML attributes. Ruffle inherits those bounds.
-             Override BOTH the React viewport and the polyfilled host, and force
-             exactfit below so the internal Flash stage fills it as well. */
-          html, body, #root, #root > div {
-            width: 100vw !important;
-            height: 100vh !important;
-            height: 100dvh !important;
-            min-width: 100vw !important;
-            min-height: 100vh !important;
-            min-height: 100dvh !important;
-            max-width: none !important;
-            max-height: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
+        <style id="shiguang-centered-game">
+          /* The React client creates a 960x560 Flash object. Never pin it to
+             top-left: center the Ruffle host in the iPad viewport instead.
+             Its original 12:7 aspect ratio is preserved without cropping. */
+          html, body {
+            width: 100% !important; height: 100% !important;
+            margin: 0 !important; padding: 0 !important;
+            overflow: hidden !important; background: #000 !important;
+          }
+          #root {
+            position: fixed !important; inset: 0 !important;
+            display: flex !important; align-items: center !important;
+            justify-content: center !important;
+            margin: 0 !important; padding: 0 !important;
+            width: 100vw !important; height: 100vh !important;
+            height: 100dvh !important; background: #000 !important;
+          }
+          #root > div {
+            width: 100% !important; height: 100% !important;
+            display: flex !important; align-items: center !important;
+            justify-content: center !important;
+            margin: 0 !important; padding: 0 !important;
             overflow: hidden !important;
             background: #000 !important;
           }
-          #root > div {
-            position: fixed !important;
-            inset: 0 !important;
-          }
-          #flashcontent,
+          /* Strong centering fallback for Ruffle's replacement custom element,
+             even if its own wrapper doesn't participate in React's flexbox. */
           object[data$=".swf"], embed[src$=".swf"],
-          ruffle-player, ruffle-object, ruffle-embed {
-            display: block !important;
+          ruffle-object, ruffle-player, ruffle-embed {
             position: fixed !important;
-            left: 0 !important;
-            top: 0 !important;
-            right: auto !important;
-            bottom: auto !important;
-            width: 100vw !important;
-            height: 100vh !important;
-            height: 100dvh !important;
-            min-width: 100vw !important;
-            min-height: 100vh !important;
-            min-height: 100dvh !important;
-            max-width: none !important;
-            max-height: none !important;
-            aspect-ratio: auto !important;
-            border: 0 !important;
-            margin: 0 !important;
-            padding: 0 !important;
+            left: 50vw !important; top: 50vh !important;
+            top: 50dvh !important;
+            right: auto !important; bottom: auto !important;
+            transform: translate(-50%, -50%) !important;
+            transform-origin: center center !important;
+            width: min(100vw, 171.4286dvh) !important;
+            height: min(100dvh, 58.3333vw) !important;
+            max-width: 100vw !important; max-height: 100dvh !important;
+            margin: 0 !important; padding: 0 !important;
+            border: 0 !important; box-shadow: none !important;
+            box-sizing: border-box !important;
+            display: block !important;
           }
         </style>
         <script>
@@ -317,11 +315,12 @@ final class GameServer {
             polyfills: true,
             autoplay: "on",
             unmuteOverlay: "hidden",
-            preloader: false,
             splashScreen: false,
-            letterbox: "off",
-            scale: "exactfit",
+            letterbox: "on",
+            scale: "showAll",
             forceScale: true,
+            salign: "",
+            forceAlign: true,
             allowScriptAccess: true,
             logLevel: "debug",
             socketProxy: [{
@@ -356,7 +355,7 @@ final class GameServer {
           })();
         </script>
         """#
-        LaunchDiagnostics.log("HTML 已注入 Ruffle 无启动遮罩配置；强制游戏全屏 exactfit（可能轻微拉伸）")
+        LaunchDiagnostics.log("HTML 已注入 Ruffle 无遮罩配置；游戏 12:7 保持比例并在视口中央显示")
         let updated: String
         if let headEnd = html.range(of: "</head>", options: [.caseInsensitive]) {
             updated = html.replacingCharacters(in: headEnd, with: bootstrap + "\n</head>")
@@ -576,7 +575,7 @@ final class GameServer {
             ruffle-player { width: 100%; height: 100%; display: block; }
           </style>
           <script>window.RufflePlayer = window.RufflePlayer || {};
-          window.RufflePlayer.config = { autoplay: "on", unmuteOverlay: "hidden", preloader: false, splashScreen: false, letterbox: "off", scale: "exactfit", forceScale: true, publicPath: "/ruffle/" };</script>
+          window.RufflePlayer.config = { autoplay: "on", unmuteOverlay: "hidden", splashScreen: false, letterbox: "on", scale: "showAll", forceScale: true, salign: "", forceAlign: true, publicPath: "/ruffle/" };</script>
           <script src="/ruffle/ruffle.js"></script>
         </head>
         <body>

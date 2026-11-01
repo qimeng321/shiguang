@@ -1,3 +1,11 @@
+# v2.8 — 游戏保持比例并水平/垂直居中
+
+v2.7 的真机截图显示 Ruffle 0.7.1 可渲染 960×560 的游戏背景，但舞台仍固定左上角。根因之一是 v2.6 注入样式强制 `position:fixed;left:0;top:0`，破坏了 React 原本的 flex 居中定位。虽然 v2.7 试图进行全屏 exactfit，但游戏实际内部保持固定区域。
+
+v2.8 恢复居中策略：`#root` 与容器使用 Flex 居中；另对 Ruffle polyfill 的宿主元素使用 `left:50vw;top:50dvh;transform:translate(-50%,-50%)`，并按照 Flash 原始 960:560（12:7）比例计算自适应尺寸，画面完整优先，不裁切也不拉伸变形。Ruffle 改为 `showAll`，继续隐藏 splash 与取消静音提示。8 秒时增加 viewport 与舞台实际 bounding rect 诊断，便于发现仍有居中偏差。
+
+当前游戏登录仍受 PVM 后续加载问题影响：v2.7 日志确认 Ruffle 0.7.1 仍只有两次 version.swf GET，本次不修改通信、资源或引擎版本以降低回归风险。
+
 # v2.7 — Ruffle 0.7.1 引擎对齐实验
 
 对用户提供的「拾光号微端-1.2.5-安装包.exe」静态解包确认：Windows 微端用 C# Windows Forms 的 AxClient.exe + 原生 Ruffle Rust x64 引擎 GameEngine.exe，后者 2026-10-29 构建（Ruffle 0.7.1）；内部客户端 Client.swf 82806 字节、version.swf 20512 字节。iOS v2.6 内置 Ruffle 0.5.0 stable（2026-08-03）。
