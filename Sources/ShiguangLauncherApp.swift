@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v4.3")
+                        Text("v4.4")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -301,6 +301,10 @@ struct GameView: View {
     @State private var isClearingWebCache = false
     @State private var toolsExpanded = false
     @State private var toolMenuGeneration = 0
+    @State private var controlGeneration = 0
+    @State private var controlAction = ""
+    @State private var virtualMouseEnabled = false
+    @State private var mapSwipeEnabled = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -312,7 +316,8 @@ struct GameView: View {
                     .foregroundStyle(.white)
                     .tint(.white)
             } else if let server, let url = server.playURL(for: entry) {
-                GameWebView(url: url, onStatus: { message in
+                GameWebView(url: url, controlGeneration: controlGeneration,
+                            controlAction: controlAction, onStatus: { message in
                     LaunchDiagnostics.log("网页状态：" + message)
                 }, onError: { message in
                     errorText = message
@@ -339,46 +344,49 @@ struct GameView: View {
                     }
                     .accessibilityLabel("返回拾光号启动器")
                     Spacer()
-                    // A compact toolbar preserves the game's top-right corner.
-                    // Expand on demand; it folds back automatically after six seconds.
-                    HStack(spacing: 9) {
-                        if toolsExpanded {
-                            Button {
-                                collapseToolMenu()
-                                reloadGame()
-                            } label: {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 20, weight: .semibold))
-                                    .foregroundStyle(Color(red: 0.06, green: 0.50, blue: 0.98))
-                                    .frame(width: 46, height: 46)
-                                    .background(.white.opacity(0.95), in: Circle())
-                            }
-                            .disabled(server == nil || isClearingWebCache)
-                            .accessibilityLabel("刷新游戏")
-
-                            Button {
-                                collapseToolMenu()
-                                showingCacheConfirmation = true
-                            } label: {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 19, weight: .semibold))
-                                    .foregroundStyle(Color(red: 0.60, green: 0.16, blue: 0.80))
-                                    .frame(width: 46, height: 46)
-                                    .background(.white.opacity(0.95), in: Circle())
-                            }
-                            .disabled(isClearingWebCache)
-                            .accessibilityLabel("清理网页缓存")
-                        }
-
+                    // Fold the iPad utilities into one compact dropdown.
+                    VStack(alignment: .trailing, spacing: 9) {
                         Button(action: toggleToolMenu) {
                             Image(systemName: toolsExpanded ? "xmark" : "ellipsis")
                                 .font(.system(size: 21, weight: .bold))
                                 .foregroundStyle(Color(red: 0.12, green: 0.35, blue: 0.66))
                                 .frame(width: 46, height: 46)
-                                .background(.white.opacity(0.88), in: Circle())
+                                .background(.white.opacity(0.9), in: Circle())
                                 .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
                         }
                         .accessibilityLabel(toolsExpanded ? "收起游戏工具" : "展开游戏工具")
+                        if toolsExpanded {
+                            VStack(alignment: .leading, spacing: 3) {
+                                gameTool("keyboard", "输入键盘") {
+                                    sendControl("toggleKeyboard")
+                                }
+                                gameTool("cursorarrow", virtualMouseEnabled ? "关闭虚拟鼠标" : "虚拟鼠标") {
+                                    virtualMouseEnabled.toggle()
+                                    if virtualMouseEnabled { mapSwipeEnabled = false }
+                                    sendControl(virtualMouseEnabled ? "enableMouse" : "disableMouse")
+                                }
+                                gameTool("hand.draw", mapSwipeEnabled ? "关闭地图滑动" : "地图滑动") {
+                                    mapSwipeEnabled.toggle()
+                                    if mapSwipeEnabled { virtualMouseEnabled = false }
+                                    sendControl(mapSwipeEnabled ? "enableMapSwipe" : "disableMapSwipe")
+                                }
+                                Divider().padding(.vertical, 3)
+                                gameTool("arrow.clockwise", "刷新游戏") {
+                                    collapseToolMenu()
+                                    reloadGame()
+                                }
+                                .disabled(server == nil || isClearingWebCache)
+                                gameTool("trash", "清理缓存") {
+                                    collapseToolMenu()
+                                    showingCacheConfirmation = true
+                                }
+                                .disabled(isClearingWebCache)
+                            }
+                            .padding(8)
+                            .frame(width: 154)
+                            .background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 15))
+                            .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
+                        }
                     }
                     .animation(.easeInOut(duration: 0.18), value: toolsExpanded)
                 }
@@ -452,6 +460,29 @@ struct GameView: View {
         .onDisappear { server = nil }
     }
 
+    private func gameTool(_ icon: String, _ label: String,
+                          action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(label, systemImage: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color(red: 0.13, green: 0.29, blue: 0.48))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    private func sendControl(_ action: String) {
+        guard server != nil else { return }
+        controlAction = action
+        controlGeneration += 1
+        LaunchDiagnostics.log("[触控辅助] 调用：" + action)
+        collapseToolMenu()
+    }
+
     private func toggleToolMenu() {
         toolMenuGeneration += 1
         withAnimation(.easeInOut(duration: 0.18)) { toolsExpanded.toggle() }
@@ -471,6 +502,8 @@ struct GameView: View {
     private func reloadGame() {
         guard server != nil && !isClearingWebCache else { return }
         errorText = nil
+        virtualMouseEnabled = false
+        mapSwipeEnabled = false
         reloadGeneration += 1
         LaunchDiagnostics.log("[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
     }
@@ -479,6 +512,8 @@ struct GameView: View {
         guard !isClearingWebCache else { return }
         isClearingWebCache = true
         errorText = nil
+        virtualMouseEnabled = false
+        mapSwipeEnabled = false
         LaunchDiagnostics.log("[游戏控制] 用户确认清理 WebKit 网页缓存：不会删除 Application Support/Game")
         // Avoid allWebsiteDataTypes(): cookies, localStorage and saved login data are NOT removed.
         let types: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
@@ -494,6 +529,8 @@ struct GameView: View {
 
 struct GameWebView: UIViewRepresentable {
     let url: URL
+    let controlGeneration: Int
+    let controlAction: String
     let onStatus: (String) -> Void
     let onError: (String) -> Void
 
@@ -625,6 +662,7 @@ struct GameWebView: UIViewRepresentable {
             WKUserScript(source: diagnostics, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         )
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        context.coordinator.lastControlGeneration = controlGeneration
         webView.navigationDelegate = context.coordinator
         webView.isOpaque = false
         webView.backgroundColor = .black
@@ -635,7 +673,19 @@ struct GameWebView: UIViewRepresentable {
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {}
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        guard context.coordinator.lastControlGeneration != controlGeneration else { return }
+        context.coordinator.lastControlGeneration = controlGeneration
+        let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
+                       "enableMapSwipe", "disableMapSwipe"]
+        guard allowed.contains(controlAction) else { return }
+        let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"
+        webView.evaluateJavaScript(js) { _, error in
+            if let error {
+                LaunchDiagnostics.log("[触控辅助] 指令执行异常：" + error.localizedDescription)
+            }
+        }
+    }
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.stopLoading()
         webView.navigationDelegate = nil
@@ -644,6 +694,7 @@ struct GameWebView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(onStatus: onStatus, onError: onError) }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        var lastControlGeneration = 0
         let onStatus: (String) -> Void
         let onError: (String) -> Void
         init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
