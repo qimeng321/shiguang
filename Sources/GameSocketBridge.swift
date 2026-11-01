@@ -11,6 +11,8 @@ final class GameSocketBridge {
     private let listener: NWListener
     private var sessions: [UUID: Session] = [:]
     private var acceptedCount = 0
+    private var gameEnteredFlag=false
+    var hasEnteredGame: Bool { queue.sync { gameEnteredFlag } }
     private var remoteProbe: NWConnection?
     var hasReceivedClient: Bool { queue.sync { acceptedCount > 0 } }
     // Access state through the listener queue, because the UI polls from the
@@ -58,7 +60,9 @@ final class GameSocketBridge {
             guard let self else { webSocket.cancel(); return }
             self.acceptedCount += 1
             let id = UUID()
-            let session = Session(webSocket: webSocket, queue: self.queue, index: self.acceptedCount) { [weak self] in
+            let session = Session(webSocket: webSocket, queue: self.queue,
+                                  index: self.acceptedCount,
+                                  onEnterGame: { [weak self] in self?.gameEnteredFlag = true }) { [weak self] in
                 self?.sessions.removeValue(forKey: id)
             }
             self.sessions[id] = session
@@ -118,8 +122,11 @@ final class GameSocketBridge {
         private var downstreamCount=0
         private var upstreamTotal=0
         private var downstreamTotal=0
+        private let onEnterGame: () -> Void
 
-        init(webSocket: NWConnection, queue: DispatchQueue, index: Int, onClose: @escaping () -> Void) {
+        init(webSocket: NWConnection, queue: DispatchQueue, index: Int,
+             onEnterGame: @escaping () -> Void, onClose: @escaping () -> Void) {
+            self.onEnterGame = onEnterGame
             self.index = index
             self.webSocket = webSocket
             self.queue = queue
@@ -204,6 +211,69 @@ final class GameSocketBridge {
             }
         }
 
+
+        private func uint32BE(_ bytes: [UInt8], _ offset: Int) -> UInt32 {
+            return UInt32(bytes[offset]) << 24 |
+                   UInt32(bytes[offset + 1]) << 16 |
+                   UInt32(bytes[offset + 2]) << 8 |
+                   UInt32(bytes[offset + 3])
+        }
+
+        /// Inspect only non-sensitive protocol metadata and make selected game
+        /// channel endpoints accessible through our fixed Ruffle socketProxy.
+        /// Packet header: size(4) version(1) cmd(4) userID(4) result(4).
+        /// Never log userID or payload bytes.
+        private func mapServerList(_ data: Data) -> Data {
+            var bytes = [UInt8](data)
+            var cursor=0
+            while cursor + 17 <= bytes.count {
+                let packetSize=Int(uint32BE(bytes,cursor))
+                guard packetSize>=17 && cursor+packetSize<=bytes.count else { break }
+                let cmd=uint32BE(bytes,cursor+5)
+                let result=uint32BE(bytes,cursor+13)
+                if cmd == 1001 && result == 0 {
+                    LaunchDiagnostics.log("[选服阶段] 收到 CMD1001 成功响应，进入游戏状态")
+                    onEnterGame()
+                }
+                if cmd == 105 || cmd == 106 {
+                    let countOffset=cursor+17+(cmd == 105 ? 8 : 0)
+                    let firstServer=countOffset+4
+                    if countOffset+4<=cursor+packetSize {
+                        let count=Int(uint32BE(bytes,countOffset))
+                        LaunchDiagnostics.log("[服务器列表] CMD\(cmd)，条目数=\(count)，响应结果=\(result)")
+                        if count>=1 && count<=20 && firstServer+count*30<=cursor+packetSize {
+                            for i in 0..<count {
+                                let entry=firstServer+i*30
+                                let onlineID=uint32BE(bytes,entry)
+                                let hostBytes=bytes[(entry+8)..<(entry+24)]
+                                let host=String(decoding: hostBytes.prefix(while: {$0 != 0}),as: UTF8.self)
+                                let port=(UInt16(bytes[entry+24])<<8)|UInt16(bytes[entry+25])
+                                LaunchDiagnostics.log("[服务器列表] 频道ID=\(onlineID)，服务器=\(host):\(port)")
+                                // This game's Windows config sends both login and
+                                // game traffic to 103.91.210.16:22973. Ruffle Web
+                                // cannot connect to a host/port without an exact
+                                // socketProxy match, so normalize the list endpoint.
+                                if host != GameSocketBridge.serverHost || port != GameSocketBridge.serverPort {
+                                    let newHost=Array(GameSocketBridge.serverHost.utf8)
+                                    for j in 0..<16 {
+                                        bytes[entry+8+j]=j<newHost.count ? newHost[j] : 0
+                                    }
+                                    bytes[entry+24]=UInt8(GameSocketBridge.serverPort>>8)
+                                    bytes[entry+25]=UInt8(GameSocketBridge.serverPort & 255)
+                                    LaunchDiagnostics.log("[服务器列表] 已按 Windows 微端线上配置映射频道连接地址到 103.91.210.16:22973")
+                                }
+                            }
+                        } else {
+                            LaunchDiagnostics.log("[服务器列表] 响应长度不足或频道数量异常，未修改数据")
+                        }
+                    }
+                } else if downstreamCount <= 4 {
+                    LaunchDiagnostics.log("[游戏协议] 下行命令=\(cmd)，包字节=\(packetSize)，结果=\(result)")
+                }
+                cursor += packetSize
+            }
+            return Data(bytes)
+        }
         private func receiveTCP() {
             tcp.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, error in
                 guard let self, !self.closed else { return }
@@ -227,9 +297,10 @@ final class GameSocketBridge {
                     self.loggedDownstreamBytes = true
                     LaunchDiagnostics.log("[登录网络] 首次远端→Flash 传输：" + String(data.count) + " 字节（不记录内容）")
                 }
+                let mapped = self.mapServerList(data)
                 let metadata = NWProtocolWebSocket.Metadata(opcode: .binary)
                 let context = NWConnection.ContentContext(identifier: "binary", metadata: [metadata])
-                self.webSocket.send(content: data, contentContext: context, isComplete: true,
+                self.webSocket.send(content: mapped, contentContext: context, isComplete: true,
                                     completion: .contentProcessed { [weak self] error in
                     guard let self else { return }
                     if let error {

@@ -211,6 +211,13 @@ final class GameServer {
             serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
             return
         }
+        if packagedWebApp && path == "/__micro/status" {
+            let entered = bridge?.hasEnteredGame ?? false
+            let body = entered ? "{\"enteredGame\":true}" : "{\"enteredGame\":false}"
+            send(data: Data(body.utf8), mime: "application/json",
+                 headOnly: headOnly, connection: connection)
+            return
+        }
         if packagedWebApp && path == "/__micro/game.html" {
             versionGetCount = 0
             proceededBeyondVersion = false
@@ -630,6 +637,27 @@ final class GameServer {
                    background:#000;color:#b9c1d0;font:14px -apple-system,sans-serif;pointer-events:none}
           /* A real HTML touch target inside WKWebView retains user activation.
              iPad Safari may refuse to open the keyboard from a Flash callback. */
+          #keyboard-dock{
+            position:fixed;top:max(5px,env(safe-area-inset-top));left:50%;
+            transform:translateX(-50%);z-index:2147483001;
+            width:min(450px,calc(100vw - 165px));height:43px;
+            display:flex;align-items:center;gap:5px;
+            pointer-events:auto;
+          }
+          #keyboard-dock[hidden]{display:none!important}
+          #shiguang-input{
+            flex:1;min-width:0;width:100%;height:40px;box-sizing:border-box;
+            border:2px solid #4fa3f4;border-radius:12px;
+            background:rgba(250,253,255,.98);color:#163755;
+            padding:5px 12px;font:16px -apple-system,sans-serif;
+            box-shadow:0 4px 13px rgba(0,0,0,.32);
+            outline:none;touch-action:manipulation;
+          }
+          #keyboard-dock-hide{
+            height:36px;min-width:46px;border:0;border-radius:10px;
+            color:#183f67;background:rgba(255,255,255,.98);
+            font:600 13px -apple-system,sans-serif;touch-action:manipulation;
+          }
           #keyboard-trigger{
             position:fixed;right:18px;top:150px;z-index:2147483000;
             width:51px;height:51px;border-radius:50%;border:0;
@@ -661,6 +689,13 @@ final class GameServer {
         </script><script src="/ruffle/ruffle.js"></script>
         <script src="/ruffle/pvm-compat.js"></script></head>
         <body><div id="game"></div><div id="message">正在载入游戏资源…</div>
+        <div id="keyboard-dock">
+          <input id="shiguang-input" type="text" aria-label="游戏文字输入" 
+                 placeholder="先点游戏输入框，再点这里"
+                 autocomplete="off" autocorrect="off" autocapitalize="none"
+                 spellcheck="false" enterkeyhint="done">
+          <button id="keyboard-dock-hide" type="button" aria-label="隐藏输入栏">完成</button>
+        </div>
         <button id="keyboard-trigger" type="button" title="显示 iPad 键盘"
                 aria-label="打开输入键盘">⌨</button>
         <div id="keyboard-actions" aria-label="游戏键盘辅助键">
@@ -675,9 +710,11 @@ final class GameServer {
           // ShadowRoot, but hides it at top:-100px, 1px, opacity:0.
           // iPad WebKit can reject focus on a completely off-screen input.
 
+          // Use a real document-level input. A fixed-position element inside
+          // Ruffle's transformed ShadowRoot was rendered at the top-left on iPad.
+          // Keeping this outside Ruffle gives actual viewport-centered placement.
           function keyboardInput(){
-            var p=player||document.querySelector("ruffle-player");
-            return p&&p.shadowRoot&&p.shadowRoot.getElementById("virtual-keyboard");
+            return document.getElementById("shiguang-input");
           }
           function gameKey(key,code){
             if(!player)return;
@@ -687,43 +724,35 @@ final class GameServer {
               }));
             });
           }
-          var dockLast="";
           function placeInputDock(){
-            var input=keyboardInput();
-            if(!input)return;
-            // Stationary top bar: moving a focused field during keyboard animation
-            // causes iPadOS to blur, collapsing the software keyboard.
-            var width=Math.min(380,Math.max(200,window.innerWidth*0.42));
-            var x=Math.max(80,Math.round((window.innerWidth-width)/2));
-            var state=Math.round(x)+",14 宽"+Math.round(width);
-            if(state===dockLast)return;
-            if(input.getRootNode().activeElement===input&&dockLast)return;
-            input.style.setProperty("left",Math.round(x)+"px","important");
-            input.style.setProperty("top","14px","important");
-            input.style.setProperty("width",Math.round(width)+"px","important");
-            dockLast=state;
-            report("输入栏位置：顶部居中 "+state+"，输入时保持不动");
+            // CSS uses left:50% + translateX(-50%): no recalculation or
+            // focus-dependent layout updates during keyboard animations.
           }
+          var keyboardDock=document.getElementById("keyboard-dock");
+          var hideDockButton=document.getElementById("keyboard-dock-hide");
+          function setDockVisible(visible,reason){
+            if(!visible){
+              var active=keyboardInput();
+              if(active&&document.activeElement===active)active.blur();
+            }
+            keyboardDock.hidden=!visible;
+            if(reason)report("输入栏："+(visible?"显示":"隐藏")+"；"+reason);
+          }
+          hideDockButton.addEventListener("click",function(e){
+            e.preventDefault();setDockVisible(false,"用户手动操作");
+          });
+          function pollGameEntry(){
+            fetch("/__micro/status",{cache:"no-store"}).then(function(r){return r.json()})
+              .then(function(data){
+                if(data&&data.enteredGame&&!keyboardDock.hidden){
+                  setDockVisible(false,"已检测到进入游戏回应");
+                }
+              }).catch(function(){});
+          }
+          setInterval(pollGameEntry,2200);
           function prepareKeyboard(){
             var input=keyboardInput();
             if(!input)return null;
-            // Use Ruffle's existing HTML input, but make it directly tappable.
-            // Programmatic focus in iPadOS 26 closes the keyboard immediately.
-            var styles={
-              position:"fixed",top:"0px",right:"auto",left:"0px",bottom:"auto",
-              width:"320px",height:"42px",opacity:"1",zIndex:"2147483000",
-              visibility:"visible",display:"block",pointerEvents:"auto",
-              background:"rgba(250,253,255,0.98)",color:"#163755",
-              border:"2px solid #4fa3f4",boxShadow:"0 4px 14px rgba(0,0,0,.28)",
-              borderRadius:"13px",boxSizing:"border-box",padding:"7px 14px",
-              fontSize:"17px",fontWeight:"500",touchAction:"manipulation",
-              transform:"none",outline:"none"
-            };
-            Object.keys(styles).forEach(function(k){
-              input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),styles[k],"important");
-            });
-            input.setAttribute("aria-hidden","false");
-            input.setAttribute("placeholder","先点游戏输入框，再点这里");
             input.setAttribute("autocomplete","off");
             input.setAttribute("autocorrect","off");
             input.setAttribute("autocapitalize","none");
@@ -770,18 +799,21 @@ final class GameServer {
               // At-target capture fires before Ruffle's normal bubbling
               // virtualKeyboardInput() handler, preventing duplicate events.
               input.addEventListener("input",function(ev){
-                ev.stopImmediatePropagation();flush();
+                flush();
               },true);
               input.addEventListener("focus",function(){report("键盘：真实输入框获得焦点");},true);
               input.addEventListener("blur",function(){report("键盘：输入框失去焦点");},true);
-              report("键盘：顶部居中固定输入栏已启用");
+              report("键盘：独立网页顶栏已启用，CSS 居中，不跟随游戏画布移动");
             }
             placeInputDock();
             return input;
           }
           function openKeyboard(ev){
             if(ev){ev.preventDefault();ev.stopPropagation();}
-            if(prepareKeyboard())report("请点击顶部居中的输入栏，弹出键盘也不移动");
+            if(prepareKeyboard()){
+              setDockVisible(true,"键盘按钮打开输入栏");
+              report("请点屏幕顶部正中的白色输入栏");
+            }
           }
           var trigger=document.getElementById("keyboard-trigger");
           trigger.addEventListener("click",openKeyboard);
