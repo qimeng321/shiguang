@@ -115,6 +115,13 @@ window.ShiguangGalaxyMenu=function(player,touch,log){
   autoButton.style.marginTop="9px";
   var layer=E("div",document.body);layer.id="sg47-calibrate";
   var guide=E("div",document.body);guide.id="sg47-guide";
+  var cancelCal=B(document.body,"取消校准",function(){
+    calibration=null;layer.style.display="none";guide.style.display="none";
+    cancelCal.style.display="none";show();note("已取消校准");
+  });
+  cancelCal.style.cssText="position:fixed;top:126px;right:30px;display:none;"+
+    "z-index:2147482983;padding:12px 16px;background:#e2f5ff;"+
+    "color:#133a63;border:0;border-radius:10px;font-weight:bold";
   var zoomBar=E("div",document.body);zoomBar.id="sg47-zoom";
   var zoom=1,panX=0,panY=0;
   function btnZoom(t,fn){return B(zoomBar,t,fn);}
@@ -161,7 +168,7 @@ window.ShiguangGalaxyMenu=function(player,touch,log){
       var r=E("div",items);r.className="sg47-row";
       var label=item.name+(pointOK(item)?"  ✓":"  未定位置");
       var b=B(r,label,function(){choose(i);});b.className="sg47-entry";
-      var edit=B(r,"编辑",function(){selected=i;editName.value=item.name;note("已选中："+item.name);});
+      var edit=B(r,"编辑",function(){selected=i;if(mode==="galaxy"){gidx=i;save();}editName.value=item.name;note("已选中："+item.name);});
       edit.className="sg47-edit";
     });
     if(!visible){
@@ -213,7 +220,10 @@ window.ShiguangGalaxyMenu=function(player,touch,log){
   }
   function addFromTap(which){
     if(!lastTap){note("还没有记录到点击：先点原地图的目标，再回来保存");return;}
-    // Do not force a short timeout: a user can navigate the menu after tapping.
+    if(Date.now()-lastTap.at>180000){
+      note("上次点击已超过3分钟，为避免误收藏请重新点一次目标");return;
+    }
+    // The point comes from the user's actual or working virtual mouse click.
     var place={x:lastTap.x,y:lastTap.y};
     if(which==="galaxy"){
       if(groups.length>=60){note("最多保存60个星系");return;}
@@ -246,6 +256,7 @@ window.ShiguangGalaxyMenu=function(player,touch,log){
     if(!selectedItem()){note("请先选择收藏项");return;}
     calibration={mode:mode,idx:selected,group:gidx};
     panel.style.display="none";layer.style.display="block";
+    cancelCal.style.display="block";
     guide.textContent="在原地图上点需要校准的星系/星球中心";guide.style.display="block";
   }
   layer.addEventListener("pointerup",function(ev){
@@ -255,7 +266,8 @@ window.ShiguangGalaxyMenu=function(player,touch,log){
     var tar=calibration.mode==="galaxy"?groups[calibration.idx]:
       ((groups[calibration.group]||{planets:[]}).planets[calibration.idx]);
     if(tar){tar.x=point.x;tar.y=point.y;save();}
-    calibration=null;layer.style.display="none";guide.style.display="none";show();
+    calibration=null;layer.style.display="none";guide.style.display="none";
+    cancelCal.style.display="none";show();
     note("点击位置已更新。");
   },true);
   function nearestGalaxy(p){
@@ -299,7 +311,7 @@ window.ShiguangGalaxyMenu=function(player,touch,log){
   }
   function close(){
     active=false;hide();calibration=null;layer.style.display="none";
-    guide.style.display="none";clearTimeout(drawerTimer);
+    guide.style.display="none";cancelCal.style.display="none";clearTimeout(drawerTimer);
   }
   function applyZoom(){
     player.style.transform=zoom>1?"translate("+panX+"px,"+panY+"px) scale("+zoom+")":"";
