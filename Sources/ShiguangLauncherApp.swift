@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v4.5")
+                        Text("v4.6")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -305,6 +305,7 @@ struct GameView: View {
     @State private var controlAction = ""
     @State private var virtualMouseEnabled = false
     @State private var mapSwipeEnabled = false
+    @State private var touchZoomEnabled = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -362,7 +363,10 @@ struct GameView: View {
                                 }
                                 gameTool("cursorarrow", virtualMouseEnabled ? "关闭精准鼠标" : "精准鼠标") {
                                     virtualMouseEnabled.toggle()
-                                    if virtualMouseEnabled { mapSwipeEnabled = false }
+                                    if virtualMouseEnabled {
+                                        mapSwipeEnabled = false
+                                        touchZoomEnabled = false
+                                    }
                                     sendControl(virtualMouseEnabled ? "enableMouse" : "disableMouse")
                                 }
                                 if virtualMouseEnabled {
@@ -373,10 +377,21 @@ struct GameView: View {
                                         sendControl("cycleSpeed")
                                     }
                                 }
-                                gameTool("map", mapSwipeEnabled ? "关闭星图导航" : "星图导航") {
+                                gameTool("map", mapSwipeEnabled ? "关闭地图选择" : "地图选择（星系/星球）") {
                                     mapSwipeEnabled.toggle()
-                                    if mapSwipeEnabled { virtualMouseEnabled = false }
+                                    if mapSwipeEnabled {
+                                        virtualMouseEnabled = false
+                                        touchZoomEnabled = false
+                                    }
                                     sendControl(mapSwipeEnabled ? "enableMapSwipe" : "disableMapSwipe")
+                                }
+                                gameTool("zoom-in", touchZoomEnabled ? "关闭触控放大" : "触控放大（真实点击）") {
+                                    touchZoomEnabled.toggle()
+                                    if touchZoomEnabled {
+                                        virtualMouseEnabled = false
+                                        mapSwipeEnabled = false
+                                    }
+                                    sendControl(touchZoomEnabled ? "enableZoom" : "disableZoom")
                                 }
                                 Divider().padding(.vertical, 3)
                                 gameTool("arrow.clockwise", "刷新游戏") {
@@ -512,6 +527,7 @@ struct GameView: View {
         errorText = nil
         virtualMouseEnabled = false
         mapSwipeEnabled = false
+        touchZoomEnabled = false
         reloadGeneration += 1
         LaunchDiagnostics.log("[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
     }
@@ -522,6 +538,7 @@ struct GameView: View {
         errorText = nil
         virtualMouseEnabled = false
         mapSwipeEnabled = false
+        touchZoomEnabled = false
         LaunchDiagnostics.log("[游戏控制] 用户确认清理 WebKit 网页缓存：不会删除 Application Support/Game")
         // Avoid allWebsiteDataTypes(): cookies, localStorage and saved login data are NOT removed.
         let types: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
@@ -685,7 +702,8 @@ struct GameWebView: UIViewRepresentable {
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
         let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
-                       "enableMapSwipe", "disableMapSwipe", "resetCursor", "cycleSpeed"]
+                       "enableMapSwipe", "disableMapSwipe", "resetCursor", "cycleSpeed",
+                       "enableZoom", "disableZoom"]
         guard allowed.contains(controlAction) else { return }
         let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"
         webView.evaluateJavaScript(js) { _, error in
