@@ -72,7 +72,7 @@ jobs:
           from pathlib import Path
           js=Path("Resources/Ruffle/touch-controls.js").read_text()
           html=Path("Sources/GameServer.swift").read_text()
-          assert 'c.dispatchEvent(event)' in js, "Pointer events must target inner Canvas"
+          assert 'c.dispatchEvent(ev)' in js, "Pointer events must target inner Canvas"
           assert 'window.ShiguangTouchControls' in js
           assert '/ruffle/touch-controls.js' in html
           assert 'touchControls=window.ShiguangTouchControls(player,report)' in html
