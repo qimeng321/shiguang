@@ -5,7 +5,13 @@ final class GameServer {
     private let root: URL
     private let ruffle: URL
     private let queue = DispatchQueue(label: "cn.shiguanghao.launcher.http")
-    private let listener: NWListener
+    // A browser-safe, deterministic port avoids iOS WebKit's restricted ports.
+    // Retry on collision rather than silently falling back to a random port.
+    private static let httpPortCandidates: [UInt16] = [18765, 18766, 18767, 18768, 18769]
+    private var listener: NWListener?
+    private var readyHTTPPort: UInt16?
+    private var failureMessage: String?
+    var startError: String? { queue.sync { failureMessage } }
     private let packagedWebApp: Bool
     private let bridge: GameSocketBridge?
 
@@ -18,20 +24,54 @@ final class GameServer {
             throw ServerError.missingRuffle
         }
         self.ruffle = assets.resolvingSymlinksInPath()
-        let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
-        listener = try NWListener(using: parameters, on: .any)
-        listener.newConnectionHandler = { [weak self] connection in
-            self?.accept(connection)
-        }
-        listener.start(queue: queue)
+        try startHTTPListener(at: 0)
     }
 
-    deinit { listener.cancel() }
+    deinit { listener?.cancel() }
+
+    /// Bind one of our known WebKit-safe ports on loopback only.
+    /// NWListener.port must not be trusted before its .ready callback.
+    private func startHTTPListener(at index: Int) throws {
+        let portNumber = Self.httpPortCandidates[index]
+        guard let localPort = NWEndpoint.Port(rawValue: portNumber) else {
+            throw ServerError.invalidLocalPort
+        }
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: localPort)
+        let newListener = try NWListener(using: parameters, on: localPort)
+        listener = newListener
+        failureMessage = nil
+        readyHTTPPort = nil
+        newListener.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                // Only expose a URL once the socket is actually accepting traffic.
+                self.readyHTTPPort = portNumber
+                self.failureMessage = nil
+            case .failed(let error):
+                self.readyHTTPPort = nil
+                newListener.cancel()
+                let next = index + 1
+                if next < Self.httpPortCandidates.count {
+                    do { try self.startHTTPListener(at: next) }
+                    catch { self.failureMessage = "无法启动本地 HTTP 服务：\(error.localizedDescription)" }
+                } else {
+                    self.failureMessage = "本地端口均不可用（18765–18769）：\(error.localizedDescription)"
+                }
+            default:
+                break
+            }
+        }
+        newListener.newConnectionHandler = { [weak self] connection in
+            self?.accept(connection)
+        }
+        newListener.start(queue: queue)
+    }
 
     func playURL(for entry: String) -> URL? {
         if let bridge, !bridge.isReady { return nil }
-        guard let port = listener.port?.rawValue else { return nil }
+        guard let port = queue.sync(execute: { readyHTTPPort }), port > 0 else { return nil }
         var components = URLComponents()
         components.scheme = "http"
         components.host = "127.0.0.1"
@@ -266,5 +306,11 @@ final class GameServer {
 
 enum ServerError: LocalizedError {
     case missingRuffle
-    var errorDescription: String? { "应用内缺少 Ruffle 运行文件。" }
+    case invalidLocalPort
+    var errorDescription: String? {
+        switch self {
+        case .missingRuffle: return "应用内缺少 Ruffle 运行文件。"
+        case .invalidLocalPort: return "本地 HTTP 端口配置无效。"
+        }
+    }
 }

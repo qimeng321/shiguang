@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v1.4")
+                        Text("v1.5")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -317,13 +317,17 @@ struct GameView: View {
                 let service = try GameServer(root: packagedWebApp ? candidate : root,
                                              packagedWebApp: packagedWebApp)
                 for _ in 0..<100 {
+                    if let reason = service.startError {
+                        errorText = reason
+                        return
+                    }
                     if service.playURL(for: entry) != nil {
                         server = service
                         return
                     }
                     try await Task.sleep(nanoseconds: 100_000_000)
                 }
-                errorText = "本机资源服务启动超时。"
+                errorText = "本地资源服务未就绪。请退出游戏后重试；若仍失败，请提供该错误截图。"
             }
             catch { errorText = "启动失败：\(error.localizedDescription)" }
         }
@@ -382,11 +386,17 @@ struct GameWebView: UIViewRepresentable {
                                    didReceive message: WKScriptMessage) {
             if let details = message.body as? String { onError(details) }
         }
+        private func reportNavigationError(_ error: Error, webView: WKWebView) {
+            let nsError = error as NSError
+            let requestURL = (nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String)
+                ?? webView.url?.absoluteString ?? "未知地址"
+            onError("网页加载失败 [\(nsError.domain):\(nsError.code)] \(nsError.localizedDescription)\n请求地址：\(requestURL)")
+        }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            onError("网页加载失败：\(error.localizedDescription)")
+            reportNavigationError(error, webView: webView)
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            onError("网页加载失败：\(error.localizedDescription)")
+            reportNavigationError(error, webView: webView)
         }
     }
 }
