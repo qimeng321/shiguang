@@ -1,4 +1,4 @@
-# 拾光号 iOS 启动器 v1.5（三按钮 · 本地端口修复版）
+# 拾光号 iOS 启动器 v1.6（三按钮 · 本地端口修复版）
 
 ## 首页功能
 首页只有三个主要按钮：**导入美化包、清除美化包、进入游戏**。不再显示官网、下载美化包、导入配置或游戏服务器信息。
@@ -36,10 +36,21 @@ WebView 新增网页脚本错误提示，方便后续排查资源缺失、WebAss
 仅供你有权使用的游戏资源和服务器环境。
 
 
-## v1.5：修复 WKWebView「不允许使用受限制的网络端口」
+## v1.6：修复 WKWebView「不允许使用受限制的网络端口」
 
-根据实机报错与 v1.4 代码检查，原本本地 HTTP 服务使用 `NWListener(..., on: .any)` 随机端口，并且可能在端口进入 `.ready` 前就生成 WebView 地址；iOS WebKit 会拦截部分端口。v1.5 将本地 HTTP 服务限定为 `127.0.0.1` 上的安全端口 `18765`–`18769`，依次尝试绑定，只有服务进入 `.ready` 状态后才返回加载 URL。若全部端口不可用，将向用户报告具体错误，不再直接黑屏。
+根据实机报错与 v1.4 代码检查，原本本地 HTTP 服务使用 `NWListener(..., on: .any)` 随机端口，并且可能在端口进入 `.ready` 前就生成 WebView 地址；iOS WebKit 会拦截部分端口。v1.6 将本地 HTTP 服务限定为 `127.0.0.1` 上的安全端口 `18765`–`18769`，依次尝试绑定，只有服务进入 `.ready` 状态后才返回加载 URL。若全部端口不可用，将向用户报告具体错误，不再直接黑屏。
 
 WebView 导航错误提示现在会包含 WebKit 错误代码、失败地址，以便继续定位 `index.html`、Ruffle 或服务器连接阶段的问题。Socket 桥接仍在原端口 `32973`，游戏资源本身未修改，现有三按钮首页和图标保持不变。
 
-**验证范围**：本地静态检查及 Swift 语法解析；未在 iOS 真机/Xcode 上运行。若 v1.5 仍然黑屏，请发送屏幕底部的错误全文（特别是请求地址和错误代码），以分辨是被拦截端口、HTTP 资源缺失，还是游戏内部脚本/网络通信失败。无需再次清除或导入已安装的资源包；优先用相同签名覆盖安装。
+**验证范围**：本地静态检查及 Swift 语法解析；未在 iOS 真机/Xcode 上运行。若 v1.6 仍然黑屏，请发送屏幕底部的错误全文（特别是请求地址和错误代码），以分辨是被拦截端口、HTTP 资源缺失，还是游戏内部脚本/网络通信失败。无需再次清除或导入已安装的资源包；优先用相同签名覆盖安装。
+
+
+## v1.6：修复本地启动 `Network.NWError 22 – Invalid argument`
+
+真机 v1.5 截图显示 `启动失败：未能完成操作。(Network.NWError 错误 22 – Invalid argument)`。这发生在游戏网页显示之前，和 `.srom` 解压是否成功无关。
+
+静态审查确认 **两个** Listener (`GameServer.swift` HTTP 和 `GameSocketBridge.swift` WebSocket) 都设置了 `parameters.requiredLocalEndpoint = .hostPort(..., port: P)`，同时又以 `NWListener(using: parameters, on: P)` 指定端口。这样的重复配置可能导致框架构建监听器时抛出 `EINVAL`。本次同时移除两个 `requiredLocalEndpoint`，改用 `parameters.requiredInterfaceType = .loopback`，端口只在 `on:` 中指定，仍仅允许本机回环服务。
+
+另外修复 WebSocket 代理状态跨线程读取，并将代理初始化失败/等待错误直接反馈到游戏启动页，便于区分后续是 HTTP、WebSocket 还是 WebView/Flash 的问题。保留原有游戏数据路径、`.srom` 导入能力、首页三个按钮、图标及 GitHub Actions 配置。
+
+**注意**：该补丁已通过源码语法与结构静态检查，但没有在 macOS/Xcode 编译或 iPad 真机运行，不能保证下一阶段的 Flash/网络功能一定正常。请尽量覆盖安装而非卸载旧版，避免删除 Application Support 内已导入的资源。

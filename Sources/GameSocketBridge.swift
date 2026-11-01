@@ -10,8 +10,12 @@ final class GameSocketBridge {
     private let queue = DispatchQueue(label: "cn.shiguanghao.launcher.socket")
     private let listener: NWListener
     private var sessions: [UUID: Session] = [:]
-    private(set) var isReady = false
-    private(set) var failure: NWError?
+    // Access state through the listener queue, because the UI polls from the
+    // main thread while NWListener updates arrive on `queue`.
+    private var readyFlag = false
+    private var failureReason: String?
+    var isReady: Bool { queue.sync { readyFlag } }
+    var failureDescription: String? { queue.sync { failureReason } }
 
     init() throws {
         let options = NWProtocolWebSocket.Options()
@@ -21,15 +25,24 @@ final class GameSocketBridge {
         }
         let parameters = NWParameters.tcp
         parameters.defaultProtocolStack.applicationProtocols.insert(options, at: 0)
-        parameters.requiredLocalEndpoint = .hostPort(
-            host: .ipv4(.loopback),
-            port: NWEndpoint.Port(rawValue: Self.localPort)!
-        )
+        // `requiredLocalEndpoint` plus `on: <same port>` has been observed
+        // to produce EINVAL (error 22) when constructing NWListener.
+        // Bind to the loopback interface without specifying the port twice.
+        parameters.requiredInterfaceType = .loopback
         listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: Self.localPort)!)
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
-            case .ready: self?.isReady = true
-            case .failed(let error): self?.failure = error
+            case .ready:
+                self?.readyFlag = true
+                self?.failureReason = nil
+            case .failed(let error):
+                self?.readyFlag = false
+                self?.failureReason = "本地 WebSocket 代理启动失败 [32973]：\(error.localizedDescription)"
+            case .waiting(let error):
+                self?.readyFlag = false
+                self?.failureReason = "本地 WebSocket 代理等待网络 [32973]：\(error.localizedDescription)"
+            case .cancelled:
+                self?.readyFlag = false
             default: break
             }
         }

@@ -5,13 +5,13 @@ final class GameServer {
     private let root: URL
     private let ruffle: URL
     private let queue = DispatchQueue(label: "cn.shiguanghao.launcher.http")
-    // A browser-safe, deterministic port avoids iOS WebKit's restricted ports.
-    // Retry on collision rather than silently falling back to a random port.
+    // Use browser-safe local ports; retry if a port is occupied.
     private static let httpPortCandidates: [UInt16] = [18765, 18766, 18767, 18768, 18769]
     private var listener: NWListener?
     private var readyHTTPPort: UInt16?
     private var failureMessage: String?
     var startError: String? { queue.sync { failureMessage } }
+    var bridgeError: String? { bridge?.failureDescription }
     private let packagedWebApp: Bool
     private let bridge: GameSocketBridge?
 
@@ -37,7 +37,11 @@ final class GameServer {
             throw ServerError.invalidLocalPort
         }
         let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: localPort)
+        // Do not simultaneously specify requiredLocalEndpoint (including a port)
+        // and the listener's `on:` port: Network.framework can reject this
+        // conflicting setup with NWError.posix(.EINVAL), errno 22.
+        // Limit this local HTTP service to the loopback interface.
+        parameters.requiredInterfaceType = .loopback
         let newListener = try NWListener(using: parameters, on: localPort)
         listener = newListener
         failureMessage = nil

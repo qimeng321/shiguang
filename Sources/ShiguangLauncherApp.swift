@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v1.5")
+                        Text("v1.6")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -317,7 +317,7 @@ struct GameView: View {
                 let service = try GameServer(root: packagedWebApp ? candidate : root,
                                              packagedWebApp: packagedWebApp)
                 for _ in 0..<100 {
-                    if let reason = service.startError {
+                    if let reason = service.startError ?? service.bridgeError {
                         errorText = reason
                         return
                     }
@@ -327,9 +327,9 @@ struct GameView: View {
                     }
                     try await Task.sleep(nanoseconds: 100_000_000)
                 }
-                errorText = "本地资源服务未就绪。请退出游戏后重试；若仍失败，请提供该错误截图。"
+                errorText = "本地资源服务或 WebSocket 代理启动超时（HTTP: 18765–18769 / WebSocket: 32973）。请提供错误截图。"
             }
-            catch { errorText = "启动失败：\(error.localizedDescription)" }
+            catch { errorText = "本地服务创建失败：\(error.localizedDescription)；请检查 Network 框架监听器参数。" }
         }
         .onDisappear { server = nil }
     }
