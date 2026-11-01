@@ -649,6 +649,13 @@ final class GameServer {
             touch-action:manipulation;
           }
           #keyboard-trigger:active{background:#e1edff}
+          /* Keep typing available in-game, but reduce obstruction after login. */
+          #keyboard-trigger.in-game{
+            width:42px;height:42px;font-size:20px;right:12px;top:122px;
+            opacity:.55;background:rgba(255,255,255,.88);
+          }
+          #keyboard-trigger.in-game:active,
+          #keyboard-trigger.in-game:focus-visible{opacity:1}
           #keyboard-actions{
             display:none;position:fixed;right:18px;top:211px;z-index:2147483000;
             gap:5px;align-items:center;
@@ -733,8 +740,9 @@ final class GameServer {
           function pollGameEntry(){
             fetch("/__micro/status",{cache:"no-store"}).then(function(r){return r.json()})
               .then(function(data){
-                if(data&&data.enteredGame&&inputShown){
-                  setDockVisible(false,"收到进入游戏成功响应");
+                if(data&&data.enteredGame){
+                  document.getElementById("keyboard-trigger").classList.add("in-game");
+                  if(inputShown)setDockVisible(false,"收到进入游戏成功响应");
                 }
               }).catch(function(){});
           }

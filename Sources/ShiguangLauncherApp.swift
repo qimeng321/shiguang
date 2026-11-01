@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v4.2")
+                        Text("v4.3")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -155,6 +155,16 @@ struct LauncherView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(subtleInk.opacity(0.9))
                         .padding(.top, 18)
+
+                    // One-tap log sharing is useful for diagnosing game issues,
+                    // without displaying a permanent diagnostics overlay.
+                    ShareLink(item: LaunchDiagnostics.logURL) {
+                        Label("反馈问题", systemImage: "square.and.arrow.up")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(subtleInk)
+                    }
+                    .accessibilityLabel("分享拾光号故障日志")
+                    .padding(.top, 14)
 
                     Spacer(minLength: 32)
                 }
@@ -289,6 +299,8 @@ struct GameView: View {
     @State private var reloadGeneration = 0
     @State private var showingCacheConfirmation = false
     @State private var isClearingWebCache = false
+    @State private var toolsExpanded = false
+    @State private var toolMenuGeneration = 0
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -327,28 +339,48 @@ struct GameView: View {
                     }
                     .accessibilityLabel("返回拾光号启动器")
                     Spacer()
-                    VStack(spacing: 12) {
-                        Button(action: reloadGame) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 21, weight: .semibold))
-                                .foregroundStyle(Color(red: 0.06, green: 0.50, blue: 0.98))
-                                .frame(width: 51, height: 51)
-                                .background(.white.opacity(0.97), in: Circle())
-                                .shadow(color: .black.opacity(0.16), radius: 10, y: 3)
+                    // A compact toolbar preserves the game's top-right corner.
+                    // Expand on demand; it folds back automatically after six seconds.
+                    HStack(spacing: 9) {
+                        if toolsExpanded {
+                            Button {
+                                collapseToolMenu()
+                                reloadGame()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundStyle(Color(red: 0.06, green: 0.50, blue: 0.98))
+                                    .frame(width: 46, height: 46)
+                                    .background(.white.opacity(0.95), in: Circle())
+                            }
+                            .disabled(server == nil || isClearingWebCache)
+                            .accessibilityLabel("刷新游戏")
+
+                            Button {
+                                collapseToolMenu()
+                                showingCacheConfirmation = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 19, weight: .semibold))
+                                    .foregroundStyle(Color(red: 0.60, green: 0.16, blue: 0.80))
+                                    .frame(width: 46, height: 46)
+                                    .background(.white.opacity(0.95), in: Circle())
+                            }
+                            .disabled(isClearingWebCache)
+                            .accessibilityLabel("清理网页缓存")
                         }
-                        .disabled(server == nil || isClearingWebCache)
-                        .accessibilityLabel("刷新游戏")
-                        Button { showingCacheConfirmation = true } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(Color(red: 0.60, green: 0.16, blue: 0.80))
-                                .frame(width: 51, height: 51)
-                                .background(.white.opacity(0.97), in: Circle())
-                                .shadow(color: .black.opacity(0.16), radius: 10, y: 3)
+
+                        Button(action: toggleToolMenu) {
+                            Image(systemName: toolsExpanded ? "xmark" : "ellipsis")
+                                .font(.system(size: 21, weight: .bold))
+                                .foregroundStyle(Color(red: 0.12, green: 0.35, blue: 0.66))
+                                .frame(width: 46, height: 46)
+                                .background(.white.opacity(0.88), in: Circle())
+                                .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
                         }
-                        .disabled(isClearingWebCache)
-                        .accessibilityLabel("清理网页缓存")
+                        .accessibilityLabel(toolsExpanded ? "收起游戏工具" : "展开游戏工具")
                     }
+                    .animation(.easeInOut(duration: 0.18), value: toolsExpanded)
                 }
                 .padding(.top, 14)
                 Spacer(minLength: 12)
@@ -420,10 +452,25 @@ struct GameView: View {
         .onDisappear { server = nil }
     }
 
+    private func toggleToolMenu() {
+        toolMenuGeneration += 1
+        withAnimation(.easeInOut(duration: 0.18)) { toolsExpanded.toggle() }
+        guard toolsExpanded else { return }
+        let generation = toolMenuGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            guard toolsExpanded && toolMenuGeneration == generation else { return }
+            withAnimation(.easeInOut(duration: 0.18)) { toolsExpanded = false }
+        }
+    }
+
+    private func collapseToolMenu() {
+        toolMenuGeneration += 1
+        withAnimation(.easeInOut(duration: 0.18)) { toolsExpanded = false }
+    }
+
     private func reloadGame() {
         guard server != nil && !isClearingWebCache else { return }
         errorText = nil
-        gameStatus = "正在刷新游戏…"
         reloadGeneration += 1
         LaunchDiagnostics.log("[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
     }
@@ -432,14 +479,12 @@ struct GameView: View {
         guard !isClearingWebCache else { return }
         isClearingWebCache = true
         errorText = nil
-        gameStatus = "正在清理网页缓存…"
         LaunchDiagnostics.log("[游戏控制] 用户确认清理 WebKit 网页缓存：不会删除 Application Support/Game")
         // Avoid allWebsiteDataTypes(): cookies, localStorage and saved login data are NOT removed.
         let types: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
         WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) {
             DispatchQueue.main.async {
                 self.isClearingWebCache = false
-                self.gameStatus = "网页缓存已清理，游戏正在重新加载…"
                 self.reloadGeneration += 1
                 LaunchDiagnostics.log("[游戏控制] WebKit 内存/磁盘缓存清理完成，已重建 WKWebView；已安装游戏资源未受影响")
             }
