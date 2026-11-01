@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v2.1")
+                        Text("v2.2")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -417,7 +417,7 @@ struct GameWebView: UIViewRepresentable {
                     var detail = Array.prototype.slice.call(arguments, 0, 4).map(function (value) {
                       try { return String(value).slice(0, 240); } catch (_) { return '[不可显示]'; }
                     }).join(' ');
-                    if (/ruffle|avm2|flash|stub|wasm|error|failed|unsupported|警告|失败/i.test(detail)) {
+                    if (/ruffle|avm2|flash|stub|wasm|error|failed|unsupported|exception|bytearray|loader|pvm|version|zlib|inflate|uncompress|警告|失败/i.test(detail)) {
                       consoleCount++;
                       report('运行日志[' + level + ']：' + detail.slice(0, 420));
                     }
@@ -425,6 +425,37 @@ struct GameWebView: UIViewRepresentable {
                   return original.apply(console, arguments);
                 };
               });
+              // Capture Flash trace with bounded output. Observe document rather
+              // than documentElement because this script runs at document start.
+              var traceCount = 0;
+              function attachFlashTrace() {
+                var node = document.querySelector('ruffle-player,ruffle-object,ruffle-embed');
+                if (!node || node.__shiguangTraceInstalled) return;
+                try {
+                  var player = typeof node.ruffle === 'function' ? node.ruffle() : node;
+                  if (!player || !('traceObserver' in player)) return;
+                  player.traceObserver = function (value) {
+                    if (++traceCount > 120) return;
+                    var line = String(value || '').slice(0, 380);
+                    if (/password|passwd|token|session|cookie|authorization|账号|密码|密钥/i.test(line)) return;
+                    report('Flash trace：' + line);
+                  };
+                  node.__shiguangTraceInstalled = true;
+                  report('状态：Flash trace 已接入');
+                } catch (err) {
+                  report('状态：Flash trace 监听错误：' + String(err).slice(0, 120));
+                }
+              }
+              var flashObserver = new MutationObserver(attachFlashTrace);
+              flashObserver.observe(document, { childList: true, subtree: true });
+              var traceChecks = 0;
+              var traceTimer = setInterval(function () {
+                attachFlashTrace();
+                if (++traceChecks >= 120) {
+                  clearInterval(traceTimer);
+                  flashObserver.disconnect();
+                }
+              }, 500);
               window.addEventListener('error', function (event) {
                 if (event.message) fail('网页脚本错误：' + event.message);
                 else if (event.target && (event.target.src || event.target.href))
