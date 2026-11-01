@@ -97,6 +97,12 @@ final class GameServer {
             throw ServerError.missingRuffle
         }
         self.ruffle = assets.resolvingSymlinksInPath()
+        let engineInfo = assets.appendingPathComponent("engine-version.txt")
+        if let text = try? String(contentsOf: engineInfo, encoding: .utf8) {
+            LaunchDiagnostics.log("[引擎版本] " + text.trimmingCharacters(in: .whitespacesAndNewlines))
+        } else {
+            LaunchDiagnostics.log("[引擎版本] 内置旧版 Ruffle（此包未附带 engine-version.txt）")
+        }
         try startHTTPListener(at: 0)
     }
 

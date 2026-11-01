@@ -1,3 +1,13 @@
+# v2.7 — Ruffle 0.7.1 引擎对齐实验
+
+对用户提供的「拾光号微端-1.2.5-安装包.exe」静态解包确认：Windows 微端用 C# Windows Forms 的 AxClient.exe + 原生 Ruffle Rust x64 引擎 GameEngine.exe，后者 2026-10-29 构建（Ruffle 0.7.1）；内部客户端 Client.swf 82806 字节、version.swf 20512 字节。iOS v2.6 内置 Ruffle 0.5.0 stable（2026-08-03）。
+
+v2.7 的 GitHub Actions 使用固定的官方发布包 `v0.7.1/ruffle-0.7.1-web-selfhosted.zip`，在 Xcode 编译前覆盖工程自带旧版本 Ruffle 网页核心，附带 `engine-version.txt`，运行时将实际引擎标记写入 diagnostics.txt。保留既有 game HTML、PVM、HTTP、本地 WS/TCP 代理和 UI；**此版只验证 Ruffle Web 升级，暂不改为 Windows 风格专用游戏页面**。Windows 原生版不能直接放进 iOS，但 Web 0.7.1 与它属于同一个 Ruffle 系列。
+
+如果升级后能出现第三次 GET /version.swf 或 /login/Login.swf，说明新版引擎帮助推进了加载；如果仍然卡住，下一步才考虑模仿 Windows 的 /__micro/game.html 直连 Client.swf，以及定位 Ruffle Web URLStream 事件差异。
+
+注意：这是实验性版本；不保证进入登录；使用相同 Bundle ID/签名覆盖安装，不要清除美化资源；测试 25 秒并发送日志。开发者本地仅构建当前仓库内置版本，GitHub Actions 云构建才使用 Ruffle 0.7.1。
+
 # 拾光号 v2.6 — 真全屏游戏 / 精简启动体验
 
 根据用户 v2.5 真机截图与原网页打包的 React `index.js`：

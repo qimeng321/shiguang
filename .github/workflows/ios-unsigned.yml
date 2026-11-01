@@ -11,6 +11,31 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Align Ruffle Web engine with Windows microclient (0.7.1)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --retry 3 \
+            "https://github.com/ruffle-rs/ruffle/releases/download/v0.7.1/ruffle-0.7.1-web-selfhosted.zip" \
+            --output "$RUNNER_TEMP/ruffle-web.zip"
+          mkdir -p "$RUNNER_TEMP/ruffle-extracted"
+          unzip -q "$RUNNER_TEMP/ruffle-web.zip" -d "$RUNNER_TEMP/ruffle-extracted"
+          entry="$(find "$RUNNER_TEMP/ruffle-extracted" -type f -name ruffle.js -print -quit)"
+          test -n "$entry"
+          directory="$(dirname "$entry")"
+          rm -rf Resources/Ruffle
+          mkdir -p Resources/Ruffle
+          ditto "$directory" Resources/Ruffle
+          printf '%s\n' 'Ruffle web 0.7.1 (to match Windows GameEngine.exe)' > Resources/Ruffle/engine-version.txt
+          test -f Resources/Ruffle/ruffle.js
+          test "$(find Resources/Ruffle -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
+          python3 - <<'PY_CHECK'
+          from pathlib import Path
+          p=Path('Resources/Ruffle/ruffle.js').read_text()
+          if '0.7.1' not in p:
+              raise SystemExit('Wrong Ruffle web bundle: expected version 0.7.1')
+          print('Validated Ruffle 0.7.1 web runtime, JS bytes',len(p))
+          PY_CHECK
       - name: Build for iPhone and iPad
         run: |
           xcodebuild \
