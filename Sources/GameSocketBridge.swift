@@ -224,7 +224,7 @@ final class GameSocketBridge {
             tcp.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
-                    LaunchDiagnostics.log("[登录网络] 远端 TCP 连接成功：" + self.remoteHost + ":" + String(self.remotePort))
+                    LaunchDiagnostics.log("[登录网络] 远端 TCP 连接成功：" + (self?.remoteHost ?? "未知") + ":" + String(self?.remotePort ?? 0))
                 case .failed(let error):
                     LaunchDiagnostics.log("[登录网络] 远端 TCP 连接失败：" + error.localizedDescription)
                     self?.stop()
