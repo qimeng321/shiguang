@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v4.6")
+                        Text("v4.7")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -377,13 +377,17 @@ struct GameView: View {
                                         sendControl("cycleSpeed")
                                     }
                                 }
-                                gameTool("map", mapSwipeEnabled ? "关闭地图选择" : "地图选择（星系/星球）") {
-                                    mapSwipeEnabled.toggle()
-                                    if mapSwipeEnabled {
-                                        virtualMouseEnabled = false
-                                        touchZoomEnabled = false
+                                gameTool("map", "打开地图收藏") {
+                                    mapSwipeEnabled = true
+                                    virtualMouseEnabled = false
+                                    touchZoomEnabled = false
+                                    sendControl("enableMapSwipe")
+                                }
+                                if mapSwipeEnabled {
+                                    gameTool("map-pin-off", "关闭地图辅助") {
+                                        mapSwipeEnabled = false
+                                        sendControl("disableMapSwipe")
                                     }
-                                    sendControl(mapSwipeEnabled ? "enableMapSwipe" : "disableMapSwipe")
                                 }
                                 gameTool("zoom-in", touchZoomEnabled ? "关闭触控放大" : "触控放大（真实点击）") {
                                     touchZoomEnabled.toggle()
