@@ -1,0 +1,6 @@
+.DS_Store
+*.srom
+*.ipa
+*.zip
+DerivedData/
+build/

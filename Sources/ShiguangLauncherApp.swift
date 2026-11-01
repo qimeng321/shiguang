@@ -13,64 +13,105 @@ struct ShiguangLauncherApp: App {
     }
 }
 
+// The custom file type is declared in Info.plist as well.  The broad .data
+// fallback handles Files providers that label .srom files as generic data.
+private extension UTType {
+    static let shiguangPackage = UTType(exportedAs: "cn.shiguanghao.srom", conformingTo: .zip)
+}
+
 struct LauncherView: View {
     @EnvironmentObject private var launcher: LauncherModel
     @State private var showingImporter = false
     @State private var showingGame = false
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 18) {
-                Image(systemName: "gamecontroller.fill")
-                    .font(.system(size: 58))
-                    .foregroundStyle(.indigo)
-                Text("拾光号").font(.largeTitle.bold())
-                Text("游戏服务器：\(GameSocketBridge.serverHost):\(GameSocketBridge.serverPort)")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                Text(launcher.status)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
+        GeometryReader { geometry in
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing: 20) {
+                        Spacer(minLength: 20)
 
-                if launcher.isImporting { ProgressView() }
+                        Image("LauncherArt")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 96, height: 96)
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .accessibilityHidden(true)
 
-                Button("导入 .srom 资源包") { showingImporter = true }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(launcher.isImporting)
+                        Text("拾光号")
+                            .font(.largeTitle.bold())
+                        Text(launcher.status)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                if !launcher.entries.isEmpty {
-                    Picker("启动文件", selection: $launcher.selectedEntry) {
-                        ForEach(launcher.entries, id: \.self) { entry in
-                            Text(entry).tag(entry)
+                        if launcher.isImporting {
+                            ProgressView("正在处理资源包…")
+                                .padding(.vertical, 8)
                         }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 520)
 
-                    Button("启动游戏") { showingGame = true }
+                        Button {
+                            showingImporter = true
+                        } label: {
+                            Label("导入 .srom 资源包", systemImage: "square.and.arrow.down")
+                                .frame(maxWidth: .infinity, minHeight: 38)
+                        }
                         .buttonStyle(.borderedProminent)
-                        .disabled(launcher.selectedEntry.isEmpty)
-                }
+                        .disabled(launcher.isImporting)
 
-                Spacer()
-                Text("资源包会保存在本机应用数据中。请预留足够空间供导入和解压使用。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                        if !launcher.entries.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("启动文件")
+                                    .font(.subheadline.weight(.semibold))
+                                Picker("启动文件", selection: $launcher.selectedEntry) {
+                                    ForEach(launcher.entries, id: \.self) { entry in
+                                        Text(entry).tag(entry)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                                Button {
+                                    showingGame = true
+                                } label: {
+                                    Label("启动游戏", systemImage: "play.fill")
+                                        .frame(maxWidth: .infinity, minHeight: 38)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(launcher.selectedEntry.isEmpty)
+                            }
+                        }
+
+                        Spacer(minLength: 28)
+                        Text("资源包仅保存在当前设备中。请预留足够的存储空间供导入和解压使用。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 20)
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 16)
+                    .frame(maxWidth: 560)
+                    .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+                .navigationTitle("拾光号")
             }
-            .frame(maxWidth: .infinity)
-            .padding(28)
-            .navigationTitle("启动器")
         }
         .fileImporter(
             isPresented: $showingImporter,
-            allowedContentTypes: [UTType(filenameExtension: "srom") ?? .data, .zip],
+            allowedContentTypes: [.shiguangPackage, .zip, .data],
             allowsMultipleSelection: false
         ) { result in
             switch result {
             case .success(let urls):
-                if let url = urls.first { launcher.importPackage(url) }
+                guard let url = urls.first else {
+                    launcher.status = "没有选中文件。"
+                    return
+                }
+                launcher.importPackage(url)
             case .failure(let error):
                 launcher.status = "选择文件失败：\(error.localizedDescription)"
             }
@@ -148,6 +189,8 @@ struct GameWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.isScrollEnabled = false
+        webView.scrollView.bounces = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.load(URLRequest(url: url))
         return webView
     }

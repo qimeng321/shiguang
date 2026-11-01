@@ -37,9 +37,20 @@ final class LauncherModel: ObservableObject {
 
     func importPackage(_ source: URL) {
         guard !isImporting else { return }
+        let fileExtension = source.pathExtension.lowercased()
+        guard fileExtension == "srom" || fileExtension == "zip" else {
+            status = "请选择 .srom 或 .zip 格式的游戏资源包。"
+            return
+        }
         isImporting = true
         status = "正在校验并解压资源包，可能需要几分钟…"
+        // Acquire the security-scoped bookmark permission before leaving the
+        // file-importer callback; keep access alive until extraction finishes.
+        let canAccess = source.startAccessingSecurityScopedResource()
         Task.detached(priority: .userInitiated) {
+            defer {
+                if canAccess { source.stopAccessingSecurityScopedResource() }
+            }
             do {
                 let entries = try Self.extractPackage(source)
                 await MainActor.run {
@@ -65,9 +76,6 @@ final class LauncherModel: ObservableObject {
 
     private nonisolated static func extractPackage(_ source: URL) throws -> [String] {
         let manager = FileManager.default
-        let access = source.startAccessingSecurityScopedResource()
-        defer { if access { source.stopAccessingSecurityScopedResource() } }
-
         let archive: Archive
         do { archive = try Archive(url: source, accessMode: .read) }
         catch { throw ImportError.invalidArchive }
