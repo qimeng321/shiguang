@@ -662,24 +662,60 @@ final class GameServer {
               }));
             });
           }
+          var dockLast="";
+          function placeInputDock(){
+            var input=keyboardInput();
+            if(!input)return;
+            var vv=window.visualViewport;
+            var fullW=window.innerWidth,fullH=window.innerHeight;
+            var visibleW=vv?vv.width:fullW;
+            var visibleH=vv?vv.height:fullH;
+            var offX=vv?vv.offsetLeft:0,offY=vv?vv.offsetTop:0;
+            var keyboardOpen=visibleH<fullH*0.74;
+            var gameRect=player&&player.getBoundingClientRect();
+            var width=Math.max(150,Math.min(420,visibleW-28,visibleW*0.57));
+            var height=42;
+            var x=offX+(visibleW-width)/2;
+            var y;
+            if(!keyboardOpen&&gameRect&&gameRect.bottom+height+10<offY+visibleH){
+              // Prefer the center of the black letterbox below the game.
+              y=gameRect.bottom+Math.max(4,(offY+visibleH-gameRect.bottom-height)/2);
+            }else{
+              // The iPad keyboard consumes the lower visual viewport.
+              // Float immediately above it, without shrinking the Flash stage.
+              y=offY+visibleH-height-8;
+            }
+            x=Math.max(offX+8,Math.min(x,offX+visibleW-width-8));
+            y=Math.max(offY+6,Math.min(y,offY+visibleH-height-5));
+            input.style.setProperty("left",Math.round(x)+"px","important");
+            input.style.setProperty("top",Math.round(y)+"px","important");
+            input.style.setProperty("width",Math.round(width)+"px","important");
+            var state=(keyboardOpen?"键盘上方":"下方留白区")+" "+Math.round(x)+","+Math.round(y)+" 宽"+Math.round(width);
+            if(state!==dockLast){
+              dockLast=state;
+              report("输入栏自适应位置："+state);
+            }
+          }
           function prepareKeyboard(){
             var input=keyboardInput();
             if(!input)return null;
             // Use Ruffle's existing HTML input, but make it directly tappable.
             // Programmatic focus in iPadOS 26 closes the keyboard immediately.
             var styles={
-              position:"absolute",top:"10px",right:"10px",left:"auto",bottom:"auto",
-              width:"200px",height:"38px",opacity:"1",zIndex:"2147483000",
+              position:"fixed",top:"0px",right:"auto",left:"0px",bottom:"auto",
+              width:"320px",height:"42px",opacity:"1",zIndex:"2147483000",
               visibility:"visible",display:"block",pointerEvents:"auto",
-              background:"#fff",color:"#12375f",border:"2px solid #3993e9",
-              borderRadius:"9px",boxSizing:"border-box",padding:"4px 9px",
-              fontSize:"15px",touchAction:"manipulation"
+              background:"rgba(250,253,255,0.98)",color:"#163755",
+              border:"2px solid #4fa3f4",boxShadow:"0 4px 14px rgba(0,0,0,.28)",
+              borderRadius:"13px",boxSizing:"border-box",padding:"7px 14px",
+              fontSize:"17px",fontWeight:"500",touchAction:"manipulation",
+              transform:"none",outline:"none"
             };
             Object.keys(styles).forEach(function(k){
               input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),styles[k],"important");
             });
             input.setAttribute("aria-hidden","false");
-            input.setAttribute("placeholder","点游戏输入栏后点这里");
+            input.setAttribute("placeholder","点游戏账号或密码框后，在此输入");
             input.setAttribute("autocomplete","off");
             input.setAttribute("autocorrect","off");
             input.setAttribute("autocapitalize","none");
@@ -730,13 +766,14 @@ final class GameServer {
               },true);
               input.addEventListener("focus",function(){report("键盘：真实输入框获得焦点");},true);
               input.addEventListener("blur",function(){report("键盘：输入框失去焦点");},true);
-              report("键盘：Ruffle 隐藏输入框已改成可直接触摸的白色原生输入栏");
+              report("键盘：已启用屏幕自适应底部输入栏");
             }
+            placeInputDock();
             return input;
           }
           function openKeyboard(ev){
             if(ev){ev.preventDefault();ev.stopPropagation();}
-            if(prepareKeyboard())report("请直接触摸游戏画面右上角的白色输入栏，不要只点击键盘图标");
+            if(prepareKeyboard())report("请点击游戏下方居中输入栏；键盘弹出后会自动移到键盘上方");
           }
           var trigger=document.getElementById("keyboard-trigger");
           trigger.addEventListener("click",openKeyboard);
@@ -769,6 +806,7 @@ final class GameServer {
               fit.didLogFreeze=true;report("键盘弹出：游戏画面尺寸已锁定");
             }
             if(!keyboardShrink)fit.didLogFreeze=false;
+            placeInputDock();
           }
           window.addEventListener("resize",fit);
           window.addEventListener("orientationchange",fit);
