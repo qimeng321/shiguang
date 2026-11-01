@@ -33,7 +33,9 @@ jobs:
           cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
           cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
           cp Patches/touch-controls.js Resources/Ruffle/touch-controls.js
+          cp Patches/galaxy-navigation.js Resources/Ruffle/galaxy-navigation.js
           test -s Resources/Ruffle/touch-controls.js
+          test -s Resources/Ruffle/galaxy-navigation.js
           test -s Resources/Ruffle/byte-loader-followup.b64
           test -s Resources/Ruffle/pvm-compat.js
           test -s Resources/Ruffle/pvm-compat.b64
@@ -68,6 +70,8 @@ jobs:
           set -euo pipefail
           node --check Patches/touch-controls.js
           node --check Resources/Ruffle/touch-controls.js
+          node --check Patches/galaxy-navigation.js
+          node --check Resources/Ruffle/galaxy-navigation.js
           python3 - <<'PY_TOUCH'
           from pathlib import Path
           js=Path("Resources/Ruffle/touch-controls.js").read_text()
@@ -75,7 +79,17 @@ jobs:
           assert 'c.dispatchEvent(event)' in js, "Pointer events must target inner Canvas"
           assert 'window.ShiguangTouchControls' in js
           assert '/ruffle/touch-controls.js' in html
+          assert '/ruffle/galaxy-navigation.js' in html
           assert 'touchControls=window.ShiguangTouchControls(player,report)' in html
+          assert 'window.ShiguangGalaxyMenu(player,touchControls,report)' in html
+          assert 'Object.defineProperty(event,"offsetX"' in js
+          assert 'Object.defineProperty(event,"offsetY"' in js
+          galaxy=Path("Resources/Ruffle/galaxy-navigation.js").read_text()
+          assert 'window.ShiguangGalaxyMenu' in galaxy
+          assert 'ShiguangNativeBookmarks' in galaxy
+          swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
+          assert 'galaxy-bookmarks.json' in swift
+          assert 'handleGalaxyBookmarks' in swift
           assert 'player.dispatchEvent(new PointerEvent(' not in html
           print("Verified separate Canvas-pointer module and HTML wiring")
           PY_TOUCH
