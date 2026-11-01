@@ -1,21 +1,23 @@
-# 拾光号 iOS 启动器 v1.8（v1.7 黑屏修复 + 文件共享及资源诊断）
+# 拾光号 iOS 启动器 v1.9 — 依据 v1.8 真机日志修复“假成功黑屏”
 
-## 本次合并
+2026-11-01 的 v1.8 `diagnostics.txt` 表明：本地 HTTP 18765 端口已运行、只有 GET /index.html 请求；未出现 Ruffle 或 SWF 请求；且 SWF 检查显示 `[缺失] Client.swf`。
 
-- 延续 v1.7 的 Ruffle 注入、`/video.mp4` 遮罩自动跳过、HTTP Range 分段读取、HTTP 端口重试与 WebSocket 桥接。
-- 首次启动时自动创建可见的 `Documents/Import/` 和 `Documents/diagnostics.txt`、`Documents/使用说明.txt`，在开启 iOS 文件共享时应显示为 **文件 App → 我的 iPad → 拾光号启动器**。
-- 已安装资源仍存放 `Application Support/Game`，不会复制到 Documents；**不会额外占用 2.88GB**，既有存储路径与 Bundle ID 都不变。
-- “导入美化包”除了文件选择器，还能读取 Documents 根目录、`Import/`、`Inbox/` 中的 `.srom` 和 `.zip`。
-- 关键文件静态检查：SWF 入口、原网页 `index.html`、`assets/index.js`、`assets/nieo_wasm_core_bg.wasm` 以及内置 Ruffle。仅报告检查结果，不修改大文件或干预进入游戏。
-- 日志追加：HTTP 服务端口、关键资源请求、404 缺失、网页脚本错误、Ruffle/Flash 状态等。日志上限约 1MB；较早内容轮转到 `diagnostics-previous.txt`。
-- 首页三个主要按钮不变：**导入美化包、清除美化包、进入游戏**。不恢复官网、下载美化包和导入配置。
+## 修复点
 
-## 更新与验证
+- .srom 解压完成后**重新扫描最终安装路径**，不再使用 staging 临时目录中的 SWF 清单直接声称“导入成功”。
+- 首页检测到 SWF 入口已消失时重新扫描，并在找不到真实 SWF 时禁用“进入游戏”，显示资源异常状态。
+- 优先选择有同目录 index.html 的 SWF 入口；资源检查新增绝对路径、同级文件与其他 index.html 的诊断。
+- 只允许在 SWF 入口确实存在时启动游戏；错误信息直接显示在 App 页面，并写入 `Documents/diagnostics.txt`。
+- 资源服务对错误的 `entry` 不再返回可能看不清的纯文本，改成醒目的 `HTTP 400` HTML 错误页；同时记下 HTTP 200/400 结果，区分“网页打开”和“游戏真正打开”。
+- WKWebView 加入已完成网页的 DOM/脚本状态日志，便于判断网页是正常游戏还是错误文本。
+- 保留 v1.8 的三按钮首页、App 图标、Files Import 文件夹、共享诊断日志、原来的 Application Support/Game 资源路径、Ruffle、HTTP Range 和网络桥接。
 
-1. 解压 ZIP，复制文件和隐藏的 `.github` 目录，覆盖 GitHub Desktop 克隆的仓库（**保留 `.git`**）。
-2. **Commit to main → Push origin**；打开 GitHub Actions，执行 `Build unsigned iOS IPA`。成功后在 Artifacts 下载 ZIP 并解压得到 IPA。
-3. 用相同 Bundle ID 和签名方式**覆盖安装**，不要先卸载旧版，也不要点“清除美化包”。原已安装美化包应继续保存在私有存储目录。
-4. 安装后进入 **文件 → 我的 iPad → 拾光号启动器**，应该看到 `Import`、`diagnostics.txt` 和 `使用说明.txt`。
-5. 若进入游戏仍黑屏，退出到启动器后打开 `diagnostics.txt`，查看 `[缺失]`、`HTTP 404`、`网页状态`、`网页错误` 行。可以复制相关错误用于继续排查。
+## 更新/验证
 
-**注意**：资源检查“通过”仅代表关键文件存在，并不证明 `.srom` 内容完全有效或游戏可连接。原有 v1.7 的黑屏处理也仍需真机验证。当前环境无 iOS SDK/Xcode，已做 Swift 语法和项目静态检查，但不能声称已成功编译或在 iPad 上运行。最低 iOS/iPadOS 为 16.0；unsigned IPA 仍需自行签名。仅使用你有权运行的游戏资源。
+1. 解压 ZIP 覆盖 GitHub Desktop 中的本地工程，保留 `.git`；**Commit to main → Push origin**。
+2. GitHub Actions 重新执行 `Build unsigned iOS IPA`，在 Artifacts 下载构建结果。
+3. 保持旧版应用 Bundle ID 与签名方式，覆盖安装以保留已保存资源；不要卸载或主动清除美化包。
+4. 打开首页，检查资源诊断：如入口存在则点击进入游戏；如提示缺失，先分享 `diagnostics.txt`，避免重新导入浪费存储。
+5. 若继续黑屏，提供最新 `diagnostics.txt`，查看 `HTTP 200`、`HTTP 400`、`页面诊断` 等信息。
+
+**限制**：现有日志指向实际文件未找到及错误页未被区分，并未证明 `.srom` 中的网页资源完整，也尚不能证明联网游戏可运行。当前环境无 Xcode/iPad，已做基础语法和工程静态检查，但不能保证真机运行；不要清理 2.88GB 旧资源，先看新日志。

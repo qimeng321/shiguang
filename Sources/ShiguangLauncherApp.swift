@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v1.8")
+                        Text("v1.9")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -352,6 +352,12 @@ struct GameView: View {
         .task {
             LaunchDiagnostics.log("进入游戏：\(entry)")
             do {
+                let actualSWF = root.appendingPathComponent(entry)
+                guard FileManager.default.fileExists(atPath: actualSWF.path) else {
+                    errorText = "已安装目录中没有找到游戏入口：\(entry)。请返回首页查看资源检查，再提供 diagnostics.txt。"
+                    LaunchDiagnostics.log("游戏启动前检查失败：\(actualSWF.path) 不存在")
+                    return
+                }
                 let entryFolder = (entry as NSString).deletingLastPathComponent
                 let candidate = root.appendingPathComponent(entryFolder, isDirectory: true)
                 let packagedWebApp = FileManager.default.fileExists(
@@ -473,7 +479,17 @@ struct GameWebView: UIViewRepresentable {
             else { onStatus(details) }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            onStatus("网页主文档已打开，等待游戏组件…")
+            onStatus("网页主文档已打开，检查启动脚本与服务响应…")
+            webView.evaluateJavaScript("({title:document.title,body:(document.body?.innerText||'').slice(0,180), scripts:[...document.scripts].map(s=>s.getAttribute('src')).filter(Boolean).slice(0,8), ruffle:!!window.RufflePlayer})") { [weak self] result, error in
+                if let error {
+                    self?.onError("网页状态读取失败：" + error.localizedDescription)
+                } else if let data = result as? [String: Any] {
+                    self?.onStatus("页面诊断：" + String(describing: data))
+                    if let body = data["body"] as? String, body.contains("Invalid entry") || body.contains("游戏资源入口不存在") {
+                        self?.onError("加载到错误页面，而不是游戏：" + body)
+                    }
+                }
+            }
         }
         private func reportNavigationError(_ error: Error, webView: WKWebView) {
             let nsError = error as NSError

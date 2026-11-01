@@ -140,14 +140,18 @@ final class GameServer {
             let entry = components.queryItems?.first(where: { $0.name == "entry" })?.value ?? ""
             guard let file = safeFile(entry, below: root),
                   file.pathExtension.lowercased() == "swf" else {
-                sendText("Invalid entry", status: 400, connection: connection)
+                LaunchDiagnostics.log("HTTP 400：无效游戏入口：\(entry)；资源根目录：\(root.path)")
+                let detail = "游戏资源入口不存在或无法读取。\n入口：\(entry)\n资源根目录：\(root.path)\n请返回首页查看资源检查并提供 diagnostics.txt。"
+                sendErrorPage(detail, status: 400, headOnly: headOnly, connection: connection)
                 return
             }
+            LaunchDiagnostics.log("HTTP 200：已验证 SWF 入口：\(file.path)")
             let urlPath = "/game/" + entry.split(separator: "/").map {
                 String($0).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
             }.joined(separator: "/")
             let basePath = (urlPath as NSString).deletingLastPathComponent + "/"
             let html = page(swfURL: urlPath, baseURL: basePath)
+            LaunchDiagnostics.log("HTTP 200：生成 SWF 后备网页，SWF=\(urlPath)，HTML 字节=\(html.utf8.count)")
             send(data: Data(html.utf8), mime: "text/html; charset=utf-8", headOnly: headOnly, connection: connection)
             return
         }
@@ -347,6 +351,20 @@ final class GameServer {
         })
     }
 
+    private func sendErrorPage(_ detail: String, status: Int, headOnly: Bool, connection: NWConnection) {
+        let escaped = detail
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        let html = """
+        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+        <body style="background:#111;color:#fff;font:16px/1.7 -apple-system,sans-serif;padding:72px 24px;white-space:pre-wrap">
+        <h2>拾光号：游戏启动失败（HTTP \(status)）</h2><p>\(escaped)</p></body></html>
+        """
+        send(data: Data(html.utf8), mime: "text/html; charset=utf-8", status: status,
+             headOnly: headOnly, connection: connection)
+    }
+
     private func sendText(_ text: String, status: Int, connection: NWConnection) {
         send(data: Data(text.utf8), mime: "text/plain; charset=utf-8", status: status, headOnly: false, connection: connection)
     }
@@ -406,6 +424,9 @@ final class GameServer {
           <script>
             const message = document.getElementById("message");
             try {
+              if (!window.RufflePlayer || typeof window.RufflePlayer.newest !== 'function') {
+                throw new Error('Ruffle 脚本没有加载，检查 HTTP /ruffle/ruffle.js 的状态');
+              }
               const ruffle = window.RufflePlayer.newest();
               const player = ruffle.createPlayer();
               document.getElementById("game").appendChild(player);

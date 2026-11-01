@@ -110,7 +110,26 @@ enum LaunchDiagnostics {
             lines.append("\(present ? "[OK]" : "[缺失]") \(title)：\(file.lastPathComponent)")
             if required && !present { missingRequired += 1 }
         }
-        check("SWF 入口", file: root.appendingPathComponent(entry), required: true)
+        let resolvedEntry = root.appendingPathComponent(entry)
+        check("SWF 入口", file: resolvedEntry, required: true)
+        if !manager.fileExists(atPath: resolvedEntry.path) {
+            lines.append("[诊断] 预期 SWF 绝对路径：\(resolvedEntry.path)")
+            let parent = resolvedEntry.deletingLastPathComponent()
+            let siblings = ((try? manager.contentsOfDirectory(atPath: parent.path)) ?? []).prefix(12)
+            lines.append("[诊断] SWF 同级目录内容：\(siblings.isEmpty ? "(目录不存在或为空)" : siblings.joined(separator: ", "))")
+        }
+        if !webMode {
+            lines.append("[诊断] index.html 未在 SWF 同级目录出现：\(webRoot.path)")
+            // Inspect only the first few matches for a misplaced web root.
+            if let scan = manager.enumerator(at: root, includingPropertiesForKeys: nil) {
+                var matches: [String] = []
+                for case let url as URL in scan where url.lastPathComponent.lowercased() == "index.html" {
+                    matches.append(String(url.path.dropFirst(root.path.count + 1)))
+                    if matches.count == 5 { break }
+                }
+                lines.append("[诊断] 已安装资源内其他网页入口：\(matches.isEmpty ? "无" : matches.joined(separator: ", "))")
+            }
+        }
         if webMode {
             check("index.html", file: webRoot.appendingPathComponent("index.html"), required: true)
             check("网页 JS", file: webRoot.appendingPathComponent("assets/index.js"), required: true)
@@ -161,12 +180,17 @@ final class LauncherModel: ObservableObject {
     @Published var resourceCheckSummary = "尚未检测资源"
     @Published var resourceCheckDetails: [String] = []
 
-    var canStartGame: Bool { gameRoot != nil && !selectedEntry.isEmpty && !isImporting && !isClearing }
+    var canStartGame: Bool {
+        guard let gameRoot, !selectedEntry.isEmpty else { return false }
+        return !isImporting && !isClearing && FileManager.default.fileExists(
+            atPath: gameRoot.appendingPathComponent(selectedEntry).path
+        )
+    }
     var hasInstalledPackage: Bool { gameRoot != nil }
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 v1.8 启动；已创建 Documents/Import 和 diagnostics.txt；旧资源路径不变")
+        LaunchDiagnostics.log("启动器 v1.9 启动；已创建 Documents/Import 和 diagnostics.txt；旧资源路径不变")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -178,6 +202,18 @@ final class LauncherModel: ObservableObject {
     }
 
     func refreshResourceCheck() {
+        // v1.8 could retain an entry discovered in the temporary extraction
+        // directory, even if it was not present at the final installation path.
+        if let gameRoot, !selectedEntry.isEmpty,
+           !FileManager.default.fileExists(atPath: gameRoot.appendingPathComponent(selectedEntry).path) {
+            let verified = Self.findEntries(in: gameRoot)
+            entries = verified
+            selectedEntry = Self.preferredEntry(in: verified)
+            status = verified.isEmpty
+                ? "安装目录存在，但未找到可读取的 Client.swf。请查看诊断日志。"
+                : "已修正游戏入口路径，请重试进入游戏。"
+            LaunchDiagnostics.log("自动重新扫描已安装资源，发现 \(verified.count) 个 SWF 游戏入口")
+        }
         let result = LaunchDiagnostics.checkResources(root: gameRoot, entry: selectedEntry)
         resourceCheckSummary = result.summary
         resourceCheckDetails = result.details
@@ -363,7 +399,12 @@ final class LauncherModel: ObservableObject {
             if existing { try? manager.moveItem(at: backup, to: savedGameRoot) }
             throw error
         }
-        return entries
+        // The staging folder has moved. Re-enumerate the actual installed path
+        // rather than assuming every staging relative path still resolves.
+        // This also catches a partial package or an unexpected ZIP wrapper.
+        let installedEntries = findEntries(in: savedGameRoot)
+        guard !installedEntries.isEmpty else { throw ImportError.noGameFiles }
+        return installedEntries
     }
 
     private nonisolated static func findEntries(in root: URL) -> [String] {
@@ -390,6 +431,11 @@ final class LauncherModel: ObservableObject {
             ? result.filter { $0.split(separator: "/").count <= 2 }
             : candidates
         return launchable.sorted { a, b in
+            let folderA = (a as NSString).deletingLastPathComponent
+            let folderB = (b as NSString).deletingLastPathComponent
+            let webA = manager.fileExists(atPath: root.appendingPathComponent(folderA).appendingPathComponent("index.html").path)
+            let webB = manager.fileExists(atPath: root.appendingPathComponent(folderB).appendingPathComponent("index.html").path)
+            if webA != webB { return webA }
             let depthA = a.split(separator: "/").count
             let depthB = b.split(separator: "/").count
             if depthA != depthB { return depthA < depthB }
