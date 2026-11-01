@@ -212,8 +212,11 @@ final class GameServer {
             return
         }
         if packagedWebApp && path == "/__micro/game.html" {
+            versionGetCount = 0
+            proceededBeyondVersion = false
+            inspectedVersionHeader = false
             let html = page(swfURL: "/Client.swf", baseURL: "/")
-            LaunchDiagnostics.log("[启动模式] Windows微端式直启 Client.swf，绕开原 React 网页")
+            LaunchDiagnostics.log("[启动模式] 直接启动 Client.swf；PVM 计数已按本次启动重置")
             send(data: Data(html.utf8), mime: "text/html; charset=utf-8",
                  headOnly: headOnly, connection: connection)
             return
@@ -602,10 +605,11 @@ final class GameServer {
             allowScriptAccess:true,publicPath:"/ruffle/",
             socketProxy:[{host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"}]
           };
-        </script><script src="/ruffle/ruffle.js"></script></head>
+        </script><script src="/ruffle/ruffle.js"></script>
+        <script src="/ruffle/pvm-compat.js"></script></head>
         <body><div id="game"></div><div id="message">正在载入游戏资源…</div>
         <script>
-        (function(){
+        (async function(){
           var player,message=document.getElementById("message"),last="";
           function report(x){try{window.webkit.messageHandlers.gameDiagnostics.postMessage("状态："+x)}catch(e){}}
           function fit(){
@@ -626,11 +630,21 @@ final class GameServer {
             player=window.RufflePlayer.newest().createPlayer();
             document.getElementById("game").appendChild(player);fit();
             report("微端式直启：Client.swf（不加载 React 网页）");
-            player.ruffle().load({url:\(json(swfURL)),base:\(json(baseURL))})
-              .then(function(){message.style.display="none"})
-              .catch(function(e){message.textContent="启动失败："+e;report("Client.swf 载入异常："+e)});
-            setTimeout(function(){message.style.display="none"},1700);
-          }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化异常："+e)}
+            var prepared=null;
+            try {
+              if(window.ShiguangPVMCompat) {
+                prepared=await window.ShiguangPVMCompat(\(json(swfURL)),report);
+              } else { report("兼容脚本未加载，启动原始 SWF"); }
+            } catch(patchError) {
+              report("PVM 兼容补丁异常，回退原版："+String(patchError).slice(0,220));
+            }
+            var options=prepared
+              ? {data:prepared,swfFileName:"Client.swf",base:window.location.origin+"/"}
+              : {url:\(json(swfURL)),base:\(json(baseURL))};
+            report(prepared ? "PVM 补丁版 SWF 正在进入 Ruffle" : "未启用补丁，使用原版 SWF");
+            await player.ruffle().load(options);
+            message.style.display="none";
+          }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();
         </script></body></html>
         """

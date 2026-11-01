@@ -27,6 +27,12 @@ jobs:
           mkdir -p Resources/Ruffle
           ditto "$directory" Resources/Ruffle
           printf '%s\n' 'Ruffle web 0.7.1 (to match Windows GameEngine.exe)' > Resources/Ruffle/engine-version.txt
+          # The compatibility delta is only for the known SHA-256 of Client.swf.
+          # No game resources are modified in the user's .srom.
+          cp Patches/pvm-compat.js Resources/Ruffle/pvm-compat.js
+          cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
+          test -s Resources/Ruffle/pvm-compat.js
+          test -s Resources/Ruffle/pvm-compat.b64
           test -f Resources/Ruffle/ruffle.js
           test "$(find Resources/Ruffle -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
           python3 - <<'PY_CHECK'
@@ -36,24 +42,6 @@ jobs:
               raise SystemExit('Wrong Ruffle web bundle: expected version 0.7.1')
           print('Validated Ruffle 0.7.1 web runtime, JS bytes',len(p))
           PY_CHECK
-      - name: Fetch FFDec for offline SWF compatibility analysis
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --location --show-error --retry 3 \
-            "https://github.com/jindrapetrik/jpexs-decompiler/releases/download/version26.4.0/ffdec_26.4.0.zip" \
-            --output "$RUNNER_TEMP/ffdec.zip"
-          mkdir -p "$RUNNER_TEMP/ffdec-src"
-          unzip -q "$RUNNER_TEMP/ffdec.zip" -d "$RUNNER_TEMP/ffdec-src"
-          find "$RUNNER_TEMP/ffdec-src" -type f -name ffdec.jar -print
-          jar_path="$(find "$RUNNER_TEMP/ffdec-src" -type f -name ffdec.jar -print -quit)"
-          test -n "$jar_path"
-          cp "$RUNNER_TEMP/ffdec.zip" /tmp/ffdec-full.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ffdec-analysis-tool-full
-          path: /tmp/ffdec-full.zip
-          if-no-files-found: error
       - name: Build for iPhone and iPad
         run: |
           xcodebuild \

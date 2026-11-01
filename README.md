@@ -1,3 +1,11 @@
+# v3.0 — 针对 Ruffle URLStream 的 Flash PVM 事件兼容补丁
+
+从真实 Client.as / ByteLoader.as / PVM_Loader.as 和 Ruffle v0.7.1 代码交叉分析，发现 Ruffle URLStream 借助 URLLoader 完整下载后一次性分发 PROGRESS/COMPLETE，而 URLLoader.close() 是占位实现。原始 PVM 在 PROGRESS 内 close() 并 reload，先前旧请求可能继续发 COMPLETE，干扰版本管理器。v2.9 改为 TCP FIN 依旧无法解决。Windows 微端含 Ruffle 桌面执行路径及 Windows Flash ActiveX 路径，单纯认为它只用 Ruffle 并不准确。
+
+v3.0：采用 FFDec 26.4.0 **重编译用户提供的原版 Client.swf 的 PVM_Loader._onComplete 方法**，只在已经载入正确版本头且有实际 body 数据时处理 Event.COMPLETE，忽略旧请求在 reload 时的遗留完成事件。原版 SWF SHA256 为 `d64a9e3af813324f6e1f9844e74eee16dee5d76a4c8a26c417585467a3c3e59f`；编译后验证 PVM 类包含此检查。为不修改/复制 2.88GB 资源，项目只存储 **2208 字符压缩二进制差异补丁**；浏览器 SHA256 校验并仅在内存里解压/apply，构建一个有效 FWS 交给 Ruffle 的 DataLoadOptions `data` 入口。指纹不符、浏览器不支持或解码异常时自动使用原版。原始 .srom 永远不改动。v2.9 的屏幕自动适配、刷新/缓存按钮、直启页和 WebSocket->TCP 代理全部保留。
+
+我们已在 Node 22 上模拟 WebKit 流程，验证差异补丁重构出的解压 SWF 与 FFDec 真实导出的目标 SWF **字节完全一致**。但这仍是兼容性修复假说，未经 iPad 真机验证。请安装后查看 diagnostics.txt 是否出现“已对原版 Client.swf 应用 PVM 事件兼容补丁”、是否在单次启动内出现**第三次 GET /version.swf**，以及是否 GET /login/Login.swf。请勿卸载应用或清空现有美化包。
+
 # v2.9 — iPad 自适应布局 + Windows 微端式直启 + TCP 正常关连接
 
 对照 Windows 1.2.5 微端、Client.as、PVM_Loader.as 和 ByteLoader.as：Windows 使用 Ruffle 原生桌面运行时直接加载 Client.swf，而原 iOS 使用 React/index.js/WASM 启动；游戏的 PVM 使用 Flash URLStream.PROGRESS 和 COMPLETE 事件。v2.8 仍停在第二次 version.swf 请求后。Windows 包内的 version.swf 前6字节为 4B5004D40000，后续 zlib 压缩体可以解压至约 50 KB，头表项0不代表损坏。
