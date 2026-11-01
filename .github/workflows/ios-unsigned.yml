@@ -36,6 +36,24 @@ jobs:
               raise SystemExit('Wrong Ruffle web bundle: expected version 0.7.1')
           print('Validated Ruffle 0.7.1 web runtime, JS bytes',len(p))
           PY_CHECK
+      - name: Fetch FFDec for offline SWF compatibility analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --retry 3 \
+            "https://github.com/jindrapetrik/jpexs-decompiler/releases/download/version26.4.0/ffdec_26.4.0.zip" \
+            --output "$RUNNER_TEMP/ffdec.zip"
+          mkdir -p "$RUNNER_TEMP/ffdec-src"
+          unzip -q "$RUNNER_TEMP/ffdec.zip" -d "$RUNNER_TEMP/ffdec-src"
+          find "$RUNNER_TEMP/ffdec-src" -type f -name ffdec.jar -print
+          jar_path="$(find "$RUNNER_TEMP/ffdec-src" -type f -name ffdec.jar -print -quit)"
+          test -n "$jar_path"
+          cp "$jar_path" /tmp/ffdec-analysis.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffdec-analysis-tool
+          path: /tmp/ffdec-analysis.jar
+          if-no-files-found: error
       - name: Build for iPhone and iPad
         run: |
           xcodebuild \
