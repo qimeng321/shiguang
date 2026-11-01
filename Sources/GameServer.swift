@@ -17,6 +17,34 @@ final class GameServer {
     private let maxTracedRequests = 300
     private var versionGetCount = 0
     private var proceededBeyondVersion = false
+    private var inspectedVersionHeader = false
+
+    // Diagnose the PVM header directly in the saved file; never modify it.
+    private func inspectPVMHeader(_ file: URL) {
+        guard !inspectedVersionHeader else { return }
+        inspectedVersionHeader = true
+        guard let handle = try? FileHandle(forReadingFrom: file),
+              let sample = try? handle.read(upToCount: 256),
+              sample.count >= 6 else {
+            LaunchDiagnostics.log("[PVM 静态检查] version.swf 不可读或不足 6 字节")
+            return
+        }
+        try? handle.close()
+        let bytes = [UInt8](sample)
+        let size = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? NSNumber)?.intValue ?? 0
+        let stamp = UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16 | UInt32(bytes[2]) << 8 | UInt32(bytes[3])
+        let count = Int(UInt16(bytes[4]) << 8 | UInt16(bytes[5]))
+        let headerSize = 6 + count * 24
+        let preview = bytes.prefix(8).map { String(format: "%02X", $0) }.joined(separator: " ")
+        let validHeader = count > 0 && headerSize < size
+        LaunchDiagnostics.log("[PVM 静态检查] version.swf 总字节=\(size)；前8字节=\(preview)；修订号=\(stamp)；表项=\(count)；头部应占=\(headerSize)；结构=\(validHeader ? "初步合理" : "异常，需分析实际文件格式")")
+        if validHeader {
+            let fileNameBytes = Array(bytes.dropFirst(6).prefix(20))
+            let fileName = String(decoding: fileNameBytes.prefix(while: { $0 != 0 }), as: UTF8.self)
+            let safeName = fileName.filter { $0.isASCII && ($0.isLetter || $0.isNumber || "._-/".contains($0)) }
+            LaunchDiagnostics.log("[PVM 静态检查] 首项名称（过滤后）：\(safeName.prefix(24))")
+        }
+    }
 
     // Most HTTP requests were deliberately not logged in v2.0. Trace game boot
     // resources explicitly to distinguish 'Flash never requested it' from 404.
@@ -27,6 +55,10 @@ final class GameServer {
                 versionGetCount += 1
                 LaunchDiagnostics.log("PVM 版本初始化：实际请求 version.swf，第 \(versionGetCount) 次")
                 if versionGetCount == 2 {
+                    queue.asyncAfter(deadline: .now() + 5) { [weak self] in
+                        guard let self, !self.proceededBeyondVersion else { return }
+                        LaunchDiagnostics.log("[阶段诊断] 第二次 version.swf 后 5 秒未见登录或 DLL GET，请在游戏界面停留至少 20 秒。")
+                    }
                     queue.asyncAfter(deadline: .now() + 15) { [weak self] in
                         guard let self, !self.proceededBeyondVersion else { return }
                         LaunchDiagnostics.log("[阶段诊断] version.swf 请求后 15 秒内未观察到 DLL 或登录资源 GET")
@@ -295,6 +327,10 @@ final class GameServer {
             sendText("Not Found: \(relative)", status: 404, connection: connection)
             return
         }
+        if relative.lowercased() == "version.swf" && !headOnly {
+            inspectPVMHeader(file)
+            LaunchDiagnostics.log("[PVM 传输] GET version.swf 已收到（查询参数已省略）")
+        }
         let total = size.uint64Value
         var first: UInt64 = 0
         var last: UInt64 = total == 0 ? 0 : total - 1
@@ -360,7 +396,8 @@ final class GameServer {
                 try? handle.close()
                 connection.cancel()
             } else {
-                self?.stream(handle, to: connection, remaining: byteCount)
+                self?.stream(handle, to: connection, remaining: byteCount,
+                             observeCompletion: relative.lowercased() == "version.swf")
             }
         })
     }
@@ -372,9 +409,11 @@ final class GameServer {
         })
     }
 
-    private func stream(_ handle: FileHandle, to connection: NWConnection, remaining: UInt64) {
+    private func stream(_ handle: FileHandle, to connection: NWConnection,
+                        remaining: UInt64, observeCompletion: Bool = false) {
         guard remaining > 0 else {
             try? handle.close()
+            if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf 已全部提交到本地 TCP 发送队列（不代表 Flash 解析成功）") }
             connection.cancel()
             return
         }
@@ -386,8 +425,10 @@ final class GameServer {
         }
         connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
             if error == nil {
-                self?.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count))
+                self?.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
+                             observeCompletion: observeCompletion)
             } else {
+                if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf TCP 发送失败：\(error?.localizedDescription ?? "未知")") }
                 try? handle.close()
                 connection.cancel()
             }

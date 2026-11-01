@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v2.2")
+                        Text("v2.3")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -456,6 +456,22 @@ struct GameWebView: UIViewRepresentable {
                   flashObserver.disconnect();
                 }
               }, 500);
+              // Observe Ruffle runtime progress without collecting packets or credentials.
+              function reportPlayerState(label) {
+                var node = document.querySelector('ruffle-player,ruffle-object,ruffle-embed');
+                if (!node) { status(label + '：未找到 Ruffle 播放器'); return; }
+                try {
+                  var player = typeof node.ruffle === 'function' ? node.ruffle() : node;
+                  var state = player ? String(player.readyState) : '无 API';
+                  var playing = player ? String(player.isPlaying) : '未知';
+                  var suspended = player && 'suspended' in player ? String(player.suspended) : '未知';
+                  status(label + '：readyState=' + state + ' isPlaying=' + playing + ' suspended=' + suspended);
+                } catch(e) { fail(label + '：Ruffle 状态读取失败：' + String(e).slice(0, 130)); }
+              }
+              window.addEventListener('DOMContentLoaded', function () {
+                setTimeout(function () { reportPlayerState('启动5秒'); }, 5000);
+                setTimeout(function () { reportPlayerState('启动20秒'); }, 20000);
+              });
               window.addEventListener('error', function (event) {
                 if (event.message) fail('网页脚本错误：' + event.message);
                 else if (event.target && (event.target.src || event.target.href))
