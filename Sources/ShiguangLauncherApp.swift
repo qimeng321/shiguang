@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v1.9")
+                        Text("v2.1")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -407,6 +407,24 @@ struct GameWebView: UIViewRepresentable {
               }
               function status(message) { report('状态：' + message); }
               function fail(message) { report('错误：' + message); }
+              // Forward a bounded subset of Ruffle warnings/errors to the shared log.
+              // This is a diagnostic build; do not forward arbitrary console messages.
+              var consoleCount = 0;
+              ['warn', 'error'].forEach(function (level) {
+                var original = console[level];
+                console[level] = function () {
+                  if (consoleCount < 60) {
+                    var detail = Array.prototype.slice.call(arguments, 0, 4).map(function (value) {
+                      try { return String(value).slice(0, 240); } catch (_) { return '[不可显示]'; }
+                    }).join(' ');
+                    if (/ruffle|avm2|flash|stub|wasm|error|failed|unsupported|警告|失败/i.test(detail)) {
+                      consoleCount++;
+                      report('运行日志[' + level + ']：' + detail.slice(0, 420));
+                    }
+                  }
+                  return original.apply(console, arguments);
+                };
+              });
               window.addEventListener('error', function (event) {
                 if (event.message) fail('网页脚本错误：' + event.message);
                 else if (event.target && (event.target.src || event.target.href))
@@ -418,7 +436,7 @@ struct GameWebView: UIViewRepresentable {
               window.addEventListener('DOMContentLoaded', function () {
                 status('HTML 已加载，等待游戏脚本与 Flash…');
                 if (window.location.pathname === '/') {
-                  ['/assets/index.js', '/assets/nieo_wasm_core_bg.wasm', '/Client.swf', '/ruffle/ruffle.js'].forEach(function (path) {
+                  ['/assets/index.js', '/assets/nieo_wasm_core_bg.wasm', '/Client.swf', '/ruffle/ruffle.js', '/config/doorConfig.xml', '/resource/main_resource.swf', '/config/ServerR.xml', '/login/Login.swf', '/version.swf'].forEach(function (path) {
                     fetch(path, { method: 'HEAD', cache: 'no-store' })
                       .then(function (response) { report('资源检测：' + path + ' → HTTP ' + response.status); })
                       .catch(function (error) { fail('资源请求失败：' + path + '；' + String(error)); });

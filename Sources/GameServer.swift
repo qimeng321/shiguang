@@ -13,6 +13,28 @@ final class GameServer {
     var startError: String? { queue.sync { failureMessage } }
     var bridgeError: String? { bridge?.failureDescription }
     private let packagedWebApp: Bool
+    private var tracedRequestCount = 0
+    private let maxTracedRequests = 300
+
+    // Most HTTP requests were deliberately not logged in v2.0. Trace game boot
+    // resources explicitly to distinguish 'Flash never requested it' from 404.
+    private func traceRequest(_ method: String, _ path: String, status: Int, size: UInt64? = nil) {
+        let lower = path.lowercased()
+        guard lower.hasPrefix("/config/") || lower.hasPrefix("/resource/") ||
+              lower.hasPrefix("/login/") || lower.hasPrefix("/dll/") ||
+              lower.hasSuffix(".swf") || lower.hasSuffix(".xml") ||
+              lower == "/assets/nieo_wasm_core_bg.wasm" else { return }
+        guard tracedRequestCount < maxTracedRequests else {
+            if tracedRequestCount == maxTracedRequests {
+                LaunchDiagnostics.log("HTTP 详细记录达到 300 条，后续请求已省略")
+            }
+            tracedRequestCount += 1
+            return
+        }
+        tracedRequestCount += 1
+        let sizeInfo = size.map { "; 字节=\($0)" } ?? ""
+        LaunchDiagnostics.log("HTTP 资源请求：\(method) \(path) → \(status)\(sizeInfo)")
+    }
     private let bridge: GameSocketBridge?
 
     init(root: URL, packagedWebApp: Bool = false) throws {
@@ -188,6 +210,7 @@ final class GameServer {
             autoplay: "on",
             unmuteOverlay: "visible",
             allowScriptAccess: true,
+            logLevel: "warn",
             socketProxy: [{
               host: "103.91.210.16",
               port: 22973,
@@ -250,6 +273,7 @@ final class GameServer {
               let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
               let size = attributes[.size] as? NSNumber,
               let handle = try? FileHandle(forReadingFrom: file) else {
+            traceRequest(headOnly ? "HEAD" : "GET", "/" + relative, status: 404)
             LaunchDiagnostics.missingResource(relative)
             sendText("Not Found: \(relative)", status: 404, connection: connection)
             return
@@ -302,6 +326,8 @@ final class GameServer {
         }
         let byteCount = total == 0 ? UInt64(0) : last - first + 1
         let response = isPartial ? "206 Partial Content" : "200 OK"
+        traceRequest(headOnly ? "HEAD" : "GET", "/" + relative,
+                     status: isPartial ? 206 : 200, size: byteCount)
         let contentRange = isPartial ? "Content-Range: bytes \(first)-\(last)/\(total)\r\n" : ""
         let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)Cache-Control: no-store\r\nConnection: close\r\n\r\n"
         if !headOnly {

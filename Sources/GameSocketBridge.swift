@@ -50,6 +50,7 @@ final class GameSocketBridge {
             }
         }
         listener.newConnectionHandler = { [weak self] webSocket in
+            LaunchDiagnostics.log("Flash WebSocket 代理收到新的本地连接")
             guard let self else { webSocket.cancel(); return }
             let id = UUID()
             let session = Session(webSocket: webSocket, queue: self.queue) { [weak self] in
@@ -90,8 +91,18 @@ final class GameSocketBridge {
                 if case .cancelled = state { self?.stop() }
             }
             tcp.stateUpdateHandler = { [weak self] state in
-                if case .failed = state { self?.stop() }
-                if case .cancelled = state { self?.stop() }
+                switch state {
+                case .ready:
+                    LaunchDiagnostics.log("远端 TCP 游戏服务器连接成功")
+                case .failed(let error):
+                    LaunchDiagnostics.log("远端 TCP 游戏服务器连接失败：\(error.localizedDescription)")
+                    self?.stop()
+                case .waiting(let error):
+                    LaunchDiagnostics.log("远端 TCP 游戏服务器等待中：\(error.localizedDescription)")
+                case .cancelled:
+                    self?.stop()
+                default: break
+                }
             }
             webSocket.start(queue: queue)
             tcp.start(queue: queue)
