@@ -161,7 +161,7 @@ final class GameServer {
         components.scheme = "http"
         components.host = "127.0.0.1"
         components.port = Int(port)
-        components.path = packagedWebApp ? "/" : "/index.html"
+        components.path = packagedWebApp ? "/__micro/game.html" : "/index.html"
         if !packagedWebApp { components.queryItems = [URLQueryItem(name: "entry", value: entry)] }
         return components.url
     }
@@ -209,6 +209,13 @@ final class GameServer {
         // Ruffle files even when the package contains its own index.html.
         if path.hasPrefix("/ruffle/") {
             serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
+            return
+        }
+        if packagedWebApp && path == "/__micro/game.html" {
+            let html = page(swfURL: "/Client.swf", baseURL: "/")
+            LaunchDiagnostics.log("[启动模式] Windows微端式直启 Client.swf，绕开原 React 网页")
+            send(data: Data(html.utf8), mime: "text/html; charset=utf-8",
+                 headOnly: headOnly, connection: connection)
             return
         }
         if packagedWebApp {
@@ -455,55 +462,67 @@ final class GameServer {
             }
         }
         connection.send(content: Data(header.utf8), completion: .contentProcessed { [weak self] error in
-            if error != nil || headOnly || byteCount == 0 {
+            guard let self else { connection.cancel(); return }
+            if let error {
+                LaunchDiagnostics.log("[HTTP] 响应头发送失败：" + error.localizedDescription)
                 try? handle.close()
                 connection.cancel()
+            } else if headOnly || byteCount == 0 {
+                try? handle.close()
+                self.finishHTTPResponse(connection)
             } else {
                 let pvm = relative.lowercased() == "version.swf" && !isPartial
-                self?.stream(handle, to: connection, remaining: byteCount,
-                             observeCompletion: pvm, splitPVMHeader: pvm)
+                self.stream(handle, to: connection, remaining: byteCount, observeCompletion: pvm)
+            }
+        })
+    }
+
+    // Send TCP FIN after the last response byte, rather than immediately aborting
+    // the connection. Flash URLStream depends on complete/progress events.
+    private func finishHTTPResponse(_ connection: NWConnection, pvm: Bool = false) {
+        connection.send(content: nil, contentContext: .finalMessage,
+                        isComplete: true, completion: .contentProcessed { error in
+            if pvm {
+                LaunchDiagnostics.log(error == nil
+                    ? "[PVM 传输] 已发送 TCP FIN；等待 Flash URLStream 收到正常结束"
+                    : "[PVM 传输] TCP FIN 失败：" + (error?.localizedDescription ?? "未知"))
+            }
+            self.queue.asyncAfter(deadline: .now() + .seconds(2)) {
+                connection.cancel()
             }
         })
     }
 
     private func sendRangeUnsatisfiable(total: UInt64, connection: NWConnection) {
         let header = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */\(total)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in
-            connection.cancel()
+        connection.send(content: Data(header.utf8), completion: .contentProcessed { [weak self] error in
+            if error == nil { self?.finishHTTPResponse(connection) }
+            else { connection.cancel() }
         })
     }
 
     private func stream(_ handle: FileHandle, to connection: NWConnection,
-                        remaining: UInt64, observeCompletion: Bool = false,
-                        splitPVMHeader: Bool = false) {
+                        remaining: UInt64, observeCompletion: Bool = false) {
         guard remaining > 0 else {
             try? handle.close()
-            if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf 已全部提交到本地 TCP 发送队列（不代表 Flash 解析成功）") }
-            connection.cancel()
+            if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf 数据已发完，准备 TCP FIN") }
+            finishHTTPResponse(connection, pvm: observeCompletion)
             return
         }
-        // Experimental workaround limited to PVM: send the 6-byte header
-        // separately so Flash URLStream can observe a partial progress event.
-        let length = Int(min(remaining, splitPVMHeader ? 6 : 64 * 1024))
-        guard let chunk = try? handle.read(upToCount: length), !chunk.isEmpty else {
+        let count = Int(min(remaining, 64 * 1024))
+        guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else {
             try? handle.close()
+            if observeCompletion { LaunchDiagnostics.log("[PVM 传输] 读取异常，剩余 \(remaining) 字节") }
             connection.cancel()
             return
         }
         connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
+            guard let self else { try? handle.close(); connection.cancel(); return }
             if error == nil {
-                if splitPVMHeader {
-                    LaunchDiagnostics.log("[PVM 分段] 已先发送6字节头部，120毫秒后继续传输（不修改源文件）")
-                    self?.queue.asyncAfter(deadline: .now() + .milliseconds(120)) { [weak self] in
-                        self?.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
-                                     observeCompletion: observeCompletion, splitPVMHeader: false)
-                    }
-                } else {
-                    self?.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
-                                 observeCompletion: observeCompletion, splitPVMHeader: false)
-                }
+                self.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
+                            observeCompletion: observeCompletion)
             } else {
-                if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf TCP 发送失败：\(error?.localizedDescription ?? "未知")") }
+                if observeCompletion { LaunchDiagnostics.log("[PVM 传输] 写入失败：" + (error?.localizedDescription ?? "未知")) }
                 try? handle.close()
                 connection.cancel()
             }
@@ -531,8 +550,9 @@ final class GameServer {
     private func send(data: Data, mime: String, status: Int = 200, headOnly: Bool, connection: NWConnection) {
         let reason = status == 200 ? "OK" : status == 400 ? "Bad Request" : "Not Found"
         let header = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(mime)\r\nContent-Length: \(data.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-        connection.send(content: Data(header.utf8) + (headOnly ? Data() : data), completion: .contentProcessed { _ in
-            connection.cancel()
+        connection.send(content: Data(header.utf8) + (headOnly ? Data() : data), completion: .contentProcessed { [weak self] error in
+            if error == nil { self?.finishHTTPResponse(connection) }
+            else { connection.cancel() }
         })
     }
 
@@ -557,45 +577,62 @@ final class GameServer {
         }
     }
 
+    // Native microclient style SWF entry: no original React SPA or network WASM.
     private func page(swfURL: String, baseURL: String) -> String {
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
-            let array = String(data: data, encoding: .utf8)!
-            return String(array.dropFirst().dropLast())
+            return String(String(data: data, encoding: .utf8)!.dropFirst().dropLast())
         }
         return """
-        <!doctype html>
-        <html lang="zh-CN">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-          <style>
-            html, body, #game { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-            #message { position: fixed; top: 45%; left: 5%; width: 90%; color: white; text-align: center; font: 16px sans-serif; }
-            ruffle-player { width: 100%; height: 100%; display: block; }
-          </style>
-          <script>window.RufflePlayer = window.RufflePlayer || {};
-          window.RufflePlayer.config = { autoplay: "on", unmuteOverlay: "hidden", splashScreen: false, letterbox: "on", scale: "showAll", forceScale: true, salign: "", forceAlign: true, publicPath: "/ruffle/" };</script>
-          <script src="/ruffle/ruffle.js"></script>
-        </head>
-        <body>
-          <div id="game"></div><div id="message">正在加载游戏…</div>
-          <script>
-            const message = document.getElementById("message");
-            try {
-              if (!window.RufflePlayer || typeof window.RufflePlayer.newest !== 'function') {
-                throw new Error('Ruffle 脚本没有加载，检查 HTTP /ruffle/ruffle.js 的状态');
-              }
-              const ruffle = window.RufflePlayer.newest();
-              const player = ruffle.createPlayer();
-              document.getElementById("game").appendChild(player);
-              player.ruffle().load({ url: \(json(swfURL)), base: \(json(baseURL)) })
-                .then(() => { message.style.display = "none"; })
-                .catch(error => { message.textContent = "游戏加载失败：" + error; });
-            } catch (error) { message.textContent = "Ruffle 启动失败：" + error; }
-          </script>
-        </body>
-        </html>
+        <!doctype html><html lang="zh-CN"><head>
+        <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+        <style>
+          :root {--game-w:960px;--game-h:560px}
+          html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000}
+          #game{position:fixed;inset:0;display:flex;justify-content:center;align-items:center}
+          ruffle-player{display:block;flex:none;width:var(--game-w)!important;height:var(--game-h)!important}
+          #message{position:fixed;inset:0;display:flex;justify-content:center;align-items:center;
+                   background:#000;color:#b9c1d0;font:14px -apple-system,sans-serif;pointer-events:none}
+        </style>
+        <script>
+          window.RufflePlayer=window.RufflePlayer||{};
+          window.RufflePlayer.config={
+            autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
+            scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
+            allowScriptAccess:true,publicPath:"/ruffle/",
+            socketProxy:[{host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"}]
+          };
+        </script><script src="/ruffle/ruffle.js"></script></head>
+        <body><div id="game"></div><div id="message">正在载入游戏资源…</div>
+        <script>
+        (function(){
+          var player,message=document.getElementById("message"),last="";
+          function report(x){try{window.webkit.messageHandlers.gameDiagnostics.postMessage("状态："+x)}catch(e){}}
+          function fit(){
+            var v=window.visualViewport,w=v?v.width:window.innerWidth,h=v?v.height:window.innerHeight;
+            var factor=Math.min(w/960,h/560),pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
+            document.documentElement.style.setProperty("--game-w",pw+"px");
+            document.documentElement.style.setProperty("--game-h",ph+"px");
+            if(player){player.style.width=pw+"px";player.style.height=ph+"px"}
+            var d=pw+"×"+ph+"；视口 "+Math.round(w)+"×"+Math.round(h);
+            if(d!==last){last=d;report("动态屏幕适配："+d+"；等比居中")}
+          }
+          window.addEventListener("resize",fit);
+          window.addEventListener("orientationchange",fit);
+          if(window.visualViewport)window.visualViewport.addEventListener("resize",fit);
+          fit();
+          try{
+            if(!window.RufflePlayer||!window.RufflePlayer.newest)throw Error("Ruffle JS 未加载");
+            player=window.RufflePlayer.newest().createPlayer();
+            document.getElementById("game").appendChild(player);fit();
+            report("微端式直启：Client.swf（不加载 React 网页）");
+            player.ruffle().load({url:\(json(swfURL)),base:\(json(baseURL))})
+              .then(function(){message.style.display="none"})
+              .catch(function(e){message.textContent="启动失败："+e;report("Client.swf 载入异常："+e)});
+            setTimeout(function(){message.style.display="none"},1700);
+          }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化异常："+e)}
+        })();
+        </script></body></html>
         """
     }
 }
