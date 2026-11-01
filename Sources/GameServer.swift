@@ -637,22 +637,8 @@ final class GameServer {
           ruffle-player{display:block;flex:none;width:var(--game-w)!important;height:var(--game-h)!important}
           #message{position:fixed;inset:0;display:flex;justify-content:center;align-items:center;
                    background:#000;color:#b9c1d0;font:14px -apple-system,sans-serif;pointer-events:none}
-          /* Temporary pointer controls; nothing covers the game in normal mode. */
-          #mouse-pad{position:fixed;inset:0;display:none;z-index:2147482900;
-                     background:transparent;touch-action:none;user-select:none}
-          #virtual-cursor{position:fixed;display:none;pointer-events:none;
-                         width:18px;height:18px;border:2px solid #fceb59;border-radius:50%;
-                         background:rgba(11,37,75,.24);box-shadow:0 0 0 2px #152639,0 1px 9px #000;
-                         transform:translate(-50%,-50%);z-index:2147482901}
-          #virtual-cursor:before,#virtual-cursor:after{
-            content:"";position:absolute;background:#fceb59;pointer-events:none;
-          }
-          #virtual-cursor:before{width:2px;height:26px;left:6px;top:-6px}
-          #virtual-cursor:after{width:26px;height:2px;left:-6px;top:6px}
-          #touch-tip{position:fixed;left:50%;bottom:65px;transform:translateX(-50%);
-                     display:none;pointer-events:none;z-index:2147482902;
-                     padding:8px 14px;background:rgba(0,0,0,.72);color:#fff;
-                     border-radius:20px;font:13px -apple-system,sans-serif;white-space:nowrap}
+          /* Mouse and map controls are lazily mounted by touch-controls.js,
+             so the normal game viewport has no transparent intercepting overlay. */
         </style>
         <script>
           window.RufflePlayer=window.RufflePlayer||{};
@@ -675,11 +661,9 @@ final class GameServer {
             ]
           };
         </script><script src="/ruffle/ruffle.js"></script>
-        <script src="/ruffle/pvm-compat.js"></script></head>
+        <script src="/ruffle/pvm-compat.js"></script>
+        <script src="/ruffle/touch-controls.js"></script></head>
         <body><div id="game"></div><div id="message">正在载入游戏资源…</div>
-        <div id="mouse-pad" aria-label="虚拟鼠标触控板"></div>
-        <div id="virtual-cursor" aria-hidden="true"></div>
-        <div id="touch-tip" aria-hidden="true"></div>
         <script>
         (async function(){
           var player,message=document.getElementById("message"),last="";
@@ -809,160 +793,29 @@ final class GameServer {
             placeInputDock();
             return input;
           }
-          // Native toolbar calls these functions through the existing WKWebView.
-          // The visible input field appears automatically on login; iPadOS
-          // still requires an actual tap on the field to raise its soft keyboard.
+          // Native three-dot menu sends fixed, allowlisted commands.
+          // The mouse/map implementation lives in a separately syntax-checked
+          // script, and creates its overlays only when explicitly enabled.
+          var touchControls=null;
           function toggleKeyboard(){
-            if(!prepareKeyboard()){
-              report("输入栏：Ruffle 输入组件未就绪");
-              return;
-            }
-            if(mouseMode)setMouseMode(false);
-            setDockVisible(!inputShown,"原生工具菜单切换");
+            if(!prepareKeyboard()){report("输入栏：Ruffle 输入组件未就绪");return;}
+            if(touchControls)touchControls.hideAll();
+            setDockVisible(!inputShown,"三点菜单切换输入栏");
           }
-
-          var mouseMode=false,mapSwipeMode=false;
-          var mousePad=document.getElementById("mouse-pad");
-          var cursor=document.getElementById("virtual-cursor");
-          var tip=document.getElementById("touch-tip"),tipTimeout=null;
-          var pointerPosition=null,mouseGesture=null,mapStart=null;
-          var clickCount=0,swipeCount=0;
-          function showTip(message){
-            tip.textContent=message;tip.style.display="block";
-            if(tipTimeout)clearTimeout(tipTimeout);
-            tipTimeout=setTimeout(function(){tip.style.display="none";},2800);
-          }
-          function flashBounds(){
-            return player&&player.getBoundingClientRect();
-          }
-          function limit(x,y){
-            var r=flashBounds();
-            if(!r)return {x:x,y:y};
-            return {
-              x:Math.max(r.left+2,Math.min(r.right-2,x)),
-              y:Math.max(r.top+2,Math.min(r.bottom-2,y))
-            };
-          }
-          function flashPointer(type,x,y,buttons){
-            if(!player)return;
-            var p=limit(x,y);
-            // Ruffle 0.7.1 listens to pointer events on the player host.
-            // Do not dispatch extra MouseEvents or click twice.
-            player.dispatchEvent(new PointerEvent(type,{
-              bubbles:true,composed:true,cancelable:true,
-              pointerId:63,pointerType:"mouse",isPrimary:true,
-              button:type==="pointermove"?-1:0,buttons:buttons,
-              clientX:p.x,clientY:p.y
-            }));
-          }
-          function moveCursor(x,y){
-            pointerPosition=limit(x,y);
-            cursor.style.left=pointerPosition.x+"px";
-            cursor.style.top=pointerPosition.y+"px";
-            flashPointer("pointermove",pointerPosition.x,pointerPosition.y,0);
-          }
-          function setMouseMode(enabled){
-            mouseMode=!!enabled;
-            if(mouseMode){
-              mapSwipeMode=false;
-              if(inputShown)setDockVisible(false,"启用虚拟鼠标");
-              mousePad.style.display="block";
-              cursor.style.display="block";
-              if(!pointerPosition){
-                var r=flashBounds();
-                pointerPosition=r?{x:r.left+r.width/2,y:r.top+r.height/2}:
-                                  {x:window.innerWidth/2,y:window.innerHeight/2};
-              }
-              moveCursor(pointerPosition.x,pointerPosition.y);
-              showTip("虚拟鼠标：拖动移动准星，轻点点击目标");
-            }else{
-              mousePad.style.display="none";
-              cursor.style.display="none";
-              mouseGesture=null;
-            }
-            report("触控辅助：虚拟鼠标"+(mouseMode?"开启":"关闭"));
-          }
-          mousePad.addEventListener("pointerdown",function(ev){
-            if(!mouseMode)return;
-            ev.preventDefault();
-            try{mousePad.setPointerCapture(ev.pointerId);}catch(_){}
-            mouseGesture={id:ev.pointerId,startX:ev.clientX,startY:ev.clientY,
-              x:ev.clientX,y:ev.clientY,moved:0};
-          });
-          mousePad.addEventListener("pointermove",function(ev){
-            if(!mouseMode||!mouseGesture||ev.pointerId!==mouseGesture.id)return;
-            ev.preventDefault();
-            var dx=ev.clientX-mouseGesture.x,dy=ev.clientY-mouseGesture.y;
-            mouseGesture.x=ev.clientX;mouseGesture.y=ev.clientY;
-            mouseGesture.moved+=Math.abs(dx)+Math.abs(dy);
-            moveCursor(pointerPosition.x+dx*1.35,pointerPosition.y+dy*1.35);
-          });
-          mousePad.addEventListener("pointerup",function(ev){
-            if(!mouseMode||!mouseGesture||ev.pointerId!==mouseGesture.id)return;
-            ev.preventDefault();
-            var gesture=mouseGesture;mouseGesture=null;
-            if(gesture.moved>13)return;
-            var p=pointerPosition;
-            flashPointer("pointermove",p.x,p.y,0);
-            flashPointer("pointerdown",p.x,p.y,1);
-            flashPointer("pointerup",p.x,p.y,0);
-            clickCount++;
-            if(clickCount<=4||clickCount%10===0)
-              report("触控辅助：虚拟鼠标已发送点击事件 "+clickCount+" 次（不记录游戏数据）");
-          });
-          mousePad.addEventListener("pointercancel",function(){mouseGesture=null;});
-          mousePad.addEventListener("contextmenu",function(ev){ev.preventDefault();});
-
-          // Optional map mode: treat horizontal touch swipes as a real
-          // pointer drag across the Flash stage. This depends on each map
-          // SWF supporting mouse dragging; it is not a hard-coded planet list.
-          function mapDrag(start,dx){
-            if(!player)return;
-            var from=limit(start.x,start.y);
-            var to=limit(start.x+dx,start.y);
-            flashPointer("pointermove",from.x,from.y,0);
-            flashPointer("pointerdown",from.x,from.y,1);
-            var step=0,steps=9;
-            function next(){
-              step++;
-              var x=from.x+(to.x-from.x)*step/steps;
-              flashPointer("pointermove",x,from.y,1);
-              if(step<steps)requestAnimationFrame(next);
-              else flashPointer("pointerup",to.x,to.y,0);
-            }
-            requestAnimationFrame(next);
-          }
-          var gameRegion=document.getElementById("game");
-          gameRegion.addEventListener("touchstart",function(ev){
-            if(!mapSwipeMode||mouseMode||!enteredGame||ev.touches.length!==1)return;
-            var touch=ev.touches[0],r=flashBounds();
-            if(!r||touch.clientY<r.top+r.height*0.18||
-               touch.clientY>r.top+r.height*0.87)return;
-            mapStart={x:touch.clientX,y:touch.clientY};
-          },{capture:true,passive:true});
-          gameRegion.addEventListener("touchend",function(ev){
-            if(!mapSwipeMode||!mapStart||ev.changedTouches.length!==1)return;
-            var p=ev.changedTouches[0],start=mapStart;mapStart=null;
-            var dx=p.clientX-start.x,dy=p.clientY-start.y;
-            if(Math.abs(dx)<75||Math.abs(dx)<Math.abs(dy)*1.45)return;
-            mapDrag(start,dx);swipeCount++;
-            report("地图辅助：已模拟横向拖拽 "+swipeCount+" 次（需地图 SWF 支持拖拽）");
-          },{capture:true,passive:true});
-          gameRegion.addEventListener("touchcancel",function(){mapStart=null;});
           window.ShiguangControls={
             toggleKeyboard:toggleKeyboard,
-            enableMouse:function(){setMouseMode(true);},
-            disableMouse:function(){setMouseMode(false);},
-            enableMapSwipe:function(){
-              if(mouseMode)setMouseMode(false);
-              mapSwipeMode=true;
-              showTip("地图滑动：在星图上左右划动切换/拖动");
-              report("触控辅助：地图横滑开启（需地图自身支持拖拽）");
+            enableMouse:function(){
+              if(inputShown)setDockVisible(false,"已启用虚拟鼠标");
+              if(touchControls)touchControls.enableMouse();
             },
-            disableMapSwipe:function(){
-              mapSwipeMode=false;mapStart=null;
-              report("触控辅助：地图横滑关闭");
-            }
+            disableMouse:function(){if(touchControls)touchControls.disableMouse();},
+            enableMapSwipe:function(){
+              if(inputShown)setDockVisible(false,"已启用星图导航");
+              if(touchControls)touchControls.enableMapSwipe();
+            },
+            disableMapSwipe:function(){if(touchControls)touchControls.disableMapSwipe();},
+            resetCursor:function(){if(touchControls)touchControls.resetCursor();},
+            cycleSpeed:function(){if(touchControls)touchControls.cycleSpeed();}
           };
           var stableViewport=null;
           function fit(){
@@ -993,6 +846,15 @@ final class GameServer {
             if(!window.RufflePlayer||!window.RufflePlayer.newest)throw Error("Ruffle JS 未加载");
             player=window.RufflePlayer.newest().createPlayer();
             document.getElementById("game").appendChild(player);fit();prepareKeyboard();
+            try{
+              if(window.ShiguangTouchControls){
+                touchControls=window.ShiguangTouchControls(player,report);
+              }else{
+                report("触控辅助：脚本缺失，触控增强暂不可用（不影响游戏启动）");
+              }
+            }catch(controlError){
+              report("触控辅助：初始化错误 "+String(controlError).slice(0,160));
+            }
             report("微端式直启：Client.swf（不加载 React 网页）");
             var prepared=null;
             try {
