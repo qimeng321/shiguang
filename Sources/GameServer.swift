@@ -637,27 +637,6 @@ final class GameServer {
                    background:#000;color:#b9c1d0;font:14px -apple-system,sans-serif;pointer-events:none}
           /* A real HTML touch target inside WKWebView retains user activation.
              iPad Safari may refuse to open the keyboard from a Flash callback. */
-          #keyboard-dock{
-            position:fixed;top:max(5px,env(safe-area-inset-top));left:50%;
-            transform:translateX(-50%);z-index:2147483001;
-            width:min(450px,calc(100vw - 165px));height:43px;
-            display:flex;align-items:center;gap:5px;
-            pointer-events:auto;
-          }
-          #keyboard-dock[hidden]{display:none!important}
-          #shiguang-input{
-            flex:1;min-width:0;width:100%;height:40px;box-sizing:border-box;
-            border:2px solid #4fa3f4;border-radius:12px;
-            background:rgba(250,253,255,.98);color:#163755;
-            padding:5px 12px;font:16px -apple-system,sans-serif;
-            box-shadow:0 4px 13px rgba(0,0,0,.32);
-            outline:none;touch-action:manipulation;
-          }
-          #keyboard-dock-hide{
-            height:36px;min-width:46px;border:0;border-radius:10px;
-            color:#183f67;background:rgba(255,255,255,.98);
-            font:600 13px -apple-system,sans-serif;touch-action:manipulation;
-          }
           #keyboard-trigger{
             position:fixed;right:18px;top:150px;z-index:2147483000;
             width:51px;height:51px;border-radius:50%;border:0;
@@ -689,13 +668,6 @@ final class GameServer {
         </script><script src="/ruffle/ruffle.js"></script>
         <script src="/ruffle/pvm-compat.js"></script></head>
         <body><div id="game"></div><div id="message">正在载入游戏资源…</div>
-        <div id="keyboard-dock">
-          <input id="shiguang-input" type="text" aria-label="游戏文字输入" 
-                 placeholder="先点游戏输入框，再点这里"
-                 autocomplete="off" autocorrect="off" autocapitalize="none"
-                 spellcheck="false" enterkeyhint="done">
-          <button id="keyboard-dock-hide" type="button" aria-label="隐藏输入栏">完成</button>
-        </div>
         <button id="keyboard-trigger" type="button" title="显示 iPad 键盘"
                 aria-label="打开输入键盘">⌨</button>
         <div id="keyboard-actions" aria-label="游戏键盘辅助键">
@@ -714,7 +686,10 @@ final class GameServer {
           // Ruffle's transformed ShadowRoot was rendered at the top-left on iPad.
           // Keeping this outside Ruffle gives actual viewport-centered placement.
           function keyboardInput(){
-            return document.getElementById("shiguang-input");
+            // Keep Ruffle's REAL keyboard input in its ShadowRoot. Moving
+            // focus outside the player would lose Flash's focused TextField.
+            var p=player||document.querySelector("ruffle-player");
+            return p&&p.shadowRoot&&p.shadowRoot.getElementById("virtual-keyboard");
           }
           function gameKey(key,code){
             if(!player)return;
@@ -724,28 +699,28 @@ final class GameServer {
               }));
             });
           }
+          var inputShown=true;
           function placeInputDock(){
-            // CSS uses left:50% + translateX(-50%): no recalculation or
-            // focus-dependent layout updates during keyboard animations.
+            // Position the Ruffle input ABSOLUTELY in its own 960x560 player.
+            // A CSS 'fixed' input inside the transformed ShadowRoot was
+            // erroneously positioned at the iPad's upper-left corner.
           }
-          var keyboardDock=document.getElementById("keyboard-dock");
-          var hideDockButton=document.getElementById("keyboard-dock-hide");
           function setDockVisible(visible,reason){
-            if(!visible){
-              var active=keyboardInput();
-              if(active&&document.activeElement===active)active.blur();
+            var input=keyboardInput();
+            inputShown=visible;
+            if(input){
+              if(!visible&&input.getRootNode().activeElement===input){
+                input.blur();
+              }
+              input.style.setProperty("display",visible?"block":"none","important");
             }
-            keyboardDock.hidden=!visible;
             if(reason)report("输入栏："+(visible?"显示":"隐藏")+"；"+reason);
           }
-          hideDockButton.addEventListener("click",function(e){
-            e.preventDefault();setDockVisible(false,"用户手动操作");
-          });
           function pollGameEntry(){
             fetch("/__micro/status",{cache:"no-store"}).then(function(r){return r.json()})
               .then(function(data){
-                if(data&&data.enteredGame&&!keyboardDock.hidden){
-                  setDockVisible(false,"已检测到进入游戏回应");
+                if(data&&data.enteredGame&&inputShown){
+                  setDockVisible(false,"收到进入游戏成功响应");
                 }
               }).catch(function(){});
           }
@@ -753,6 +728,25 @@ final class GameServer {
           function prepareKeyboard(){
             var input=keyboardInput();
             if(!input)return null;
+            // Unlike fixed positioning, absolute + 50% is relative to
+            // Ruffle's #container and remains centered for all iPad sizes.
+            var css={
+              position:"absolute",left:"50%",top:"8px",right:"auto",bottom:"auto",
+              transform:"translateX(-50%)",
+              width:"min(420px, calc(100% - 28px))",height:"42px",
+              opacity:"1",zIndex:"2147483000",pointerEvents:"auto",
+              visibility:"visible",display:inputShown?"block":"none",
+              boxSizing:"border-box",background:"rgba(252,254,255,.99)",
+              color:"#173653",border:"2px solid #398df0",borderRadius:"12px",
+              boxShadow:"0 4px 14px rgba(0,0,0,.25)",
+              padding:"6px 12px",fontSize:"16px",fontWeight:"500",
+              touchAction:"manipulation"
+            };
+            Object.keys(css).forEach(function(k){
+              input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),css[k],"important");
+            });
+            input.setAttribute("aria-hidden","false");
+            input.setAttribute("placeholder","点账号或密码框后，在此输入");
             input.setAttribute("autocomplete","off");
             input.setAttribute("autocorrect","off");
             input.setAttribute("autocapitalize","none");
@@ -803,7 +797,7 @@ final class GameServer {
               },true);
               input.addEventListener("focus",function(){report("键盘：真实输入框获得焦点");},true);
               input.addEventListener("blur",function(){report("键盘：输入框失去焦点");},true);
-              report("键盘：独立网页顶栏已启用，CSS 居中，不跟随游戏画布移动");
+              report("键盘：保留 Ruffle 内部输入组件，使用相对游戏宽度绝对居中");
             }
             placeInputDock();
             return input;
@@ -811,8 +805,8 @@ final class GameServer {
           function openKeyboard(ev){
             if(ev){ev.preventDefault();ev.stopPropagation();}
             if(prepareKeyboard()){
-              setDockVisible(true,"键盘按钮打开输入栏");
-              report("请点屏幕顶部正中的白色输入栏");
+              setDockVisible(!inputShown,"键盘按钮切换输入栏");
+              report("请点击游戏上方正中的白色输入栏（登录成功后自动隐藏）");
             }
           }
           var trigger=document.getElementById("keyboard-trigger");
