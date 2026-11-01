@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v4.1")
+                        Text("v4.2")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -139,10 +139,6 @@ struct LauncherView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
                         }
-                        Text("诊断日志：文件 App → 我的 iPad → 拾光号启动器 → diagnostics.txt")
-                            .font(.system(size: 11))
-                            .foregroundStyle(subtleInk)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                         if launcher.isImporting || launcher.isClearing {
                             ProgressView()
                                 .tint(blue)
@@ -290,11 +286,9 @@ struct GameView: View {
     let close: () -> Void
     @State private var server: GameServer?
     @State private var errorText: String?
-    @State private var gameStatus = "正在启动本地游戏服务…"
     @State private var reloadGeneration = 0
     @State private var showingCacheConfirmation = false
     @State private var isClearingWebCache = false
-    @State private var showingDiagnostics = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -307,7 +301,6 @@ struct GameView: View {
                     .tint(.white)
             } else if let server, let url = server.playURL(for: entry) {
                 GameWebView(url: url, onStatus: { message in
-                    gameStatus = message
                     LaunchDiagnostics.log("网页状态：" + message)
                 }, onError: { message in
                     errorText = message
@@ -359,28 +352,6 @@ struct GameView: View {
                 }
                 .padding(.top, 14)
                 Spacer(minLength: 12)
-                HStack(alignment: .bottom, spacing: 9) {
-                    Button { showingDiagnostics.toggle() } label: {
-                        Image(systemName: showingDiagnostics ? "waveform.path.ecg.rectangle" : "waveform.path.ecg")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .frame(width: 36, height: 36)
-                            .background(.black.opacity(0.38), in: Circle())
-                    }
-                    .accessibilityLabel(showingDiagnostics ? "隐藏诊断状态" : "显示诊断状态")
-                    if showingDiagnostics {
-                        Text(gameStatus)
-                            .lineLimit(3)
-                            .font(.system(size: 12, weight: .medium))
-                            .textSelection(.enabled)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 11))
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.bottom, 14)
             }
             .padding(.horizontal, 18)
 
