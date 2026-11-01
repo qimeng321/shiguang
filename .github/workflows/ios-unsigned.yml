@@ -87,6 +87,12 @@ jobs:
           galaxy=Path("Resources/Ruffle/galaxy-navigation.js").read_text()
           assert 'window.ShiguangGalaxyMenu' in galaxy
           assert 'ShiguangNativeBookmarks' in galaxy
+          assert 'lastTap=p' in galaxy
+          assert 'saveGalaxy' in galaxy
+          assert 'if(!active||!auto||mode==="planet")return;' in galaxy
+          assert 'groups=[]' in galaxy
+          assert 'var base=' not in galaxy
+          assert '"打开地图收藏"' in swift
           swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
           assert 'galaxy-bookmarks.json' in swift
           assert 'handleGalaxyBookmarks' in swift
