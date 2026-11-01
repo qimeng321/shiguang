@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1</string>
+	<string>1.3</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>4</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIFileSharingEnabled</key>
@@ -55,6 +55,7 @@
 			<string>拾光号游戏资源包</string>
 			<key>UTTypeConformsTo</key>
 			<array>
+				<string>public.data</string>
 				<string>public.zip-archive</string>
 			</array>
 			<key>UTTypeTagSpecification</key>
@@ -64,6 +65,22 @@
 					<string>srom</string>
 				</array>
 			</dict>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>拾光号资源包</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>cn.shiguanghao.srom</string>
+				<string>public.zip-archive</string>
+			</array>
 		</dict>
 	</array>
 </dict>

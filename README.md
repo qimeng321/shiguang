@@ -1,39 +1,25 @@
-# 拾光号 iOS 启动器 · 1.1 修复版
+# 拾光号 iOS 启动器 v1.3（三按钮版）
 
-Xcode 工程支持 iPhone/iPad（iOS 16 及以上）。用户在应用中导入 ZIP 格式的 .srom 资源包；解压成功并找到入口 SWF 后才替换旧资源。游戏服务器地址由启动器独立配置在 GameSocketBridge.swift：103.91.210.16:22973，不写入也不修改用户的资源包。
+## 首页功能
+首页只有三个主要按钮：**导入美化包、清除美化包、进入游戏**。不再显示官网、下载美化包、导入配置或游戏服务器信息。
 
-针对「拾光号-美化整合包-20261031.srom」，启动器识别 NieoData/Client.swf，并优先打开同目录的 index.html。该网页加载包内的 assets/index.js 与 nieo_wasm_core_bg.wasm，资源通过仅绑定 127.0.0.1 的应用内 HTTP 服务提供。启动器还在 127.0.0.1:32973 提供 WebSocket 转 TCP 通道，目标是上述游戏服务器。若包中没有网页入口，则使用内置 Ruffle 页面加载所选 SWF。
+**美化包就是游戏资源包**，与游戏共用同一套导入/清除逻辑。进入游戏会自动使用资源包中的优先入口（`Client.swf`、`Main.swf` 等），无需手动选择。
 
-## 构建
+## 导入方式（解决此前文件选不了的问题）
+1. 点「导入美化包」→「从文件 App 选择」；改用 UIKit 的 **UIDocumentPicker（asCopy=true）**，接受通用文件，不提前限制 `.srom` 自定义类型；选中后再由 App 检查扩展名和文件头。支持 `.srom`、`.zip`。
+2. 如果文件选择器仍无法选中 `.srom`：在系统「文件」App 找到资源包，复制到「我的 iPad/iPhone → 拾光号启动器」共享文件夹，然后点「导入美化包」→「从拾光号共享文件夹导入」→ 选中该文件。
+3. 也可以在「文件」App 中对 `.srom` 使用共享/打开方式，选择「拾光号启动器」（若系统提供该动作）。应用增加了 `.onOpenURL` 接收入口。
 
-1. 用完整 Xcode 打开 ShiguangLauncher.xcodeproj。
-2. 等待 Xcode 下载 Swift Package Manager 依赖 ZIPFoundation 0.9.20。
-3. 在 Signing & Capabilities 选择自己的开发团队；如标识符冲突，修改 Bundle Identifier。
-4. 在 iOS 16+ 的 iPhone 或 iPad 上运行，导入当前资源包后点「启动游戏」。
+导入过程：从系统文件提供器复制到私有沙盒 → 检查 ZIP 文件头 → 解压到独立临时目录 → 搜索游戏 SWF 入口 → 成功后替换旧版本（失败时保留旧版本）。如果美化包并不是 ZIP 格式，即使扩展名叫 `.srom` 也不能凭空解压：现在会显示具体文件头十六进制，而不是静默失败；需要提供实际 `.srom` 样本才能支持其专有格式。
 
-Ruffle 许可证位于 Resources/Ruffle。
+清除美化包会删除 App 沙盒内已安装的资源，并禁用「进入游戏」，但不主动删除用户在「文件」App 共享文件夹里的原始包。导入前后尽量预留足够空间（复制、解压可能同时占空间）。
+
+## 构建和部署
+将 ZIP **解压后**覆盖原 GitHub 仓库文件（保留 `.git`），包含 `.github`、`Sources`、`Resources`、`ShiguangLauncher.xcodeproj`；GitHub Desktop → Commit to main → Push origin。然后到 GitHub Actions 手动运行 **Build unsigned iOS IPA**，在 Summary 的 Artifacts 里下载新的 IPA。
+
+iOS/iPadOS 最低要求：16.0。未签名 IPA 仍需要自行签名安装。保留原 Bundle ID `cn.shiguanghao.launcher`，尽量覆盖安装而非卸载，以免旧资源丢失。
 
 ## 验证边界
+已完成项目静态检查和 Swift 语法解析；当前运行环境没有 macOS/Xcode/iPad，也没有收到用户的实际 `.srom` 文件，因此**尚未完成 iOS 编译及真机/实际资源包验证**。如果导入仍失败，请提供应用里显示的完整错误文字，以及一个真实的 `.srom` 文件样本；如果只看到不可选灰色文件，请使用第 2 种共享文件夹导入。
 
-该 Mac 未安装完整 Xcode，尚未编译、签名或真机运行。WebSocket 转 TCP 是依据资源包中的本机连接配置和网页脚本推断的适配方式；没有实际登录流量，尚不能确认协议完全匹配，也不能保证游戏已经可玩。真机登录后如有错误，需要根据连接日志继续适配。
-
-## 无本机 Xcode 的构建路线
-
-工程包含 .github/workflows/ios-unsigned.yml。把 ShiguangLauncher 目录中的所有文件（含 .github 隐藏目录）放到 GitHub 仓库根目录后，在 Actions 中手动运行 “Build unsigned iOS IPA”。下载构建产物 ShiguangLauncher-unsigned-ipa，再解压得到未签名 IPA。未签名 IPA 不能直接安装；可在这台 Mac 上用 Sideloadly 的 Apple ID Sideload 模式给自己的设备签名安装。资源包不会上传到 GitHub，也不会打进 IPA。首次运行该工作流如编译失败，请保存完整日志以便修复。
-
-## 1.1 修复说明（2026-11-01）
-
-1. 首页不再显示游戏服务器地址（服务端连接配置仍保留在 `GameSocketBridge.swift` 中）。
-2. 为 iPad/iPhone 添加原生 `UILaunchScreen` 配置；首页采用自适应的全宽背景和居中内容区，游戏 WKWebView 禁止自动内容缩进。**如果游戏 SWF/资源包内部强制固定宽高比，游戏画面仍可能出现黑边，需要拿实际 .srom 进一步诊断，不能保证所有游戏场景拉伸铺满。**
-3. 注册 `cn.shiguanghao.srom` 文件类型，并兼容 `.zip` 和被文件提供器归类为通用数据的 `.srom`；在开始后台解压前取得安全范围访问权限。若仍无法选择，请确认文件在“文件”应用中已完整下载到本机、文件名以 `.srom` 结尾。
-4. 新增 1024px 星空飞船应用图标和 iPhone/iPad 图标尺寸，配置在 `Resources/Assets.xcassets`，首页也显示该图标。
-
-### 将修复版更新到 GitHub
-
-先把 ZIP 解压，在 GitHub 仓库上传**压缩包内的全部文件和目录**，覆盖原有的 `Sources/`、`Resources/Info.plist`、`ShiguangLauncher.xcodeproj/project.pbxproj`，**并新增** `Resources/Assets.xcassets`。`.github/workflows/ios-unsigned.yml` 保持不变。上传后重新运行 Actions → Build unsigned iOS IPA，再下载新的构建产物。
-
-> 注意：只上传新增图标文件而不更新 `project.pbxproj`，应用图标不会参与编译。
->
-> 修复版仍要求 iOS/iPadOS 16 或以上，未修改服务器配置、游戏资源、签名方式。iPad Air 2 如运行 iPadOS 14/15，仍无法安装该版本。
->
-> 本地只能检查项目结构、Swift 语法与资源配置；没有 macOS/Xcode 和真机，**尚未验证重新编译及设备表现**。若 Actions 失败，请检查具体失败日志。
+内置 Ruffle 和既有本地服务器逻辑保留，GameSocketBridge 中的服务器地址未更改；按钮“清除美化包”不会删除 Ruffle 或 App 自身。
