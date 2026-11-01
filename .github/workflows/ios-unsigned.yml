@@ -44,6 +44,22 @@ jobs:
               raise SystemExit('Wrong Ruffle web bundle: expected version 0.7.1')
           print('Validated Ruffle 0.7.1 web runtime, JS bytes',len(p))
           PY_CHECK
+      - name: Bundle OFL Simplified Chinese font for Ruffle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Resources/Ruffle/fonts
+          curl --fail --location --show-error --retry 4 \
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+            --output Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          actual="$(git hash-object Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)"
+          test "$actual" = "dc15562470b4f842321894787a0d066879ccff8b"
+          curl --fail --location --show-error --retry 4 \
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE" \
+            --output Resources/Ruffle/fonts/OFL-LICENSE.txt
+          test -s Resources/Ruffle/fonts/OFL-LICENSE.txt
+          test "$(stat -f%z Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)" -gt 16000000
+          echo "Verified Noto Sans CJK SC font and OFL license"
       - name: Build for iPhone and iPad
         run: |
           xcodebuild \

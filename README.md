@@ -1,3 +1,17 @@
+# v4.1 — 中文动态文字与高清渲染修复版
+
+## 根据真机诊断确认
+v4.0 已能连接登录端口 22973 和服务器真实游戏频道 28610，进入地图和宠物背包。UI 的 SWF 嵌入字体部分可见，但多个动态中文字段缺失。Web 版 Ruffle 0.7.1 无法直接使用 iPadOS 系统字体，故优先补充完整简体中文设备字体。
+
+## 本版措施
+- 构建流程从 notofonts/noto-cjk 固定 commit f8d157532fbfaeda587e826d4cd5b21a49186f7c 下载完整版 NotoSansCJKsc-Regular.otf，使用 Git blob dc15562470b4f842321894787a0d066879ccff8b 验证文件；将 OFL 许可证随字体一并嵌入 IPA。不会依赖游戏时在线下载字体。
+- 本地资源服务器支持 font/otf MIME；Ruffle Web fontSources 加载中文字体，defaultFonts 将 sans、serif、typewriter、东亚默认字体映射到 Noto Sans CJK SC。游戏载入前执行字体 HEAD 自检，并在 diagnostics 里记录可达性。
+- Ruffle 渲染质量明确设置为 best，启用较高抗锯齿并保留默认 GPU 后端和屏幕像素密度，尽可能改善矢量边缘；原有低分辨率位图不可能凭此变为真正无损高清。
+- 不触碰 v4.0 的双端口代理、频道列表、PVM/ByteLoader 和原有游戏资源。UI 显示版本及日志修正为 v4.1。
+
+## 验收重点
+覆盖安装同一 Bundle ID，打开精灵包和精灵信息，观察技能名、宠物昵称、图形面板字段有无恢复。字体资源正常响应 HTTP 200 不意味着所有缺失字已显示，最终效果必须通过 iPad 真机截图确认。如依然缺失，请提供新版 diagnostics 和截图来进一步检查特殊字体名称或 SWF 文本行为。
+
 # v4.0 — 登录 / 游戏频道双通道分流修复（需要真机验证）
 
 ## 已确认的实际问题

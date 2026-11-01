@@ -208,6 +208,7 @@ final class GameServer {
         // WKWebView cannot render Flash without a polyfill. Serve our bundled
         // Ruffle files even when the package contains its own index.html.
         if path.hasPrefix("/ruffle/") {
+            if path.hasPrefix("/ruffle/fonts/") { LaunchDiagnostics.log("[中文字体] "+String(parts[0])+" "+path) }
             serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
             return
         }
@@ -613,6 +614,7 @@ final class GameServer {
         case "mp3": return "audio/mpeg"
         case "mp4": return "video/mp4"
         case "ttf": return "font/ttf"
+        case "otf": return "font/otf"
         case "woff": return "font/woff"
         case "woff2": return "font/woff2"
         default: return "application/octet-stream"
@@ -662,7 +664,16 @@ final class GameServer {
           window.RufflePlayer.config={
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
+            quality:"best",
             allowScriptAccess:true,publicPath:"/ruffle/",
+            fontSources:["/ruffle/fonts/NotoSansCJKsc-Regular.otf"],
+            defaultFonts:{
+              sans:["Noto Sans CJK SC"],serif:["Noto Sans CJK SC"],
+              typewriter:["Noto Sans CJK SC"],
+              japaneseGothic:["Noto Sans CJK SC"],
+              japaneseGothicMono:["Noto Sans CJK SC"],
+              japaneseMincho:["Noto Sans CJK SC"]
+            },
             socketProxy:[
               {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
               {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"}
@@ -865,6 +876,22 @@ final class GameServer {
               ? {data:prepared,swfFileName:"Client.swf",base:window.location.origin+"/"}
               : {url:\(json(swfURL)),base:\(json(baseURL))};
             report(prepared ? "PVM 补丁版 SWF 正在进入 Ruffle" : "未启用补丁，使用原版 SWF");
+            // Ruffle Web has no iPadOS device fonts; bundle a CJK fallback.
+            options.fontSources=["/ruffle/fonts/NotoSansCJKsc-Regular.otf"];
+            options.defaultFonts={
+              sans:["Noto Sans CJK SC"],serif:["Noto Sans CJK SC"],
+              typewriter:["Noto Sans CJK SC"],
+              japaneseGothic:["Noto Sans CJK SC"],
+              japaneseGothicMono:["Noto Sans CJK SC"],
+              japaneseMincho:["Noto Sans CJK SC"]
+            };
+            options.quality="best";
+            try{
+              var chk=await fetch("/ruffle/fonts/NotoSansCJKsc-Regular.otf",{method:"HEAD",cache:"no-store"});
+              report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC");
+            }catch(fontError){
+              report("中文字体预检失败："+String(fontError).slice(0,140));
+            }
             options.socketProxy=[
               {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
               {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
@@ -872,6 +899,7 @@ final class GameServer {
               {host:"localhost",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
             ];
             await player.ruffle().load(options);
+            report("高清模式：Flash quality=best；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();
