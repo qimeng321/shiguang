@@ -9,7 +9,12 @@ enum LaunchDiagnostics {
     private static var missingResourceCount = 0
 
     static var documents: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        #if os(macOS)
+        return base.appendingPathComponent("拾光号 Mac", isDirectory: true)
+        #else
+        return base
+        #endif
     }
     static var importDirectory: URL {
         documents.appendingPathComponent("Import", isDirectory: true)
@@ -426,8 +431,13 @@ final class LauncherModel: ObservableObject {
     }
 
     private nonisolated static var savedGameRoot: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        #if os(macOS)
+        return support.appendingPathComponent("ShiguangMac", isDirectory: true)
             .appendingPathComponent("Game", isDirectory: true)
+        #else
+        return support.appendingPathComponent("Game", isDirectory: true)
+        #endif
     }
 
     private nonisolated static func extractPackage(_ source: URL, progress: Progress) throws -> [String] {
