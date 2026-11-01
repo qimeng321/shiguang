@@ -232,6 +232,31 @@ final class GameServer {
             let relative = path == "/" ? "index.html" : String(path.dropFirst())
             if relative == "index.html" {
                 servePackagedIndex(headOnly: headOnly, connection: connection)
+            } else if relative.lowercased() == "ip.txt" {
+                // The Flash login client fetches /ip.txt AFTER the player submits
+                // credentials. Without it, it never reaches Flash Socket.connect.
+                // Prefer the package's own file when available; only synthesize
+                // a fallback from the known Windows microclient configuration.
+                if let original = safeFile(relative, below: root),
+                   FileManager.default.fileExists(atPath: original.path) {
+                    LaunchDiagnostics.log("[登录地址] 使用美化包自带 ip.txt（保持原文件内容）")
+                    serve(relative: relative, below: root, headOnly: headOnly,
+                          rangeHeader: rangeHeader, connection: connection)
+                } else {
+                    let endpoint = GameSocketBridge.serverHost + ":" + String(GameSocketBridge.serverPort)
+                    LaunchDiagnostics.log("[登录地址] 美化包没有 ip.txt；依据 Windows 微端线上配置返回 "
+                                          + endpoint + "（HTTP 200，纯文本）")
+                    send(data: Data(endpoint.utf8),
+                         mime: "text/plain; charset=utf-8",
+                         headOnly: headOnly, connection: connection)
+                    if !headOnly, let bridge {
+                        queue.asyncAfter(deadline: .now() + 12) {
+                            if !bridge.hasReceivedClient {
+                                LaunchDiagnostics.log("[登录网络诊断] ip.txt 已返回，12秒内仍无 Flash Socket 连接；需继续核查登录 SWF 对返回内容的解析及 Ruffle Socket 支持")
+                            }
+                        }
+                    }
+                }
             } else {
                 serve(relative: relative, below: root, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
             }
