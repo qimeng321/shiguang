@@ -36,8 +36,9 @@ final class GameServer {
         let count = Int(UInt16(bytes[4]) << 8 | UInt16(bytes[5]))
         let headerSize = 6 + count * 24
         let preview = bytes.prefix(8).map { String(format: "%02X", $0) }.joined(separator: " ")
-        let validHeader = count > 0 && headerSize < size
-        LaunchDiagnostics.log("[PVM 静态检查] version.swf 总字节=\(size)；前8字节=\(preview)；修订号=\(stamp)；表项=\(count)；头部应占=\(headerSize)；结构=\(validHeader ? "初步合理" : "异常，需分析实际文件格式")")
+        let validHeader = headerSize <= size && count <= 2048
+        let zlibLikely = sample.count > headerSize + 1 && bytes[headerSize] == 0x78 && ((Int(bytes[headerSize]) << 8 | Int(bytes[headerSize + 1])) % 31 == 0)
+        LaunchDiagnostics.log("[PVM 静态检查] version.swf 总字节=\(size)；前8字节=\(preview)；修订号=\(stamp)；表项=\(count)；头部应占=\(headerSize)；结构=\(validHeader ? "头部长度合理" : "头部长度异常")；数据区Zlib=\(zlibLikely ? "疑似有效" : "未识别")；表项0可合法")
         if validHeader {
             let fileNameBytes = Array(bytes.dropFirst(6).prefix(20))
             let fileName = String(decoding: fileNameBytes.prefix(while: { $0 != 0 }), as: UTF8.self)
@@ -54,10 +55,11 @@ final class GameServer {
             if lower == "/version.swf" {
                 versionGetCount += 1
                 LaunchDiagnostics.log("PVM 版本初始化：实际请求 version.swf，第 \(versionGetCount) 次")
+                if versionGetCount == 3 { LaunchDiagnostics.log("[PVM 进度] 第三次 version.swf 请求已出现，说明头部回调成功推进到主体读取") }
                 if versionGetCount == 2 {
                     queue.asyncAfter(deadline: .now() + 5) { [weak self] in
-                        guard let self, !self.proceededBeyondVersion else { return }
-                        LaunchDiagnostics.log("[阶段诊断] 第二次 version.swf 后 5 秒未见登录或 DLL GET，请在游戏界面停留至少 20 秒。")
+                        guard let self, !self.proceededBeyondVersion, self.versionGetCount == 2 else { return }
+                        LaunchDiagnostics.log("[阶段诊断] 第二次 version.swf 后 5 秒未见第三次主体 GET，也无登录或 DLL GET，请在游戏界面停留至少 20 秒。")
                     }
                     queue.asyncAfter(deadline: .now() + 15) { [weak self] in
                         guard let self, !self.proceededBeyondVersion else { return }
@@ -185,6 +187,11 @@ final class GameServer {
         let headOnly = parts[0] == "HEAD"
         let path = components.path
         let lower = path.lowercased()
+        if lower == "/version.swf" && !headOnly {
+            let raw = components.query ?? ""
+            let queryKind = (UInt64(raw) ?? 0) > 100_000_000 ? "修订号请求" : (raw.isEmpty ? "无查询参数" : "随机防缓存请求")
+            LaunchDiagnostics.log("[PVM 请求阶段] GET version.swf：\(queryKind)（不记录实际查询值）")
+        }
         if lower == "/" || lower == "/index.html" ||
            lower.hasSuffix("/index.js") || lower.hasSuffix("/ruffle.js") ||
            lower.hasSuffix("/client.swf") || lower.hasSuffix("/nieo_wasm_core_bg.wasm") ||
@@ -396,8 +403,9 @@ final class GameServer {
                 try? handle.close()
                 connection.cancel()
             } else {
+                let pvm = relative.lowercased() == "version.swf" && !isPartial
                 self?.stream(handle, to: connection, remaining: byteCount,
-                             observeCompletion: relative.lowercased() == "version.swf")
+                             observeCompletion: pvm, splitPVMHeader: pvm)
             }
         })
     }
@@ -410,14 +418,17 @@ final class GameServer {
     }
 
     private func stream(_ handle: FileHandle, to connection: NWConnection,
-                        remaining: UInt64, observeCompletion: Bool = false) {
+                        remaining: UInt64, observeCompletion: Bool = false,
+                        splitPVMHeader: Bool = false) {
         guard remaining > 0 else {
             try? handle.close()
             if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf 已全部提交到本地 TCP 发送队列（不代表 Flash 解析成功）") }
             connection.cancel()
             return
         }
-        let length = Int(min(remaining, 64 * 1024))
+        // Experimental workaround limited to PVM: send the 6-byte header
+        // separately so Flash URLStream can observe a partial progress event.
+        let length = Int(min(remaining, splitPVMHeader ? 6 : 64 * 1024))
         guard let chunk = try? handle.read(upToCount: length), !chunk.isEmpty else {
             try? handle.close()
             connection.cancel()
@@ -425,8 +436,16 @@ final class GameServer {
         }
         connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
             if error == nil {
-                self?.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
-                             observeCompletion: observeCompletion)
+                if splitPVMHeader {
+                    LaunchDiagnostics.log("[PVM 分段] 已先发送6字节头部，120毫秒后继续传输（不修改源文件）")
+                    self?.queue.asyncAfter(deadline: .now() + .milliseconds(120)) { [weak self] in
+                        self?.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
+                                     observeCompletion: observeCompletion, splitPVMHeader: false)
+                    }
+                } else {
+                    self?.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
+                                 observeCompletion: observeCompletion, splitPVMHeader: false)
+                }
             } else {
                 if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf TCP 发送失败：\(error?.localizedDescription ?? "未知")") }
                 try? handle.close()
