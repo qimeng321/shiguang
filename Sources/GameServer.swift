@@ -663,7 +663,10 @@ final class GameServer {
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
             allowScriptAccess:true,publicPath:"/ruffle/",
-            socketProxy:[{host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"}]
+            socketProxy:[
+              {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"}
+            ]
           };
         </script><script src="/ruffle/ruffle.js"></script>
         <script src="/ruffle/pvm-compat.js"></script></head>
@@ -864,6 +867,7 @@ final class GameServer {
             report(prepared ? "PVM 补丁版 SWF 正在进入 Ruffle" : "未启用补丁，使用原版 SWF");
             options.socketProxy=[
               {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
               {host:"127.0.0.1",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
               {host:"localhost",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
             ];

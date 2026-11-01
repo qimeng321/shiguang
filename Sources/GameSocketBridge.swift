@@ -6,9 +6,17 @@ final class GameSocketBridge {
     static let serverHost = "103.91.210.16"
     static let serverPort: UInt16 = 22973
     static let localPort: UInt16 = 32973
+    // Distinct virtual port for the dynamically advertised game channel.
+    // Ruffle matches the SWF's host+port exactly; the local gateway then
+    // connects to the original channel port returned by CMD105/106.
+    static let virtualChannelPort: UInt16 = 22974
+    static let localChannelPort: UInt16 = 32974
 
     private let queue = DispatchQueue(label: "cn.shiguanghao.launcher.socket")
     private let listener: NWListener
+    private let channelListener: NWListener
+    private var activeChannelHost: String?
+    private var activeChannelPort: UInt16?
     private var sessions: [UUID: Session] = [:]
     private var acceptedCount = 0
     private var gameEnteredFlag=false
@@ -35,6 +43,27 @@ final class GameSocketBridge {
         // Bind to the loopback interface without specifying the port twice.
         parameters.requiredInterfaceType = .loopback
         listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: Self.localPort)!)
+        let channelOptions = NWProtocolWebSocket.Options()
+        channelOptions.autoReplyPing = true
+        channelOptions.setClientRequestHandler(queue) { _, _ in
+            NWProtocolWebSocket.Response(status: .accept, subprotocol: nil)
+        }
+        let channelParameters = NWParameters.tcp
+        channelParameters.defaultProtocolStack.applicationProtocols.insert(channelOptions, at: 0)
+        channelParameters.requiredInterfaceType = .loopback
+        channelListener = try NWListener(using: channelParameters,
+            on: NWEndpoint.Port(rawValue: Self.localChannelPort)!)
+        channelListener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                LaunchDiagnostics.log("[频道代理] 本地 WebSocket 监听成功 32974，虚拟游戏端口 22974")
+            case .failed(let error):
+                LaunchDiagnostics.log("[频道代理] 本地监听失败：" + error.localizedDescription)
+            case .waiting(let error):
+                LaunchDiagnostics.log("[频道代理] 等待中：" + error.localizedDescription)
+            default: break
+            }
+        }
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
@@ -62,6 +91,35 @@ final class GameSocketBridge {
             let id = UUID()
             let session = Session(webSocket: webSocket, queue: self.queue,
                                   index: self.acceptedCount,
+                                  remoteHost: Self.serverHost,
+                                  remotePort: Self.serverPort,
+                                  onChannel: { [weak self] host, port in
+                                      guard let self else { return }
+                                      self.activeChannelHost = host
+                                      self.activeChannelPort = port
+                                      LaunchDiagnostics.log("[频道发现] 原始游戏服务器：" + host + ":" + String(port))
+                                  },
+                                  onEnterGame: { [weak self] in self?.gameEnteredFlag = true }) { [weak self] in
+                self?.sessions.removeValue(forKey: id)
+            }
+            self.sessions[id] = session
+            session.start()
+        }
+        channelListener.newConnectionHandler = { [weak self] webSocket in
+            guard let self else { webSocket.cancel(); return }
+            guard let host = self.activeChannelHost, let port = self.activeChannelPort else {
+                LaunchDiagnostics.log("[频道代理] Flash 发起游戏连接，但尚未收到有效的 CMD105 服务器地址")
+                webSocket.cancel()
+                return
+            }
+            self.acceptedCount += 1
+            let id = UUID()
+            LaunchDiagnostics.log("[频道代理] 将虚拟游戏连接转发到实际频道 " + host + ":" + String(port))
+            let session = Session(webSocket: webSocket, queue: self.queue,
+                                  index: self.acceptedCount,
+                                  remoteHost: host,
+                                  remotePort: port,
+                                  onChannel: { _, _ in },
                                   onEnterGame: { [weak self] in self?.gameEnteredFlag = true }) { [weak self] in
                 self?.sessions.removeValue(forKey: id)
             }
@@ -69,10 +127,12 @@ final class GameSocketBridge {
             session.start()
         }
         listener.start(queue: queue)
+        channelListener.start(queue: queue)
     }
 
     deinit {
         listener.cancel()
+        channelListener.cancel()
         remoteProbe?.cancel()
         sessions.values.forEach { $0.stop() }
     }
@@ -123,17 +183,25 @@ final class GameSocketBridge {
         private var upstreamTotal=0
         private var downstreamTotal=0
         private let onEnterGame: () -> Void
+        private let onChannel: (String, UInt16) -> Void
+        private let remoteHost: String
+        private let remotePort: UInt16
 
         init(webSocket: NWConnection, queue: DispatchQueue, index: Int,
+             remoteHost: String, remotePort: UInt16,
+             onChannel: @escaping (String, UInt16) -> Void,
              onEnterGame: @escaping () -> Void, onClose: @escaping () -> Void) {
+            self.remoteHost = remoteHost
+            self.remotePort = remotePort
+            self.onChannel = onChannel
             self.onEnterGame = onEnterGame
             self.index = index
             self.webSocket = webSocket
             self.queue = queue
             self.onClose = onClose
             self.tcp = NWConnection(
-                host: NWEndpoint.Host(GameSocketBridge.serverHost),
-                port: NWEndpoint.Port(rawValue: GameSocketBridge.serverPort)!,
+                host: NWEndpoint.Host(remoteHost),
+                port: NWEndpoint.Port(rawValue: remotePort)!,
                 using: .tcp
             )
         }
@@ -156,7 +224,7 @@ final class GameSocketBridge {
             tcp.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
-                    LaunchDiagnostics.log("[登录网络] 远端 TCP 连接成功：" + GameSocketBridge.serverHost + ":" + String(GameSocketBridge.serverPort))
+                    LaunchDiagnostics.log("[登录网络] 远端 TCP 连接成功：" + self.remoteHost + ":" + String(self.remotePort))
                 case .failed(let error):
                     LaunchDiagnostics.log("[登录网络] 远端 TCP 连接失败：" + error.localizedDescription)
                     self?.stop()
@@ -249,18 +317,23 @@ final class GameSocketBridge {
                                 let host=String(decoding: hostBytes.prefix(while: {$0 != 0}),as: UTF8.self)
                                 let port=(UInt16(bytes[entry+24])<<8)|UInt16(bytes[entry+25])
                                 LaunchDiagnostics.log("[服务器列表] 频道ID=\(onlineID)，服务器=\(host):\(port)")
-                                // This game's Windows config sends both login and
-                                // game traffic to 103.91.210.16:22973. Ruffle Web
-                                // cannot connect to a host/port without an exact
-                                // socketProxy match, so normalize the list endpoint.
-                                if host != GameSocketBridge.serverHost || port != GameSocketBridge.serverPort {
-                                    let newHost=Array(GameSocketBridge.serverHost.utf8)
+                                // Only the first (currently sole) channel is
+                                // advertised via a virtual Ruffle-compatible port.
+                                // Keep its REAL endpoint for the separate TCP relay.
+                                // Never send a game-channel request to login :22973.
+                                if i == 0, !host.isEmpty, port > 0,
+                                   host.utf8.count <= 15,
+                                   host.utf8.allSatisfy({ $0 >= 45 && $0 <= 122 }) {
+                                    onChannel(host, port)
+                                    let virtualHost=Array(GameSocketBridge.serverHost.utf8)
                                     for j in 0..<16 {
-                                        bytes[entry+8+j]=j<newHost.count ? newHost[j] : 0
+                                        bytes[entry+8+j]=j<virtualHost.count ? virtualHost[j] : 0
                                     }
-                                    bytes[entry+24]=UInt8(GameSocketBridge.serverPort>>8)
-                                    bytes[entry+25]=UInt8(GameSocketBridge.serverPort & 255)
-                                    LaunchDiagnostics.log("[服务器列表] 已按 Windows 微端线上配置映射频道连接地址到 103.91.210.16:22973")
+                                    bytes[entry+24]=UInt8(GameSocketBridge.virtualChannelPort>>8)
+                                    bytes[entry+25]=UInt8(GameSocketBridge.virtualChannelPort & 255)
+                                    LaunchDiagnostics.log("[服务器列表] 频道已通过虚拟 103.91.210.16:22974 转发；实际目的地址保持 " + host + ":" + String(port))
+                                } else {
+                                    LaunchDiagnostics.log("[服务器列表] 本频道未做地址替换：不满足安全条件或超出首频道映射")
                                 }
                             }
                         } else {
