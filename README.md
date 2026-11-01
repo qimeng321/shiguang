@@ -1,3 +1,11 @@
+# v2.9 — iPad 自适应布局 + Windows 微端式直启 + TCP 正常关连接
+
+对照 Windows 1.2.5 微端、Client.as、PVM_Loader.as 和 ByteLoader.as：Windows 使用 Ruffle 原生桌面运行时直接加载 Client.swf，而原 iOS 使用 React/index.js/WASM 启动；游戏的 PVM 使用 Flash URLStream.PROGRESS 和 COMPLETE 事件。v2.8 仍停在第二次 version.swf 请求后。Windows 包内的 version.swf 前6字节为 4B5004D40000，后续 zlib 压缩体可以解压至约 50 KB，头表项0不代表损坏。
+
+本版在原有本地 HTTP 服务增加 `/__micro/game.html`，直接创建 Ruffle 播放器运行 Client.swf，继续由原 WS→TCP 代理提供游戏 Socket；不启动 React 网页。基于浏览器 visualViewport 的实际宽高和 960:560 画面比例计算最佳等比最大化尺寸，水平垂直居中，支持旋转、分屏和窗口尺寸变化。取消不稳定的6字节/120ms HTTP 分段实验。所有 HTTP 正常发送完毕后使用 Network.framework `.finalMessage` 发送 TCP FIN，避免过早 `connection.cancel()` 使 URLStream 收不到正确事件，2秒后释放连接。PVM FIN 日志保留。
+
+**注意：修复假说仍需 iPad 真机验证；本次改变了 Flash 启动流程和 HTTP 结束方式，但 Xcode 编译成功并不保证登录成功。** 更新时不卸载旧版，不清理 .srom，游戏界面保持至少25秒，提交 diagnostics.txt，重点检查 `微端式直启`、`TCP FIN`、第三次 GET /version.swf 和登录模块 GET。
+
 # v2.8 — 游戏保持比例并水平/垂直居中
 
 v2.7 的真机截图显示 Ruffle 0.7.1 可渲染 960×560 的游戏背景，但舞台仍固定左上角。根因之一是 v2.6 注入样式强制 `position:fixed;left:0;top:0`，破坏了 React 原本的 flex 居中定位。虽然 v2.7 试图进行全屏 exactfit，但游戏实际内部保持固定区域。
