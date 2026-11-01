@@ -691,35 +691,18 @@ final class GameServer {
           function placeInputDock(){
             var input=keyboardInput();
             if(!input)return;
-            var vv=window.visualViewport;
-            var fullW=window.innerWidth,fullH=window.innerHeight;
-            var visibleW=vv?vv.width:fullW;
-            var visibleH=vv?vv.height:fullH;
-            var offX=vv?vv.offsetLeft:0,offY=vv?vv.offsetTop:0;
-            var keyboardOpen=visibleH<fullH*0.74;
-            var gameRect=player&&player.getBoundingClientRect();
-            var width=Math.max(150,Math.min(420,visibleW-28,visibleW*0.57));
-            var height=42;
-            var x=offX+(visibleW-width)/2;
-            var y;
-            if(!keyboardOpen&&gameRect&&gameRect.bottom+height+10<offY+visibleH){
-              // Prefer the center of the black letterbox below the game.
-              y=gameRect.bottom+Math.max(4,(offY+visibleH-gameRect.bottom-height)/2);
-            }else{
-              // The iPad keyboard consumes the lower visual viewport.
-              // Float immediately above it, without shrinking the Flash stage.
-              y=offY+visibleH-height-8;
-            }
-            x=Math.max(offX+8,Math.min(x,offX+visibleW-width-8));
-            y=Math.max(offY+6,Math.min(y,offY+visibleH-height-5));
+            // Stationary top bar: moving a focused field during keyboard animation
+            // causes iPadOS to blur, collapsing the software keyboard.
+            var width=Math.min(380,Math.max(200,window.innerWidth*0.42));
+            var x=Math.max(80,Math.round((window.innerWidth-width)/2));
+            var state=Math.round(x)+",14 宽"+Math.round(width);
+            if(state===dockLast)return;
+            if(input.getRootNode().activeElement===input&&dockLast)return;
             input.style.setProperty("left",Math.round(x)+"px","important");
-            input.style.setProperty("top",Math.round(y)+"px","important");
+            input.style.setProperty("top","14px","important");
             input.style.setProperty("width",Math.round(width)+"px","important");
-            var state=(keyboardOpen?"键盘上方":"下方留白区")+" "+Math.round(x)+","+Math.round(y)+" 宽"+Math.round(width);
-            if(state!==dockLast){
-              dockLast=state;
-              report("输入栏自适应位置："+state);
-            }
+            dockLast=state;
+            report("输入栏位置：顶部居中 "+state+"，输入时保持不动");
           }
           function prepareKeyboard(){
             var input=keyboardInput();
@@ -740,7 +723,7 @@ final class GameServer {
               input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),styles[k],"important");
             });
             input.setAttribute("aria-hidden","false");
-            input.setAttribute("placeholder","点游戏账号或密码框后，在此输入");
+            input.setAttribute("placeholder","先点游戏输入框，再点这里");
             input.setAttribute("autocomplete","off");
             input.setAttribute("autocorrect","off");
             input.setAttribute("autocapitalize","none");
@@ -791,14 +774,14 @@ final class GameServer {
               },true);
               input.addEventListener("focus",function(){report("键盘：真实输入框获得焦点");},true);
               input.addEventListener("blur",function(){report("键盘：输入框失去焦点");},true);
-              report("键盘：已启用屏幕自适应底部输入栏");
+              report("键盘：顶部居中固定输入栏已启用");
             }
             placeInputDock();
             return input;
           }
           function openKeyboard(ev){
             if(ev){ev.preventDefault();ev.stopPropagation();}
-            if(prepareKeyboard())report("请点击游戏下方居中输入栏；键盘弹出后会自动移到键盘上方");
+            if(prepareKeyboard())report("请点击顶部居中的输入栏，弹出键盘也不移动");
           }
           var trigger=document.getElementById("keyboard-trigger");
           trigger.addEventListener("click",openKeyboard);
@@ -813,28 +796,27 @@ final class GameServer {
           });
           var stableViewport=null;
           function fit(){
-            var v=window.visualViewport,rawW=v?v.width:window.innerWidth,rawH=v?v.height:window.innerHeight;
-            var input=keyboardInput(),focused=!!(input&&input.getRootNode().activeElement===input);
-            // The iPad software keyboard shrinks visualViewport without rotating the device.
-            // Keep the game size unchanged while composing text; allow width changes.
-            var keyboardShrink=focused&&stableViewport&&
-              Math.abs(rawW-stableViewport.w)<80&&rawH<stableViewport.h*0.8;
-            if(!keyboardShrink)stableViewport={w:rawW,h:rawH};
+            var v=window.visualViewport,w0=v?v.width:window.innerWidth,h0=v?v.height:window.innerHeight;
+            if(!stableViewport||Math.abs(w0-stableViewport.w)>85){
+              stableViewport={w:w0,h:Math.max(h0,window.innerHeight)};
+            }else if(h0>stableViewport.h){
+              stableViewport.h=h0;
+            }
             var w=stableViewport.w,h=stableViewport.h;
-            var factor=Math.min(w/960,h/560),pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
+            var factor=Math.min(w/960,h/560);
+            var pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
             document.documentElement.style.setProperty("--game-w",pw+"px");
             document.documentElement.style.setProperty("--game-h",ph+"px");
-            if(player){player.style.width=pw+"px";player.style.height=ph+"px"}
-            var d=pw+"×"+ph+"；视口 "+Math.round(w)+"×"+Math.round(h);
-            if(d!==last){last=d;report("动态屏幕适配："+d+"；等比居中")}
-            if(keyboardShrink&&!fit.didLogFreeze){
-              fit.didLogFreeze=true;report("键盘弹出：游戏画面尺寸已锁定");
-            }
-            if(!keyboardShrink)fit.didLogFreeze=false;
+            var game=document.getElementById("game");
+            game.style.height=Math.round(h)+"px";
+            game.style.width=Math.round(w)+"px";
+            if(player){player.style.width=pw+"px";player.style.height=ph+"px";}
+            var state=pw+"×"+ph+"；基准屏幕 "+Math.round(w)+"×"+Math.round(h);
+            if(state!==last){last=state;report("稳定屏幕适配："+state);}
             placeInputDock();
           }
           window.addEventListener("resize",fit);
-          window.addEventListener("orientationchange",fit);
+          window.addEventListener("orientationchange",function(){stableViewport=null;dockLast="";fit();});
           if(window.visualViewport)window.visualViewport.addEventListener("resize",fit);
           fit();
           try{

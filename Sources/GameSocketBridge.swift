@@ -58,7 +58,7 @@ final class GameSocketBridge {
             guard let self else { webSocket.cancel(); return }
             self.acceptedCount += 1
             let id = UUID()
-            let session = Session(webSocket: webSocket, queue: self.queue) { [weak self] in
+            let session = Session(webSocket: webSocket, queue: self.queue, index: self.acceptedCount) { [weak self] in
                 self?.sessions.removeValue(forKey: id)
             }
             self.sessions[id] = session
@@ -113,8 +113,14 @@ final class GameSocketBridge {
         private var closed = false
         private var loggedUpstreamBytes = false
         private var loggedDownstreamBytes = false
+        private let index: Int
+        private var upstreamCount=0
+        private var downstreamCount=0
+        private var upstreamTotal=0
+        private var downstreamTotal=0
 
-        init(webSocket: NWConnection, queue: DispatchQueue, onClose: @escaping () -> Void) {
+        init(webSocket: NWConnection, queue: DispatchQueue, index: Int, onClose: @escaping () -> Void) {
+            self.index = index
             self.webSocket = webSocket
             self.queue = queue
             self.onClose = onClose
@@ -160,9 +166,10 @@ final class GameSocketBridge {
             receiveTCP()
         }
 
-        func stop() {
+        func stop(_ reason: String = "会话关闭") {
             guard !closed else { return }
             closed = true
+            LaunchDiagnostics.log("[会话#\(index)] \(reason)，上行\(upstreamCount)帧/\(upstreamTotal)字节，下行\(downstreamCount)帧/\(downstreamTotal)字节")
             webSocket.cancel()
             tcp.cancel()
             onClose()
@@ -171,19 +178,27 @@ final class GameSocketBridge {
         private func receiveWebSocket() {
             webSocket.receiveMessage { [weak self] data, context, _, error in
                 guard let self, !self.closed else { return }
-                if error != nil { self.stop(); return }
+                if let error {
+                    self.stop("WebSocket 接收失败：" + error.localizedDescription)
+                    return
+                }
                 if let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
                     as? NWProtocolWebSocket.Metadata, metadata.opcode == .close {
-                    self.stop()
+                    self.stop("Flash 主动关闭 WebSocket")
                     return
                 }
                 guard let data else { self.receiveWebSocket(); return }
+                self.upstreamCount += 1
+                self.upstreamTotal += data.count
+                if self.upstreamCount <= 4 || self.upstreamCount % 10 == 0 {
+                    LaunchDiagnostics.log("[会话#\(self.index)] 上行#\(self.upstreamCount) \(data.count)字节（无负载）")
+                }
                 if !self.loggedUpstreamBytes {
                     self.loggedUpstreamBytes = true
                     LaunchDiagnostics.log("[登录网络] 首次 Flash→远端传输：" + String(data.count) + " 字节（不记录内容）")
                 }
                 self.tcp.send(content: data, completion: .contentProcessed { [weak self] error in
-                    if error != nil { self?.stop() }
+                    if let error { self?.stop("向远端写入失败：" + error.localizedDescription) }
                     else { self?.receiveWebSocket() }
                 })
             }
@@ -192,8 +207,22 @@ final class GameSocketBridge {
         private func receiveTCP() {
             tcp.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, complete, error in
                 guard let self, !self.closed else { return }
-                if error != nil || complete { self.stop(); return }
-                guard let data, !data.isEmpty else { self.receiveTCP(); return }
+                if let error {
+                    self.stop("远端读取失败：" + error.localizedDescription)
+                    return
+                }
+                // FIN may arrive with data. The previous implementation
+                // returned on complete before forwarding the final payload.
+                guard let data, !data.isEmpty else {
+                    if complete { self.stop("远端 TCP FIN（无附带数据）") }
+                    else { self.receiveTCP() }
+                    return
+                }
+                self.downstreamCount += 1
+                self.downstreamTotal += data.count
+                if self.downstreamCount <= 5 || self.downstreamCount % 10 == 0 {
+                    LaunchDiagnostics.log("[会话#\(self.index)] 下行#\(self.downstreamCount) \(data.count)字节，尾包FIN=\(complete)（无负载）")
+                }
                 if !self.loggedDownstreamBytes {
                     self.loggedDownstreamBytes = true
                     LaunchDiagnostics.log("[登录网络] 首次远端→Flash 传输：" + String(data.count) + " 字节（不记录内容）")
@@ -202,8 +231,16 @@ final class GameSocketBridge {
                 let context = NWConnection.ContentContext(identifier: "binary", metadata: [metadata])
                 self.webSocket.send(content: data, contentContext: context, isComplete: true,
                                     completion: .contentProcessed { [weak self] error in
-                    if error != nil { self?.stop() }
-                    else { self?.receiveTCP() }
+                    guard let self else { return }
+                    if let error {
+                        self.stop("下行 WebSocket 转发失败：" + error.localizedDescription)
+                    } else if complete {
+                        self.queue.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                            self?.stop("远端带数据 FIN：已转发尾包")
+                        }
+                    } else {
+                        self.receiveTCP()
+                    }
                 })
             }
         }
