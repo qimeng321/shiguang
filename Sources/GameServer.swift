@@ -15,11 +15,28 @@ final class GameServer {
     private let packagedWebApp: Bool
     private var tracedRequestCount = 0
     private let maxTracedRequests = 300
+    private var versionGetCount = 0
+    private var proceededBeyondVersion = false
 
     // Most HTTP requests were deliberately not logged in v2.0. Trace game boot
     // resources explicitly to distinguish 'Flash never requested it' from 404.
     private func traceRequest(_ method: String, _ path: String, status: Int, size: UInt64? = nil) {
         let lower = path.lowercased()
+        if method == "GET" && status == 200 {
+            if lower == "/version.swf" {
+                versionGetCount += 1
+                LaunchDiagnostics.log("PVM 版本初始化：实际请求 version.swf，第 \(versionGetCount) 次")
+                if versionGetCount == 2 {
+                    queue.asyncAfter(deadline: .now() + 15) { [weak self] in
+                        guard let self, !self.proceededBeyondVersion else { return }
+                        LaunchDiagnostics.log("[阶段诊断] version.swf 请求后 15 秒内未观察到 DLL 或登录资源 GET")
+                    }
+                }
+            } else if lower.hasPrefix("/dll/") || lower == "/config/dll.xml" || lower.hasPrefix("/login/") {
+                proceededBeyondVersion = true
+                LaunchDiagnostics.log("[阶段诊断] 已开始加载：\(path)")
+            }
+        }
         guard lower.hasPrefix("/config/") || lower.hasPrefix("/resource/") ||
               lower.hasPrefix("/login/") || lower.hasPrefix("/dll/") ||
               lower.hasSuffix(".swf") || lower.hasSuffix(".xml") ||
@@ -210,7 +227,7 @@ final class GameServer {
             autoplay: "on",
             unmuteOverlay: "visible",
             allowScriptAccess: true,
-            logLevel: "warn",
+            logLevel: "debug",
             socketProxy: [{
               host: "103.91.210.16",
               port: 22973,
