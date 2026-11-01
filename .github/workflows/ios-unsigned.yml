@@ -32,6 +32,8 @@ jobs:
           cp Patches/pvm-compat.js Resources/Ruffle/pvm-compat.js
           cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
           cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
+          cp Patches/touch-controls.js Resources/Ruffle/touch-controls.js
+          test -s Resources/Ruffle/touch-controls.js
           test -s Resources/Ruffle/byte-loader-followup.b64
           test -s Resources/Ruffle/pvm-compat.js
           test -s Resources/Ruffle/pvm-compat.b64
@@ -60,6 +62,23 @@ jobs:
           test -s Resources/Ruffle/fonts/OFL-LICENSE.txt
           test "$(stat -f%z Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)" -gt 16000000
           echo "Verified Noto Sans CJK SC font and OFL license"
+      - name: Validate Canvas touch controls module
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check Patches/touch-controls.js
+          node --check Resources/Ruffle/touch-controls.js
+          python3 - <<'PY_TOUCH'
+          from pathlib import Path
+          js=Path("Resources/Ruffle/touch-controls.js").read_text()
+          html=Path("Sources/GameServer.swift").read_text()
+          assert 'c.dispatchEvent(event)' in js, "Pointer events must target inner Canvas"
+          assert 'window.ShiguangTouchControls' in js
+          assert '/ruffle/touch-controls.js' in html
+          assert 'touchControls=window.ShiguangTouchControls(player,report)' in html
+          assert 'player.dispatchEvent(new PointerEvent(' not in html
+          print("Verified separate Canvas-pointer module and HTML wiring")
+          PY_TOUCH
       - name: Check embedded touch controls JavaScript syntax
         shell: bash
         run: |
