@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v4.4")
+                        Text("v4.5")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -360,12 +360,20 @@ struct GameView: View {
                                 gameTool("keyboard", "输入键盘") {
                                     sendControl("toggleKeyboard")
                                 }
-                                gameTool("cursorarrow", virtualMouseEnabled ? "关闭虚拟鼠标" : "虚拟鼠标") {
+                                gameTool("cursorarrow", virtualMouseEnabled ? "关闭精准鼠标" : "精准鼠标") {
                                     virtualMouseEnabled.toggle()
                                     if virtualMouseEnabled { mapSwipeEnabled = false }
                                     sendControl(virtualMouseEnabled ? "enableMouse" : "disableMouse")
                                 }
-                                gameTool("hand.draw", mapSwipeEnabled ? "关闭地图滑动" : "地图滑动") {
+                                if virtualMouseEnabled {
+                                    gameTool("crosshair", "准星归中") {
+                                        sendControl("resetCursor")
+                                    }
+                                    gameTool("gauge", "切换鼠标速度") {
+                                        sendControl("cycleSpeed")
+                                    }
+                                }
+                                gameTool("map", mapSwipeEnabled ? "关闭星图导航" : "星图导航") {
                                     mapSwipeEnabled.toggle()
                                     if mapSwipeEnabled { virtualMouseEnabled = false }
                                     sendControl(mapSwipeEnabled ? "enableMapSwipe" : "disableMapSwipe")
@@ -677,7 +685,7 @@ struct GameWebView: UIViewRepresentable {
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
         let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
-                       "enableMapSwipe", "disableMapSwipe"]
+                       "enableMapSwipe", "disableMapSwipe", "resetCursor", "cycleSpeed"]
         guard allowed.contains(controlAction) else { return }
         let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"
         webView.evaluateJavaScript(js) { _, error in
