@@ -33,12 +33,15 @@ final class GameSocketBridge {
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
+                LaunchDiagnostics.log("本地 WebSocket 代理就绪，端口：32973")
                 self?.readyFlag = true
                 self?.failureReason = nil
             case .failed(let error):
+                LaunchDiagnostics.log("本地 WebSocket 代理失败：\(error.localizedDescription)")
                 self?.readyFlag = false
                 self?.failureReason = "本地 WebSocket 代理启动失败 [32973]：\(error.localizedDescription)"
             case .waiting(let error):
+                LaunchDiagnostics.log("本地 WebSocket 代理等待：\(error.localizedDescription)")
                 self?.readyFlag = false
                 self?.failureReason = "本地 WebSocket 代理等待网络 [32973]：\(error.localizedDescription)"
             case .cancelled:

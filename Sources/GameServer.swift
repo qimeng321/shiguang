@@ -50,10 +50,12 @@ final class GameServer {
             guard let self else { return }
             switch state {
             case .ready:
+                LaunchDiagnostics.log("本地 HTTP 监听成功，端口：\(portNumber)")
                 // Only expose a URL once the socket is actually accepting traffic.
                 self.readyHTTPPort = portNumber
                 self.failureMessage = nil
             case .failed(let error):
+                LaunchDiagnostics.log("本地 HTTP 端口 \(portNumber) 监听失败：\(error.localizedDescription)")
                 self.readyHTTPPort = nil
                 newListener.cancel()
                 let next = index + 1
@@ -90,15 +92,19 @@ final class GameServer {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, _, error in
             guard let self, error == nil, let data,
                   let request = String(data: data, encoding: .utf8),
-                  let line = request.components(separatedBy: "\r\n").first else {
+                  request.contains("\r\n") else {
                 connection.cancel()
                 return
             }
-            self.respond(to: line, connection: connection)
+            self.respond(to: request, connection: connection)
         }
     }
 
-    private func respond(to line: String, connection: NWConnection) {
+    private func respond(to request: String, connection: NWConnection) {
+        let lines = request.components(separatedBy: "\r\n")
+        let line = lines.first ?? ""
+        let rangeHeader = lines.first(where: { $0.lowercased().hasPrefix("range:") })
+            .map { String($0.dropFirst(6)).trimmingCharacters(in: .whitespaces) }
         let parts = line.split(separator: " ")
         guard parts.count >= 2, parts[0] == "GET" || parts[0] == "HEAD",
               let components = URLComponents(string: "http://127.0.0.1\(parts[1])") else {
@@ -107,11 +113,18 @@ final class GameServer {
         }
         let headOnly = parts[0] == "HEAD"
         let path = components.path
+        let lower = path.lowercased()
+        if lower == "/" || lower == "/index.html" ||
+           lower.hasSuffix("/index.js") || lower.hasSuffix("/ruffle.js") ||
+           lower.hasSuffix("/client.swf") || lower.hasSuffix("/nieo_wasm_core_bg.wasm") ||
+           lower.hasSuffix("/video.mp4") {
+            LaunchDiagnostics.log("HTTP 请求：\(parts[0]) \(path)")
+        }
         // The original .srom web app creates a Flash <object> in React.
         // WKWebView cannot render Flash without a polyfill. Serve our bundled
         // Ruffle files even when the package contains its own index.html.
         if path.hasPrefix("/ruffle/") {
-            serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, connection: connection)
+            serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
             return
         }
         if packagedWebApp {
@@ -119,7 +132,7 @@ final class GameServer {
             if relative == "index.html" {
                 servePackagedIndex(headOnly: headOnly, connection: connection)
             } else {
-                serve(relative: relative, below: root, headOnly: headOnly, connection: connection)
+                serve(relative: relative, below: root, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
             }
             return
         }
@@ -139,7 +152,7 @@ final class GameServer {
             return
         }
         if path.hasPrefix("/game/") {
-            serve(relative: String(path.dropFirst(6)), below: root, headOnly: headOnly, connection: connection)
+            serve(relative: String(path.dropFirst(6)), below: root, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
             return
         }
         sendText("Not Found", status: 404, connection: connection)
@@ -151,6 +164,7 @@ final class GameServer {
     private func servePackagedIndex(headOnly: Bool, connection: NWConnection) {
         guard let file = safeFile("index.html", below: root),
               let html = try? String(contentsOf: file, encoding: .utf8) else {
+            LaunchDiagnostics.log("HTTP 404：网页入口 index.html 缺失")
             sendText("Missing index.html", status: 404, connection: connection)
             return
         }
@@ -178,7 +192,31 @@ final class GameServer {
           });
         </script>
         <script src="/ruffle/ruffle.js"></script>
+        <script>
+          // The original React client draws a z-index:1000 full-screen
+          // /video.mp4 splash overlay that stays black if playback fails.
+          // Auto-dismiss it through the original React onClick handler.
+          (function () {
+            var finished = false;
+            var observer;
+            function skipOriginalSplash() {
+              if (finished) return;
+              var video = document.querySelector('video[src="/video.mp4"],video[src$="/video.mp4"]');
+              if (!video || !video.parentElement) return;
+              finished = true;
+              if (observer) observer.disconnect();
+              video.parentElement.click();
+              console.log('[Shiguang] 已跳过原始视频启动遮罩');
+            }
+            observer = new MutationObserver(skipOriginalSplash);
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+            document.addEventListener('DOMContentLoaded', skipOriginalSplash);
+            setTimeout(skipOriginalSplash, 600);
+            setTimeout(function () { if (observer) observer.disconnect(); }, 10000);
+          })();
+        </script>
         """#
+        LaunchDiagnostics.log("HTML 已注入内置 Ruffle + 视频遮罩处理脚本")
         let updated: String
         if let headEnd = html.range(of: "</head>", options: [.caseInsensitive]) {
             updated = html.replacingCharacters(in: headEnd, with: bootstrap + "\n</head>")
@@ -200,34 +238,108 @@ final class GameServer {
         return resolved
     }
 
-    private func serve(relative: String, below base: URL, headOnly: Bool, connection: NWConnection) {
+    /// Serve files with a real byte-range implementation. iOS media playback
+    /// requires 206 responses for HTTP Range requests (including video.mp4).
+    private func serve(relative: String, below base: URL, headOnly: Bool,
+                       rangeHeader: String?, connection: NWConnection) {
         guard let file = safeFile(relative, below: base),
               let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
               let size = attributes[.size] as? NSNumber,
               let handle = try? FileHandle(forReadingFrom: file) else {
-            sendText("Not Found", status: 404, connection: connection)
+            LaunchDiagnostics.missingResource(relative)
+            sendText("Not Found: \(relative)", status: 404, connection: connection)
             return
         }
-        let header = "HTTP/1.1 200 OK\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(size.uint64Value)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+        let total = size.uint64Value
+        var first: UInt64 = 0
+        var last: UInt64 = total == 0 ? 0 : total - 1
+        var isPartial = false
+        if let header = rangeHeader {
+            // Only a single byte-range request is supported, as used by iOS
+            // when retrieving portions of an MP4 file.
+            let h = header.trimmingCharacters(in: .whitespaces)
+            guard h.lowercased().hasPrefix("bytes=") else {
+                try? handle.close()
+                sendRangeUnsatisfiable(total: total, connection: connection)
+                return
+            }
+            let spec = String(h.dropFirst(6))
+            let pieces = spec.split(separator: "-", omittingEmptySubsequences: false)
+            guard pieces.count == 2, !spec.contains(","), total > 0 else {
+                try? handle.close()
+                sendRangeUnsatisfiable(total: total, connection: connection)
+                return
+            }
+            if pieces[0].isEmpty {
+                // Suffix ranges: bytes=-500 means the last 500 bytes.
+                guard let suffix = UInt64(pieces[1]), suffix > 0 else {
+                    try? handle.close()
+                    sendRangeUnsatisfiable(total: total, connection: connection)
+                    return
+                }
+                first = total - min(suffix, total)
+            } else {
+                guard let start = UInt64(pieces[0]), start < total else {
+                    try? handle.close()
+                    sendRangeUnsatisfiable(total: total, connection: connection)
+                    return
+                }
+                first = start
+                if !pieces[1].isEmpty {
+                    guard let stop = UInt64(pieces[1]), stop >= first else {
+                        try? handle.close()
+                        sendRangeUnsatisfiable(total: total, connection: connection)
+                        return
+                    }
+                    last = min(stop, total - 1)
+                }
+            }
+            isPartial = true
+        }
+        let byteCount = total == 0 ? UInt64(0) : last - first + 1
+        let response = isPartial ? "206 Partial Content" : "200 OK"
+        let contentRange = isPartial ? "Content-Range: bytes \(first)-\(last)/\(total)\r\n" : ""
+        let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+        if !headOnly {
+            do { try handle.seek(toOffset: first) }
+            catch {
+                try? handle.close()
+                sendText("File seeking error", status: 400, connection: connection)
+                return
+            }
+        }
         connection.send(content: Data(header.utf8), completion: .contentProcessed { [weak self] error in
-            if error != nil || headOnly {
+            if error != nil || headOnly || byteCount == 0 {
                 try? handle.close()
                 connection.cancel()
             } else {
-                self?.stream(handle, to: connection)
+                self?.stream(handle, to: connection, remaining: byteCount)
             }
         })
     }
 
-    private func stream(_ handle: FileHandle, to connection: NWConnection) {
-        guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
+    private func sendRangeUnsatisfiable(total: UInt64, connection: NWConnection) {
+        let header = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */\(total)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        connection.send(content: Data(header.utf8), completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+
+    private func stream(_ handle: FileHandle, to connection: NWConnection, remaining: UInt64) {
+        guard remaining > 0 else {
+            try? handle.close()
+            connection.cancel()
+            return
+        }
+        let length = Int(min(remaining, 64 * 1024))
+        guard let chunk = try? handle.read(upToCount: length), !chunk.isEmpty else {
             try? handle.close()
             connection.cancel()
             return
         }
         connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
             if error == nil {
-                self?.stream(handle, to: connection)
+                self?.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count))
             } else {
                 try? handle.close()
                 connection.cancel()

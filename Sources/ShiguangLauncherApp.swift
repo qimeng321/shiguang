@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v1.6")
+                        Text("v1.8")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -129,6 +129,20 @@ struct LauncherView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
+                        Divider().opacity(0.35)
+                        HStack(alignment: .top, spacing: 7) {
+                            Image(systemName: "checkmark.shield")
+                                .foregroundStyle(blue)
+                            Text(launcher.resourceCheckSummary)
+                                .font(.system(size: 12))
+                                .foregroundStyle(subtleInk)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        Text("诊断日志：文件 App → 我的 iPad → 拾光号启动器 → diagnostics.txt")
+                            .font(.system(size: 11))
+                            .foregroundStyle(subtleInk)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         if launcher.isImporting || launcher.isClearing {
                             ProgressView()
                                 .tint(blue)
@@ -141,7 +155,7 @@ struct LauncherView: View {
                     .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.09), lineWidth: 1))
                     .padding(.top, 23)
 
-                    Text("支持 .srom / .zip；资源仅保存在本机")
+                    Text("支持 .srom / .zip；已安装资源保持私有，不占用共享文件夹额外空间")
                         .font(.system(size: 12))
                         .foregroundStyle(subtleInk.opacity(0.9))
                         .padding(.top, 18)
@@ -170,7 +184,7 @@ struct LauncherView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("如果系统文件选择器无法选中 .srom，请先在“文件”App 中将它复制到“我的 iPad / iPhone → 拾光号启动器”，再使用第二种方式。")
+            Text("如果系统文件选择器无法选中 .srom，请先在“文件”App 中将它复制到“我的 iPad / iPhone → 拾光号启动器 → Import”，再使用第二种方式。")
         }
         .sheet(isPresented: $showingPicker) {
             PackageDocumentPicker { url in
@@ -188,7 +202,7 @@ struct LauncherView: View {
                                 .foregroundStyle(.secondary)
                             Text("共享文件夹里还没有美化包")
                                 .font(.headline)
-                            Text("打开系统“文件”App，在“我的 iPad / iPhone → 拾光号启动器”中放入 .srom 或 .zip 文件，再返回这里刷新。")
+                            Text("打开系统“文件”App，在“我的 iPad / iPhone → 拾光号启动器 → Import”中放入 .srom 或 .zip 文件，再返回这里刷新。")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -227,7 +241,10 @@ struct LauncherView: View {
         } message: {
             Text("清除本应用已安装的游戏/美化资源，不能撤销；不会删除“文件”App 中保存的原始 .srom/.zip。")
         }
-        .onAppear { launcher.refreshLocalPackages() }
+        .onAppear {
+            launcher.refreshLocalPackages()
+            launcher.refreshResourceCheck()
+        }
         .fullScreenCover(isPresented: $showingGame) {
             if let root = launcher.gameRoot {
                 GameView(root: root, entry: launcher.selectedEntry) { showingGame = false }
@@ -273,17 +290,42 @@ struct GameView: View {
     let close: () -> Void
     @State private var server: GameServer?
     @State private var errorText: String?
+    @State private var gameStatus = "正在启动本地游戏服务…"
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.black.ignoresSafeArea()
             if let server, let url = server.playURL(for: entry) {
-                GameWebView(url: url) { errorText = $0 }
+                GameWebView(url: url, onStatus: { message in
+                    gameStatus = message
+                    LaunchDiagnostics.log("网页状态：" + message)
+                }, onError: { message in
+                    errorText = message
+                    LaunchDiagnostics.log("网页错误：" + message)
+                })
                     .ignoresSafeArea()
             } else if let errorText {
                 Text(errorText).foregroundStyle(.white).padding(24)
             } else {
                 ProgressView("正在启动…").tint(.white)
+            }
+            if server != nil {
+                VStack {
+                    Spacer()
+                    HStack(spacing: 7) {
+                        Image(systemName: "waveform.path.ecg")
+                        Text(gameStatus)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                        Spacer(minLength: 0)
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(Color.gray.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, errorText == nil ? 22 : 0)
+                }
             }
             if let errorText, server != nil {
                 VStack {
@@ -308,28 +350,36 @@ struct GameView: View {
             .accessibilityLabel("返回启动器")
         }
         .task {
+            LaunchDiagnostics.log("进入游戏：\(entry)")
             do {
                 let entryFolder = (entry as NSString).deletingLastPathComponent
                 let candidate = root.appendingPathComponent(entryFolder, isDirectory: true)
                 let packagedWebApp = FileManager.default.fileExists(
                     atPath: candidate.appendingPathComponent("index.html").path
                 )
+                LaunchDiagnostics.log("网页根目录：\(packagedWebApp ? candidate.path : root.path)；原网页模式：\(packagedWebApp)")
                 let service = try GameServer(root: packagedWebApp ? candidate : root,
                                              packagedWebApp: packagedWebApp)
                 for _ in 0..<100 {
                     if let reason = service.startError ?? service.bridgeError {
                         errorText = reason
+                        LaunchDiagnostics.log("游戏启动失败：" + reason)
                         return
                     }
                     if service.playURL(for: entry) != nil {
                         server = service
+                        LaunchDiagnostics.log("本地资源服务就绪：\(service.playURL(for: entry)?.absoluteString ?? "未知 URL")")
                         return
                     }
                     try await Task.sleep(nanoseconds: 100_000_000)
                 }
                 errorText = "本地资源服务或 WebSocket 代理启动超时（HTTP: 18765–18769 / WebSocket: 32973）。请提供错误截图。"
+                LaunchDiagnostics.log("游戏启动失败：" + (errorText ?? "未知超时"))
             }
-            catch { errorText = "本地服务创建失败：\(error.localizedDescription)；请检查 Network 框架监听器参数。" }
+            catch {
+                errorText = "本地服务创建失败：\(error.localizedDescription)；请检查 Network 框架监听器参数。"
+                LaunchDiagnostics.log("本地服务创建失败：" + error.localizedDescription)
+            }
         }
         .onDisappear { server = nil }
     }
@@ -337,6 +387,7 @@ struct GameView: View {
 
 struct GameWebView: UIViewRepresentable {
     let url: URL
+    let onStatus: (String) -> Void
     let onError: (String) -> Void
 
     func makeUIView(context: Context) -> WKWebView {
@@ -348,12 +399,40 @@ struct GameWebView: UIViewRepresentable {
               function report(message) {
                 try { window.webkit.messageHandlers.gameDiagnostics.postMessage(message); } catch (_) {}
               }
+              function status(message) { report('状态：' + message); }
+              function fail(message) { report('错误：' + message); }
               window.addEventListener('error', function (event) {
-                if (event.message) report('网页脚本错误：' + event.message);
-                else if (event.target && event.target.src) report('资源加载失败：' + event.target.src);
+                if (event.message) fail('网页脚本错误：' + event.message);
+                else if (event.target && (event.target.src || event.target.href))
+                  fail('资源加载失败：' + (event.target.src || event.target.href));
               }, true);
               window.addEventListener('unhandledrejection', function (event) {
-                report('网页执行失败：' + String(event.reason));
+                fail('网页执行失败：' + String(event.reason));
+              });
+              window.addEventListener('DOMContentLoaded', function () {
+                status('HTML 已加载，等待游戏脚本与 Flash…');
+                if (window.location.pathname === '/') {
+                  ['/assets/index.js', '/assets/nieo_wasm_core_bg.wasm', '/Client.swf', '/ruffle/ruffle.js'].forEach(function (path) {
+                    fetch(path, { method: 'HEAD', cache: 'no-store' })
+                      .then(function (response) { report('资源检测：' + path + ' → HTTP ' + response.status); })
+                      .catch(function (error) { fail('资源请求失败：' + path + '；' + String(error)); });
+                  });
+                }
+                var checks = 0, previous = '';
+                var timer = setInterval(function () {
+                  var ruffle = !!window.RufflePlayer;
+                  var player = document.querySelector('ruffle-player,ruffle-object,ruffle-embed');
+                  var swf = document.querySelector('object[data$=".swf"],embed[src$=".swf"]');
+                  var video = document.querySelector('video[src$="/video.mp4"]');
+                  var summary = 'Ruffle=' + (ruffle ? '已载入' : '未载入') +
+                    '；Flash=' + (player ? '已接管' : (swf ? '待接管' : '未创建')) +
+                    '；启动遮罩=' + (video ? '存在' : '已关闭');
+                  if (summary !== previous) { status(summary); previous = summary; }
+                  if (++checks >= 15) {
+                    clearInterval(timer);
+                    if (!player && swf) fail('检测到 Flash 对象，但 Ruffle 未接管；请查看游戏启动日志。');
+                  }
+                }, 1000);
               });
             })();
             """#
@@ -377,14 +456,24 @@ struct GameWebView: UIViewRepresentable {
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "gameDiagnostics")
     }
-    func makeCoordinator() -> Coordinator { Coordinator(onError: onError) }
+    func makeCoordinator() -> Coordinator { Coordinator(onStatus: onStatus, onError: onError) }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        let onStatus: (String) -> Void
         let onError: (String) -> Void
-        init(onError: @escaping (String) -> Void) { self.onError = onError }
+        init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+            self.onStatus = onStatus
+            self.onError = onError
+        }
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
-            if let details = message.body as? String { onError(details) }
+            guard let details = message.body as? String else { return }
+            if details.hasPrefix("状态：") { onStatus(String(details.dropFirst(3))) }
+            else if details.hasPrefix("错误：") { onError(String(details.dropFirst(3))) }
+            else { onStatus(details) }
+        }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            onStatus("网页主文档已打开，等待游戏组件…")
         }
         private func reportNavigationError(_ error: Error, webView: WKWebView) {
             let nsError = error as NSError

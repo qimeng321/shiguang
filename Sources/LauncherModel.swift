@@ -1,6 +1,136 @@
 import Foundation
 import ZIPFoundation
 
+// A small, visible shared folder for imports and diagnostics. Installed assets
+// remain under Application Support/Game and are NEVER duplicated in Documents.
+enum LaunchDiagnostics {
+    private static let fileQueue = DispatchQueue(label: "cn.shiguanghao.launcher.diagnostics")
+    private static let maxLogBytes: UInt64 = 1_000_000
+    private static var missingResourceCount = 0
+
+    static var documents: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+    static var importDirectory: URL {
+        documents.appendingPathComponent("Import", isDirectory: true)
+    }
+    static var logURL: URL {
+        documents.appendingPathComponent("diagnostics.txt")
+    }
+
+    // Prepare synchronously so the folder becomes visible in Files immediately
+    // after app launch, not only after an import or a successful game start.
+    static func prepare() {
+        fileQueue.sync { prepareUnlocked() }
+    }
+
+    static func log(_ message: String) {
+        fileQueue.async {
+            prepareUnlocked()
+            appendUnlocked(message)
+        }
+    }
+
+    // Avoid thousands of missing-asset requests flooding the log on a broken
+    // Flash page. Keep the first 100 and report that further 404s were omitted.
+    static func missingResource(_ relative: String) {
+        fileQueue.async {
+            prepareUnlocked()
+            if missingResourceCount < 100 {
+                appendUnlocked("HTTP 404：资源缺失 " + relative)
+            } else if missingResourceCount == 100 {
+                appendUnlocked("HTTP 404：缺失资源请求过多，其余不再逐条记录")
+            }
+            missingResourceCount += 1
+        }
+    }
+
+    private static func prepareUnlocked() {
+        let manager = FileManager.default
+        do {
+            try manager.createDirectory(at: importDirectory, withIntermediateDirectories: true)
+            let instructions = documents.appendingPathComponent("使用说明.txt")
+            if !manager.fileExists(atPath: instructions.path) {
+                let text = """
+                拾光号启动器 - 共享文件夹
+
+                Import/：可放入 .srom 或 .zip 美化包，在启动器的“导入美化包”里选择从共享文件夹导入。
+                diagnostics.txt：记录游戏启动、资源检查、网页脚本和本地资源服务的诊断信息。
+
+                已安装的完整游戏资源存放在应用私有的 Application Support/Game/ 中；
+                不会复制到这里，也不要为了显示文件夹而重新导入 2.88GB 资源。
+                删除这里的诊断日志或导入文件不会删除已安装的游戏资源。
+                """
+                try text.write(to: instructions, atomically: true, encoding: .utf8)
+            }
+            if !manager.fileExists(atPath: logURL.path) {
+                let header = "拾光号启动器诊断日志\n本文件不含游戏资源；记录仅用于定位黑屏。\n\n"
+                try header.write(to: logURL, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            // Log is best-effort; it must never prevent importing or launching.
+            NSLog("[Shiguang] 创建共享目录失败：%@", error.localizedDescription)
+        }
+    }
+
+    private static func appendUnlocked(_ message: String) {
+        let manager = FileManager.default
+        if let size = (try? manager.attributesOfItem(atPath: logURL.path)[.size]) as? NSNumber,
+           size.uint64Value > maxLogBytes {
+            let previous = documents.appendingPathComponent("diagnostics-previous.txt")
+            try? manager.removeItem(at: previous)
+            try? manager.moveItem(at: logURL, to: previous)
+            try? "拾光号启动器诊断日志（已轮转）\n".write(to: logURL, atomically: true, encoding: .utf8)
+        }
+        let date = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(date)] \(message.replacingOccurrences(of: "\n", with: " | "))\n"
+        guard let data = line.data(using: .utf8),
+              let handle = try? FileHandle(forWritingTo: logURL) else { return }
+        handle.seekToEndOfFile()
+        handle.write(data)
+        try? handle.close()
+    }
+
+    // This is a STATIC file-presence check, not an assertion that the game is
+    // playable, that each file is valid, or that remote servers are reachable.
+    static func checkResources(root: URL?, entry: String) -> (summary: String, details: [String]) {
+        guard let root, !entry.isEmpty else {
+            return ("未检测到已安装美化包", ["未找到已安装资源目录或 SWF 入口"])
+        }
+        let manager = FileManager.default
+        let folderName = (entry as NSString).deletingLastPathComponent
+        let webRoot = folderName.isEmpty ? root : root.appendingPathComponent(folderName, isDirectory: true)
+        let webMode = manager.fileExists(atPath: webRoot.appendingPathComponent("index.html").path)
+        var lines = ["游戏入口：\(entry)", "安装根目录：\(root.path)",
+                     "网页根目录：\(webRoot.path)",
+                     "启动模式：\(webMode ? "原始网页 + Ruffle" : "SWF 后备模式")"]
+        var missingRequired = 0
+        func check(_ title: String, file: URL, required: Bool) {
+            let present = manager.fileExists(atPath: file.path)
+            lines.append("\(present ? "[OK]" : "[缺失]") \(title)：\(file.lastPathComponent)")
+            if required && !present { missingRequired += 1 }
+        }
+        check("SWF 入口", file: root.appendingPathComponent(entry), required: true)
+        if webMode {
+            check("index.html", file: webRoot.appendingPathComponent("index.html"), required: true)
+            check("网页 JS", file: webRoot.appendingPathComponent("assets/index.js"), required: true)
+            check("网页 CSS", file: webRoot.appendingPathComponent("assets/index.css"), required: false)
+            check("网络 WASM", file: webRoot.appendingPathComponent("assets/nieo_wasm_core_bg.wasm"), required: true)
+            check("启动视频（可选）", file: webRoot.appendingPathComponent("video.mp4"), required: false)
+        }
+        if let ruffle = Bundle.main.url(forResource: "Ruffle", withExtension: nil) {
+            check("内置 Ruffle", file: ruffle.appendingPathComponent("ruffle.js"), required: true)
+        } else {
+            lines.append("[缺失] 内置 Ruffle 文件夹")
+            missingRequired += 1
+        }
+        let summary = missingRequired == 0
+          ? "关键文件静态检查通过（不代表游戏已正常加载）"
+          : "发现 \(missingRequired) 项关键文件缺失；查看 diagnostics.txt"
+        return (summary, lines)
+    }
+}
+
 enum ImportError: LocalizedError {
     case invalidArchive
     case unsafeEntry(String)
@@ -28,11 +158,15 @@ final class LauncherModel: ObservableObject {
     @Published var selectedEntry = ""
     @Published var gameRoot: URL?
     @Published var isClearing = false
+    @Published var resourceCheckSummary = "尚未检测资源"
+    @Published var resourceCheckDetails: [String] = []
 
     var canStartGame: Bool { gameRoot != nil && !selectedEntry.isEmpty && !isImporting && !isClearing }
     var hasInstalledPackage: Bool { gameRoot != nil }
 
     init() {
+        LaunchDiagnostics.prepare()
+        LaunchDiagnostics.log("启动器 v1.8 启动；已创建 Documents/Import 和 diagnostics.txt；旧资源路径不变")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -40,13 +174,24 @@ final class LauncherModel: ObservableObject {
             selectedEntry = Self.preferredEntry(in: entries)
             status = entries.isEmpty ? "已安装资源，但没有找到 SWF 游戏入口。" : "美化包已就绪，可以进入游戏。"
         }
+        refreshResourceCheck()
+    }
+
+    func refreshResourceCheck() {
+        let result = LaunchDiagnostics.checkResources(root: gameRoot, entry: selectedEntry)
+        resourceCheckSummary = result.summary
+        resourceCheckDetails = result.details
+        LaunchDiagnostics.log("资源检查：\(result.summary)")
+        for item in result.details { LaunchDiagnostics.log("  " + item) }
     }
 
     // Backup path when a third-party Files provider makes a .srom file gray in
     // the system importer. UIFileSharingEnabled exposes Documents in Files.
     func refreshLocalPackages() {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let folders = [documents, documents.appendingPathComponent("Inbox", isDirectory: true)]
+        LaunchDiagnostics.prepare()
+        let documents = LaunchDiagnostics.documents
+        let folders = [LaunchDiagnostics.importDirectory,
+                       documents, documents.appendingPathComponent("Inbox", isDirectory: true)]
         localPackages = folders.flatMap { folder -> [URL] in
             (try? FileManager.default.contentsOfDirectory(
                 at: folder,
@@ -69,6 +214,7 @@ final class LauncherModel: ObservableObject {
             return
         }
         isImporting = true
+        LaunchDiagnostics.log("开始导入美化包：\(source.lastPathComponent)")
         status = "正在复制美化包到应用空间，请勿关闭应用…"
         // Acquire the security-scoped bookmark permission before leaving the
         // file-importer callback; keep access alive until extraction finishes.
@@ -89,11 +235,14 @@ final class LauncherModel: ObservableObject {
                     self.entries = entries
                     self.selectedEntry = Self.preferredEntry(in: entries)
                     self.status = "美化包导入成功，已识别 \(entries.count) 个游戏入口，可点击“进入游戏”。"
+                    self.refreshResourceCheck()
+                    LaunchDiagnostics.log("资源导入完成：\(entries.count) 个可启动入口")
                     self.isImporting = false
                 }
             } catch {
                 await MainActor.run {
                     self.status = "导入失败：\(error.localizedDescription)"
+                    LaunchDiagnostics.log("资源导入失败：\(error.localizedDescription)")
                     self.isImporting = false
                 }
             }
@@ -104,6 +253,7 @@ final class LauncherModel: ObservableObject {
     func clearPackage() {
         guard !isImporting && !isClearing else { return }
         isClearing = true
+        LaunchDiagnostics.log("用户请求清除已安装美化包")
         status = "正在清除已安装的美化包…"
         Task.detached(priority: .userInitiated) {
             let manager = FileManager.default
@@ -123,6 +273,8 @@ final class LauncherModel: ObservableObject {
                     self.selectedEntry = ""
                     self.status = "已清除美化包，可重新导入 .srom 或 .zip。"
                 }
+                self.refreshResourceCheck()
+                LaunchDiagnostics.log(self.status)
                 self.isClearing = false
             }
         }
