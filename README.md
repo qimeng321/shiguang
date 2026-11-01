@@ -23,3 +23,14 @@ iOS/iPadOS 最低要求：16.0。未签名 IPA 仍需要自行签名安装。保
 已完成项目静态检查和 Swift 语法解析；当前运行环境没有 macOS/Xcode/iPad，也没有收到用户的实际 `.srom` 文件，因此**尚未完成 iOS 编译及真机/实际资源包验证**。如果导入仍失败，请提供应用里显示的完整错误文字，以及一个真实的 `.srom` 文件样本；如果只看到不可选灰色文件，请使用第 2 种共享文件夹导入。
 
 内置 Ruffle 和既有本地服务器逻辑保留，GameSocketBridge 中的服务器地址未更改；按钮“清除美化包”不会删除 Ruffle 或 App 自身。
+
+
+## v1.4：修复导入后游戏无法显示
+
+基于实际提供的 `NieoData/index.html` 与 `assets/index.js` 检查，游戏网页通过 React 动态创建 `application/x-shockwave-flash` 类型的 `Client.swf` `<object>`，并加载 `assets/nieo_wasm_core_bg.wasm` 处理连接。iOS 的 WKWebView 不支持原生 Flash；v1.3 在资源包已有 `index.html` 时没有插入 Ruffle。
+
+本版在**本地 HTTP 服务返回资源包的 `index.html` 时**自动注入 Ruffle，不修改或覆盖你导入的游戏资源文件。`/ruffle/` 映射到 App 内置 Ruffle；启用 polyfill 以接管页面动态创建的 Flash `<object>`；并在已有代理中添加对预设游戏服务器的 Socket 映射。原来的 `index.js`、WASM 通信逻辑保留。
+
+WebView 新增网页脚本错误提示，方便后续排查资源缺失、WebAssembly 初始化或服务器连接问题。请使用 `NieoData` 目录完整的 `.srom` 测试；缺少 `assets/nieo_wasm_core_bg.wasm` 时仍不能进入游戏。此版没有在真机或 macOS Xcode 上编译验证。
+
+仅供你有权使用的游戏资源和服务器环境。

@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("v1.3")
+                        Text("v1.4")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -285,6 +285,19 @@ struct GameView: View {
             } else {
                 ProgressView("正在启动…").tint(.white)
             }
+            if let errorText, server != nil {
+                VStack {
+                    Spacer()
+                    Text(errorText)
+                        .font(.footnote)
+                        .foregroundStyle(.white)
+                        .textSelection(.enabled)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.red.opacity(0.86), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(16)
+                }
+            }
             Button(action: close) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 34))
@@ -325,6 +338,24 @@ struct GameWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
+        configuration.userContentController.add(context.coordinator, name: "gameDiagnostics")
+        let diagnostics = #"""
+            (function () {
+              function report(message) {
+                try { window.webkit.messageHandlers.gameDiagnostics.postMessage(message); } catch (_) {}
+              }
+              window.addEventListener('error', function (event) {
+                if (event.message) report('网页脚本错误：' + event.message);
+                else if (event.target && event.target.src) report('资源加载失败：' + event.target.src);
+              }, true);
+              window.addEventListener('unhandledrejection', function (event) {
+                report('网页执行失败：' + String(event.reason));
+              });
+            })();
+            """#
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: diagnostics, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        )
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.isOpaque = false
@@ -337,11 +368,20 @@ struct GameWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "gameDiagnostics")
+    }
     func makeCoordinator() -> Coordinator { Coordinator(onError: onError) }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let onError: (String) -> Void
         init(onError: @escaping (String) -> Void) { self.onError = onError }
+        func userContentController(_ userContentController: WKUserContentController,
+                                   didReceive message: WKScriptMessage) {
+            if let details = message.body as? String { onError(details) }
+        }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             onError("网页加载失败：\(error.localizedDescription)")
         }

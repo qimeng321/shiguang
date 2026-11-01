@@ -63,9 +63,20 @@ final class GameServer {
         }
         let headOnly = parts[0] == "HEAD"
         let path = components.path
+        // The original .srom web app creates a Flash <object> in React.
+        // WKWebView cannot render Flash without a polyfill. Serve our bundled
+        // Ruffle files even when the package contains its own index.html.
+        if path.hasPrefix("/ruffle/") {
+            serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, connection: connection)
+            return
+        }
         if packagedWebApp {
             let relative = path == "/" ? "index.html" : String(path.dropFirst())
-            serve(relative: relative, below: root, headOnly: headOnly, connection: connection)
+            if relative == "index.html" {
+                servePackagedIndex(headOnly: headOnly, connection: connection)
+            } else {
+                serve(relative: relative, below: root, headOnly: headOnly, connection: connection)
+            }
             return
         }
         if path == "/index.html" || path == "/" {
@@ -87,11 +98,51 @@ final class GameServer {
             serve(relative: String(path.dropFirst(6)), below: root, headOnly: headOnly, connection: connection)
             return
         }
-        if path.hasPrefix("/ruffle/") {
-            serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, connection: connection)
+        sendText("Not Found", status: 404, connection: connection)
+    }
+
+    /// Add Ruffle to the supplied HTML without changing files in the imported .srom.
+    /// The original page is responsible for loading /assets/index.js and its own
+    /// WASM networking bridge. The JS dynamically creates <object data="Client.swf">.
+    private func servePackagedIndex(headOnly: Bool, connection: NWConnection) {
+        guard let file = safeFile("index.html", below: root),
+              let html = try? String(contentsOf: file, encoding: .utf8) else {
+            sendText("Missing index.html", status: 404, connection: connection)
             return
         }
-        sendText("Not Found", status: 404, connection: connection)
+        // Never load two copies when a different package includes Ruffle itself.
+        if html.contains("ruffle.js") {
+            send(data: Data(html.utf8), mime: "text/html; charset=utf-8",
+                 headOnly: headOnly, connection: connection)
+            return
+        }
+        // Only this known host/port is mapped. No system-wide proxy or arbitrary relay.
+        let bootstrap = #"""
+        <script>
+          window.RufflePlayer = window.RufflePlayer || {};
+          window.RufflePlayer.config = Object.assign({}, window.RufflePlayer.config || {}, {
+            publicPath: "/ruffle/",
+            polyfills: true,
+            autoplay: "on",
+            unmuteOverlay: "visible",
+            allowScriptAccess: true,
+            socketProxy: [{
+              host: "103.91.210.16",
+              port: 22973,
+              proxyUrl: "ws://127.0.0.1:32973"
+            }]
+          });
+        </script>
+        <script src="/ruffle/ruffle.js"></script>
+        """#
+        let updated: String
+        if let headEnd = html.range(of: "</head>", options: [.caseInsensitive]) {
+            updated = html.replacingCharacters(in: headEnd, with: bootstrap + "\n</head>")
+        } else {
+            updated = bootstrap + "\n" + html
+        }
+        send(data: Data(updated.utf8), mime: "text/html; charset=utf-8",
+             headOnly: headOnly, connection: connection)
     }
 
     private func safeFile(_ relative: String, below base: URL) -> URL? {
