@@ -38,7 +38,9 @@ jobs:
             -c release --show-bin-path --build-path "$RUNNER_TEMP/mac-build")/ShiguangMac"
           test -f "$BIN"
           lipo -archs "$BIN" | tee "$RUNNER_TEMP/mac-architectures.txt"
-          lipo -verify_arch x86_64 arm64 "$BIN"
+          ARCHS="$(lipo -archs "$BIN")"
+          [[ " $ARCHS " == *" x86_64 "* ]] || { echo "Missing Intel x86_64"; exit 1; }
+          [[ " $ARCHS " == *" arm64 "* ]] || { echo "Missing Apple Silicon arm64"; exit 1; }
           mkdir -p "$RUNNER_TEMP/mac-output"
           cp "$BIN" "$RUNNER_TEMP/mac-output/ShiguangMac"
       - name: Prepare Ruffle 0.7.1 and Chinese font
@@ -98,7 +100,9 @@ jobs:
             --output "$APP/Contents/Resources/AppIcon.icns"
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" | grep -Fx '1.0'
           /usr/libexec/PlistBuddy -c 'Print LSMinimumSystemVersion' "$APP/Contents/Info.plist" | grep -Fx '12.0'
-          lipo -verify_arch x86_64 arm64 "$APP/Contents/MacOS/ShiguangMac"
+          ARCHS="$(lipo -archs "$APP/Contents/MacOS/ShiguangMac")"
+          [[ " $ARCHS " == *" x86_64 "* ]] || exit 1
+          [[ " $ARCHS " == *" arm64 "* ]] || exit 1
           test -s "$APP/Contents/Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf"
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep --strict "$APP"
