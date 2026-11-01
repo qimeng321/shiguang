@@ -649,75 +649,98 @@ final class GameServer {
           // Ruffle 0.7.1 creates its own #virtual-keyboard inside an OPEN
           // ShadowRoot, but hides it at top:-100px, 1px, opacity:0.
           // iPad WebKit can reject focus on a completely off-screen input.
+
           function keyboardInput(){
             var p=player||document.querySelector("ruffle-player");
-            var root=p&&p.shadowRoot;
-            return root&&root.getElementById("virtual-keyboard");
+            return p&&p.shadowRoot&&p.shadowRoot.getElementById("virtual-keyboard");
+          }
+          function gameKey(key,code){
+            if(!player)return;
+            ["keydown","keyup"].forEach(function(type){
+              player.dispatchEvent(new KeyboardEvent(type,{
+                key:key,code:code||"",bubbles:true,composed:true
+              }));
+            });
           }
           function prepareKeyboard(){
             var input=keyboardInput();
             if(!input)return null;
-            // The input belongs to Ruffle; typing dispatches its native
-            // KeyboardEvents to the active Flash TextField, without logging.
-            var props={
-              position:"fixed",top:"auto",bottom:"12px",left:"12px",
-              width:"20px",height:"20px",opacity:"0.015",
-              display:"block",visibility:"visible",pointerEvents:"none"
+            // Use Ruffle's existing HTML input, but make it directly tappable.
+            // Programmatic focus in iPadOS 26 closes the keyboard immediately.
+            var styles={
+              position:"absolute",top:"10px",right:"10px",left:"auto",bottom:"auto",
+              width:"200px",height:"38px",opacity:"1",zIndex:"2147483000",
+              visibility:"visible",display:"block",pointerEvents:"auto",
+              background:"#fff",color:"#12375f",border:"2px solid #3993e9",
+              borderRadius:"9px",boxSizing:"border-box",padding:"4px 9px",
+              fontSize:"15px",touchAction:"manipulation"
             };
-            Object.keys(props).forEach(function(k){
-              input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),
-                                      props[k],"important");
+            Object.keys(styles).forEach(function(k){
+              input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),styles[k],"important");
             });
+            input.setAttribute("aria-hidden","false");
+            input.setAttribute("placeholder","点游戏输入栏后点这里");
             input.setAttribute("autocomplete","off");
             input.setAttribute("autocorrect","off");
             input.setAttribute("autocapitalize","none");
             input.setAttribute("spellcheck","false");
-            input.setAttribute("enterkeyhint","done");
-            if(!input.__shiguangInputProbe){
-              // Event type counts only; NEVER log credentials, characters or clipboard.
-              input.__shiguangInputProbe=true;
-              var counts={keydown:0,keyup:0,beforeinput:0,input:0,compositionstart:0,compositionend:0},total=0;
-              Object.keys(counts).forEach(function(type){
-                input.addEventListener(type,function(){
-                  counts[type]++;total++;
-                  if(total===4||total%16===0){
-                    report("键盘事件计数（不含输入内容）：keydown="+counts.keydown+
-                      " keyup="+counts.keyup+" beforeinput="+counts.beforeinput+
-                      " input="+counts.input+" compositionstart="+counts.compositionstart+
-                      " compositionend="+counts.compositionend);
-                  }
-                },true);
-              });
+            if(!input.__shiguangNativeInput){
+              input.__shiguangNativeInput=true;
+              var composing=false,typed=0,deleted=0,commits=0,lastBackspace=0,lastReturn=0;
+              function flush(){
+                if(composing)return;
+                var value=input.value;
+                input.value="";
+                if(!value)return;
+                for(var char of value){gameKey(char,"");typed++;}
+                if(typed===1||typed%12===0)
+                  report("键盘统计：已转发字符="+typed+" 退格="+deleted+" 输入法提交="+commits+"（不含实际内容）");
+              }
+              function special(key){
+                var now=performance.now();
+                if(key==="Backspace"){
+                  if(now-lastBackspace<70)return;
+                  lastBackspace=now;deleted++;gameKey("Backspace","Backspace");
+                }else if(key==="Enter"){
+                  if(now-lastReturn<70)return;
+                  lastReturn=now;gameKey("Enter","Enter");
+                }
+              }
+              input.addEventListener("compositionstart",function(){composing=true;},true);
+              input.addEventListener("compositionend",function(){
+                composing=false;commits++;setTimeout(flush,0);
+              },true);
+              input.addEventListener("keydown",function(ev){
+                ev.stopPropagation();
+                if(ev.key==="Backspace"||ev.key==="Enter"){
+                  ev.preventDefault();special(ev.key);
+                }
+              },true);
+              input.addEventListener("keyup",function(ev){ev.stopPropagation();},true);
+              input.addEventListener("beforeinput",function(ev){
+                if(ev.inputType==="deleteContentBackward"||ev.inputType==="insertLineBreak"){
+                  ev.preventDefault();ev.stopImmediatePropagation();
+                  special(ev.inputType==="deleteContentBackward"?"Backspace":"Enter");
+                }
+              },true);
+              // At-target capture fires before Ruffle's normal bubbling
+              // virtualKeyboardInput() handler, preventing duplicate events.
+              input.addEventListener("input",function(ev){
+                ev.stopImmediatePropagation();flush();
+              },true);
+              input.addEventListener("focus",function(){report("键盘：真实输入框获得焦点");},true);
+              input.addEventListener("blur",function(){report("键盘：输入框失去焦点");},true);
+              report("键盘：Ruffle 隐藏输入框已改成可直接触摸的白色原生输入栏");
             }
             return input;
           }
-          function openKeyboard(event){
-            if(event&&event.cancelable)event.preventDefault();
-            if(event)event.stopPropagation();
-            var input=prepareKeyboard();
-            if(!input){report("虚拟键盘：Ruffle 输入组件尚未就绪");return}
-            try{
-              // iOS requires synchronous focus during a real user gesture.
-              // Refocus if Flash already focused the off-screen input but
-              // iPadOS refused to display its software keyboard.
-              // Do not blur already-focused Ruffle inputs: it can restart IME composition.
-              if(input.getRootNode().activeElement!==input)input.focus({preventScroll:true});
-              document.getElementById("keyboard-actions").style.display="flex";
-              report("虚拟键盘：已手动请求唤起 iPad 键盘");
-            }catch(err){report("虚拟键盘：唤起失败："+String(err).slice(0,120))}
+          function openKeyboard(ev){
+            if(ev){ev.preventDefault();ev.stopPropagation();}
+            if(prepareKeyboard())report("请直接触摸游戏画面右上角的白色输入栏，不要只点击键盘图标");
           }
           var trigger=document.getElementById("keyboard-trigger");
-          // iOS synthesizes click after touchend. Never handle both.
           trigger.addEventListener("click",openKeyboard);
-          function virtualKey(key,code){
-            var input=keyboardInput();
-            if(!player||!input)return;
-            // Dispatch the same DOM KeyboardEvent that Ruffle listens to.
-            for(var type of ["keydown","keyup"]){
-              player.dispatchEvent(new KeyboardEvent(type,{key:key,code:code,bubbles:true}));
-            }
-            input.focus({preventScroll:true});
-          }
+          function virtualKey(key,code){gameKey(key,code);}
           [["keyboard-backspace","Backspace","Backspace"],
            ["keyboard-enter","Enter","Enter"]].forEach(function(binding){
             var button=document.getElementById(binding[0]);
@@ -768,6 +791,11 @@ final class GameServer {
               ? {data:prepared,swfFileName:"Client.swf",base:window.location.origin+"/"}
               : {url:\(json(swfURL)),base:\(json(baseURL))};
             report(prepared ? "PVM 补丁版 SWF 正在进入 Ruffle" : "未启用补丁，使用原版 SWF");
+            options.socketProxy=[
+              {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"127.0.0.1",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"localhost",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
+            ];
             await player.ruffle().load(options);
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}

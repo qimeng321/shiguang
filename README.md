@@ -1,3 +1,13 @@
+# v3.4 — iPad 真实触摸键盘与登录网络探针（仍待真机验证）
+
+根据最新测试，v3.3 已可进入米米号登录窗口，但用户看到提示后转圈，iPad 键盘仍闪退。Windows 微端 config.json 中线上服务器 login/game 均为 103.91.210.16:22973；IPA 使用相同目标。仅凭服务器地址相同不能证明网络连接成功。
+
+v3.4 用可直接触摸的白色 HTML 输入栏代替对 Ruffle 隐藏输入框的程序焦点模拟。先点击 Flash 的账号（或密码）栏，再直接点击游戏画面右上角的白色栏，利用真实用户点击让 iPadOS 弹出键盘。它是 Ruffle 自己的同一个 #virtual-keyboard 元素。原生输入事件经过唯一桥接，不向 Ruffle 重复转发普通按键；处理退格及输入法组合。不会记录任何输入字符、密码或账号。本方案需要 iPad 真机测试是否能正确写入 Flash。
+
+新增对线上 TCP 服务器的 8 秒可达性预检，不发送用户数据，另外记录 Ruffle 本地 WebSocket 握手和真实 TCP 双向传输；明确区分可连通与实际登录验证。再次在 Ruffle load options 指定 SocketProxy，包含线上服务器地址和本地主机回退匹配。保持原 .srom、Ruffle 0.7.1 和 PVM/ByteLoader 补丁不变，未擅自补造 ip.txt。
+
+操作：直接覆盖升级 IPA，别卸载旧版。点 Flash 账号框，再点游戏画面右上角白色输入栏，输入测试字符，检查是否重复；密码同理。若仍转圈，请提交新版 diagnostics.txt，关注 [网络预检] 和 [登录网络]。
+
 # v3.3 — iPad 键盘去重与登录链路诊断（需真机验证）
 
 2026-11-01 日志中 Client.swf、version.swf、NieoCore.swf、Login.swf 均 HTTP 200，但尚无游戏服务器连接成功的证据；ip.txt 404 与登录转圈的因果关系未经确认。

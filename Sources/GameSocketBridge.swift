@@ -11,6 +11,7 @@ final class GameSocketBridge {
     private let listener: NWListener
     private var sessions: [UUID: Session] = [:]
     private var acceptedCount = 0
+    private var remoteProbe: NWConnection?
     var hasReceivedClient: Bool { queue.sync { acceptedCount > 0 } }
     // Access state through the listener queue, because the UI polls from the
     // main thread while NWListener updates arrive on `queue`.
@@ -38,6 +39,7 @@ final class GameSocketBridge {
                 LaunchDiagnostics.log("本地 WebSocket 代理就绪，端口：32973")
                 self?.readyFlag = true
                 self?.failureReason = nil
+                self?.probeRemoteServer()
             case .failed(let error):
                 LaunchDiagnostics.log("本地 WebSocket 代理失败：\(error.localizedDescription)")
                 self?.readyFlag = false
@@ -67,7 +69,40 @@ final class GameSocketBridge {
 
     deinit {
         listener.cancel()
+        remoteProbe?.cancel()
         sessions.values.forEach { $0.stop() }
+    }
+
+    private func probeRemoteServer() {
+        // TCP connect only: do not transmit authentication data or game packets.
+        let probe = NWConnection(host: NWEndpoint.Host(Self.serverHost),
+            port: NWEndpoint.Port(rawValue: Self.serverPort)!, using: .tcp)
+        remoteProbe = probe
+        probe.stateUpdateHandler = { [weak self, weak probe] state in
+            guard let self, let probe, self.remoteProbe === probe else { return }
+            switch state {
+            case .ready:
+                LaunchDiagnostics.log("[网络预检] 线上 TCP 服务器可连接（不代表登录成功）")
+                self.remoteProbe = nil
+                probe.cancel()
+            case .failed(let error):
+                LaunchDiagnostics.log("[网络预检] 线上 TCP 服务器连接失败：" + error.localizedDescription)
+                self.remoteProbe = nil
+                probe.cancel()
+            case .waiting(let error):
+                LaunchDiagnostics.log("[网络预检] TCP 连接等待：" + error.localizedDescription)
+            case .cancelled:
+                self.remoteProbe = nil
+            default: break
+            }
+        }
+        probe.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + 8) { [weak self, weak probe] in
+            guard let self, let probe, self.remoteProbe === probe else { return }
+            LaunchDiagnostics.log("[网络预检] 线上 TCP 连接超时（8秒）")
+            self.remoteProbe = nil
+            probe.cancel()
+        }
     }
 
     private final class Session {
