@@ -24,6 +24,7 @@ jobs:
           from pathlib import Path
           source=Path('Sources/GameServer.swift').read_text()
           swift=Path('Sources/ShiguangLauncherApp.swift').read_text()
+          model=Path('Sources/LauncherModel.swift').read_text()
           assert 'input.type="email"' in source
           assert 'input.setAttribute("inputmode","email")' in source
           assert 'input.setAttribute("lang","en-US")' in source
@@ -76,7 +77,7 @@ jobs:
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'webView.isOpaque = true' in swift
           assert 'traceObserver.disconnect()' in swift
-          print('1.02 keyboard, adaptive canvas and frame-cap invariants OK')
+          print('1.03 resource compatibility, keyboard, adaptive canvas and frame-cap invariants OK')
           PY_CHECK
   build:
     runs-on: macos-15-intel
