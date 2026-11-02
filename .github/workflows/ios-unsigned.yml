@@ -43,7 +43,27 @@ jobs:
           assert 'Text("收尾处理中")' in swift
           assert 'ProgressView()' in swift
           assert 'CRC 校验已结束' in swift
-          assert 'Text("正式版 1.03")' in swift
+          assert 'Text("测试版 1.1")' in swift
+          assert 'private var mobilePatchPanel: some View' in swift
+          assert 'launcher.importMobilePatch(url)' in swift
+          assert 'launcher.clearMobilePatch()' in swift
+          assert '.sheet(isPresented: $showingPatchPicker)' in swift
+          assert 'showingPatchClearConfirmation' in swift
+          assert 'enum MobilePatchManager' in model
+          assert 'struct MobilePatchManifest: Codable' in model
+          assert 'shiguang-mobile-patch-v1' in model
+          assert 'guard filePaths.insert(name).inserted' in model
+          assert 'guard name == "mobile-patch.json" || permitted(name)' in model
+          assert 'if entry.type == .directory {' in model
+          assert 'try fm.unzipItem(at: temp, to: staged, skipCRC32: false)' in model
+          assert 'if hasOld { try fm.moveItem(at: active, to: backup) }' in model
+          assert 'if hasOld { try? fm.moveItem(at: backup, to: active) }' in model
+          assert 'activeRoot(currentRevision: installedRevision)' in source
+          assert 'safeFile(relative, below: patch) != nil' in source
+          assert 'serve(relative: relative, below: patch' in source
+          assert 'let tinyIcon = compatibilityModeEnabled && base == root' in source
+          assert 'preferredRenderer:"webgl"' not in source
+          assert 'options.preferredRenderer=' not in source
           assert 'preferredRenderer:"webgl"' not in source
           assert 'input.type="email"' in source
           assert 'input.setAttribute("inputmode","email")' in source
@@ -288,24 +308,25 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check formal version and build metadata
+      - name: Check beta version, isolated bundle ID and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.3'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '112'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.1.0'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '113'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.beta'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.03 maintenance project source ZIP
+      - name: Package isolated test 1.1 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.03-progress-fix-b112/ --output=/tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip | grep -Fx 'ShiguangLauncher-v1.03-progress-fix-b112/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.1-beta-mobilepatch-b113/ --output=/tmp/ShiguangLauncher-v1.1-beta-mobilepatch-b113-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.1-beta-mobilepatch-b113-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.1-beta-mobilepatch-b113-source.zip | grep -Fx 'ShiguangLauncher-v1.1-beta-mobilepatch-b113/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.03-progress-fix-b112-ipa
+          name: ShiguangLauncher-v1.1-beta-mobilepatch-b113-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.03-progress-fix-b112-source
-          path: /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip
+          name: ShiguangLauncher-v1.1-beta-mobilepatch-b113-source
+          path: /tmp/ShiguangLauncher-v1.1-beta-mobilepatch-b113-source.zip
           if-no-files-found: error
