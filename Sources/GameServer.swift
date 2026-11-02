@@ -578,7 +578,10 @@ final class GameServer {
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
         let html = """
-        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta name="shiguang-quality" content="\(selectedQuality)">
+        <meta name="shiguang-high-dpi" content="\(selectedHighDpi)">
+        <meta name="viewport" content="width=device-width,initial-scale=1"></head>
         <body style="background:#111;color:#fff;font:16px/1.7 -apple-system,sans-serif;padding:72px 24px;white-space:pre-wrap">
         <h2>拾光号：游戏启动失败（HTTP \(status)）</h2><p>\(escaped)</p></body></html>
         """
@@ -623,6 +626,11 @@ final class GameServer {
 
     // Native microclient style SWF entry: no original React SPA or network WASM.
     private func page(swfURL: String, baseURL: String) -> String {
+        // Read the user's choice for each new page load. Do not affect the
+        // local resource package, Flash stage geometry, or pointer coordinates.
+        let qualityPreset = GameQualityPreset.saved
+        let selectedQuality = qualityPreset.ruffleQuality
+        let selectedHighDpi = qualityPreset.highDpi ? "true" : "false"
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
             return String(String(data: data, encoding: .utf8)!.dropFirst().dropLast())
@@ -641,11 +649,13 @@ final class GameServer {
              so the normal game viewport has no transparent intercepting overlay. */
         </style>
         <script>
+          var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
+          var configuredHighDpi=document.querySelector('meta[name="shiguang-high-dpi"]').content==="true";
           window.RufflePlayer=window.RufflePlayer||{};
           window.RufflePlayer.config={
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
-            quality:"high",highDpi:false,
+            quality:configuredQuality,highDpi:configuredHighDpi,
             allowScriptAccess:true,publicPath:"/ruffle/",
             fontSources:["/ruffle/fonts/NotoSansCJKsc-Regular.otf"],
             defaultFonts:{
@@ -905,8 +915,8 @@ final class GameServer {
               japaneseGothicMono:["Noto Sans CJK SC"],
               japaneseMincho:["Noto Sans CJK SC"]
             };
-            options.quality="high";
-            options.highDpi=false;
+            options.quality=configuredQuality;
+            options.highDpi=configuredHighDpi;
             try{
               var chk=await fetch("/ruffle/fonts/NotoSansCJKsc-Regular.otf",{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC");
@@ -922,7 +932,7 @@ final class GameServer {
             await player.ruffle().load(options);
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
-            report("测试版低功耗：Flash quality=high、highDpi=false；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+            report("画质选择：quality="+configuredQuality+"；highDpi="+configuredHighDpi+"；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();
