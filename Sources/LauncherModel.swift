@@ -917,7 +917,7 @@ enum MobilePatchManager {
               !path.hasPrefix("/"), !path.contains("\\"), !path.contains("%"),
               !path.unicodeScalars.contains(where: { $0.value < 32 }) else { return false }
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
-        guard components.count >= 3,
+        guard components.count >= 2,
               !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return false }
         let ext = (path as NSString).pathExtension.lowercased()
         return ["swf", "png", "jpg", "jpeg", "gif", "webp", "xml", "json", "mp3"].contains(ext)
