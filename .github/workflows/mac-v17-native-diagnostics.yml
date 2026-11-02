@@ -34,7 +34,7 @@ jobs:
           grep -q 'installDesktopKeyboardDedup' Sources/GameServer.swift
           grep -q 'options.preferredRenderer = "wgpu-webgl"' Sources/GameServer.swift
           grep -q 'shiguang.mac.perf' Sources/ShiguangMacApp.swift
-          sed -i '' 's/Mac 1\.1/Mac 1.7/g; s/Mac v1\.1/Mac v1.7/g; s/v1\.1/v1.7/g; s/<string>1\.1<\/string>/<string>1.7<\/string>/g; s/<string>110<\/string>/<string>170<\/string>/g' '一键编译.command' Sources/ShiguangMacApp.swift
+          sed -i '' 's/1\.6/1.7/g; s/<string>160<\/string>/<string>170<\/string>/g' '一键编译.command' Sources/ShiguangMacApp.swift
           echo 'v1.7 keyboard dedup + performance profiles; macOS 12+, Intel x86_64'
           uname -m
       - name: Provide Ruffle and Windows-compatible network parameters
