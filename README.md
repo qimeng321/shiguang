@@ -1,3 +1,23 @@
+# iPhone 15 Pro · 地图加载 100% 卡住原生诊断专版（1.02，Build 108）
+
+根据用户截图，游戏内已显示「加载地图 100%／快去探索」，但没有完成场景进入。**100% 只代表游戏 SWF 自己绘制的进度条值，不代表 Flash 完成地图/人物初始化。** 诊断专版在前一份 Build 107 WebGL 试验基础上单独增加记录，**未改动地图 SWF / .srom 资源、登录、点击、字体、特效或帧率**，不会声称修复卡死。
+
+- App 原生启动标记：`Documents/run-state.json` 用原子写入保存最近一次进程、场景、心跳状态。下次启动时把前一次状态写到 `diagnostics.txt`，但**无法仅凭上一次状态判断是系统杀进程、用户强制关闭还是崩溃**。
+- SwiftUI scene 生命周期：前台、短暂 inactive、后台、游戏视图正常关闭、网页导航、WebContent 进程终止各有区分。
+- 网页 JS 心跳：每 5 秒汇报一次 JS 线程是否能运行、浏览器动画回调次数、Ruffle readyState/isPlaying、Canvas 像素；原生每约 15 秒保存一次。若前台超 16 秒没有网页心跳，原生定时器记录「suspected-web-freeze」，网页恢复后记录「js-heartbeat-recovered」。**心跳正常只说明浏览器事件循环仍工作，不代表 Flash 地图已经完成加载**。
+- HTTP 本地服务：地图 `/resource/map/*.swf` 与 `/resource/worldMap.swf` 单独记录开始请求、全部字节交给网络层、读取或写入错误；不受普通 HTTP 日志 300 条上限影响。**传输完成不等于 Flash 解码/绘制完成**。
+- 日志仅含诊断状态与资源路径，不记录账号、密码、网络负载或令牌。
+- `CFBundleShortVersionString=1.0.2` 不变、`CFBundleVersion=108`。同 Bundle ID。使用已有相同签名覆盖安装，不能卸载已导入数 GB 美化包的 App。
+- 这是供个别 iPhone 15 Pro 客户诊断的 **单独分支**，不会修改公共正式版 main。只有 Xcode 编译和有限脚本静态检查通过时才发布包；上机仍需验证。
+
+## 复现步骤
+1. 打开 App，从「文件」App 的分享菜单或启动器分享日志 `diagnostics.txt`；先确认 Build 108 标记。
+2. 进入游戏，重现地图 100% 卡住，**保持前台至少 25 秒**，不要立刻强制退出。
+3. 点击左上角叉返回启动器，点「反馈问题」分享 `diagnostics.txt`；如果 App 整体退出，重新打开再分享。可以额外分享 `run-state.json`。
+4. 查看是否出现「地图资源请求开始/全部字节交给网络层」「js-heartbeat-ok」「suspected-web-freeze」「WebContent 进程终止」。这些可定位网络层 / 浏览器事件循环异常，但不足以仅靠日志断定 Flash SWF 自身卡住的具体代码。
+
+---
+
 # iPhone 15 Pro · WebKit 终止稳定性专版 (正式版 1.02 / Build 107)
 
 仅针对此前在 iPhone 15 Pro / iOS 26.6.2 约半分钟到两分钟内频繁发生的 WebKit WebContent 进程终止问题，单独试验 Ruffle 渲染配置。**此分支只给对应用户测试，不合并正式 main。**
