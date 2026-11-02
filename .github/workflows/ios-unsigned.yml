@@ -24,6 +24,7 @@ jobs:
           from pathlib import Path
           source=Path('Sources/GameServer.swift').read_text()
           swift=Path('Sources/ShiguangLauncherApp.swift').read_text()
+          model=Path('Sources/LauncherModel.swift').read_text()
           assert 'input.type="email"' in source
           assert 'input.setAttribute("inputmode","email")' in source
           assert 'input.setAttribute("lang","en-US")' in source
@@ -33,7 +34,25 @@ jobs:
           assert 'Math.min(w/960,h/560)' in source
           assert 'case unlimited, fps60, fps30' in swift
           assert 'case saving, balanced, ultra' in swift
-          assert 'Text("正式版 1.02")' in swift
+          assert 'Text("正式版 1.03")' in swift
+          assert 'Toggle(isOn: $compatibilityMode)' in swift
+          assert 'shiguang.compatibilityMode103' in swift
+          assert 'ShareLink(item: LaunchDiagnostics.logURL)' in swift
+          assert 'Label("导出故障日志"' in swift
+          assert 'resourceRevision' in model
+          assert 'coreRevision(root:' in model
+          assert 'require("resource/map/1.swf", minimum: 64)' in model
+          assert 'require("resource/ui.swf", minimum: 64)' in model
+          assert 'containsReferenceManifest && !containsPlayableMap' in model
+          assert 'ImportError.referenceOnlyPackage' in model
+          assert '2026110201' in swift
+          assert '2026110201' not in source
+          assert 'compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in source
+          assert 'total <= 32 * 1024' in source
+          assert 'Cache-Control: private, max-age=45' in source
+          assert 'let cacheHeader = tinyIcon' in source
+          assert 'preferredRenderer:"webgl"' not in source
+          assert 'options.preferredRenderer=' not in source
           model=Path('Sources/LauncherModel.swift').read_text()
           assert 'validateInstalledPackage(root:' in model
           assert 'isInstalledValidated' in model
@@ -58,7 +77,7 @@ jobs:
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'webView.isOpaque = true' in swift
           assert 'traceObserver.disconnect()' in swift
-          print('1.02 keyboard, adaptive canvas and frame-cap invariants OK')
+          print('1.03 resource compatibility, keyboard, adaptive canvas and frame-cap invariants OK')
           PY_CHECK
   build:
     runs-on: macos-15-intel
@@ -178,6 +197,9 @@ jobs:
           assert 'options.quality=configuredQuality' in html
           assert 'highDpi' not in html  # Not a documented Ruffle Web option
           assert 'quality:configuredQuality' in html
+          assert 'let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in html
+          assert 'let tinyIcon = compatibilityModeEnabled && !isPartial' in html
+          assert 'let cacheHeader = tinyIcon' in html
           assert 'shiguang-quality' in html
           assert 'case saving, balanced, ultra' in swift
           assert '@AppStorage(GameFrameCapPreset.defaultsKey)' in swift
@@ -248,22 +270,22 @@ jobs:
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
       - name: Check formal version and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.2'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '106'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.3'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '111'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.02 project source ZIP
+      - name: Package formal 1.03 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.02-b106/ --output=/tmp/ShiguangLauncher-v1.02-b106-direct-touch-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.02-b106-direct-touch-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-b106-direct-touch-source.zip | grep -Fx 'ShiguangLauncher-v1.02-b106/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.03-formal-b111/ --output=/tmp/ShiguangLauncher-v1.03-formal-b111-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.03-formal-b111-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.03-formal-b111-source.zip | grep -Fx 'ShiguangLauncher-v1.03-formal-b111/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-b106-direct-touch-ipa
+          name: ShiguangLauncher-v1.03-formal-b111-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-b106-direct-touch-source
-          path: /tmp/ShiguangLauncher-v1.02-b106-direct-touch-source.zip
+          name: ShiguangLauncher-v1.03-formal-b111-source
+          path: /tmp/ShiguangLauncher-v1.03-formal-b111-source.zip
           if-no-files-found: error

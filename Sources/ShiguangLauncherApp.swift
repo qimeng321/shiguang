@@ -113,6 +113,7 @@ struct LauncherView: View {
     @State private var showingGame = false
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
     @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.unlimited.rawValue
+    @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -138,7 +139,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.02")
+                        Text("正式版 1.03")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -155,6 +156,7 @@ struct LauncherView: View {
                     VStack(spacing: 12) {
                         qualityPicker
                         frameCapPicker
+                        compatibilityPicker
                     }
                     .padding(.top, 23)
 
@@ -205,6 +207,11 @@ struct LauncherView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
+                        if let revision = launcher.resourceRevision {
+                            Text("识别到核心资源修订号：\(revision)\(revision == "2026110201" ? " · 已适配" : " · 兼容性待验证")")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(revision == "2026110201" ? green : subtleInk)
+                        }
                         Divider().opacity(0.35)
                         HStack(alignment: .top, spacing: 7) {
                             Image(systemName: launcher.isInstalledValidated ?
@@ -396,6 +403,25 @@ struct LauncherView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 19))
         .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
+    }
+
+    private var compatibilityPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: $compatibilityMode) {
+                Label("兼容性省资源模式", systemImage: "leaf")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .tint(green)
+            Text("默认关闭，保留原画质。开启后降低 Ruffle 抗锯齿级别，并对小型背包图标进行短时缓存，适合少数容易发热或网页崩溃的设备；不改变 GPU 后端、地图和触控坐标。")
+                .font(.system(size: 12))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("切换后下一次进入游戏生效，原本的画质选择会保留。")
+                .font(.system(size: 11))
+                .foregroundStyle(subtleInk)
+        }
+        .padding(15)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18))
     }
 
     private var qualityPicker: some View {
@@ -592,6 +618,11 @@ struct GameView: View {
                             .font(.footnote)
                             .foregroundStyle(.white)
                             .textSelection(.enabled)
+                        ShareLink(item: LaunchDiagnostics.logURL) {
+                            Label("导出故障日志", systemImage: "square.and.arrow.up")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.white)
+                        }
                         if server != nil && !isClearingWebCache {
                             Button("重新加载游戏") { reloadGame() }
                                 .font(.footnote.weight(.semibold))
