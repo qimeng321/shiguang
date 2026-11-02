@@ -138,7 +138,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("测试版 1.02")
+                        Text("正式版 1.01")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -728,8 +728,9 @@ struct GameWebView: UIViewRepresentable {
               });
               // Capture Flash trace with bounded output. Observe document rather
               // than documentElement because this script runs at document start.
-              var traceCount = 0;
+              var traceCount = 0, traceObserver = null, traceTimer = null, traceAttached = false;
               function attachFlashTrace() {
+                if (traceAttached) return;
                 var node = document.querySelector('ruffle-player,ruffle-object,ruffle-embed');
                 if (!node || node.__shiguangTraceInstalled) return;
                 try {
@@ -742,19 +743,24 @@ struct GameWebView: UIViewRepresentable {
                     report('Flash trace：' + line);
                   };
                   node.__shiguangTraceInstalled = true;
+                  traceAttached = true;
+                  // Diagnostics must not watch the entire DOM for the rest
+                  // of a long game session after the player is available.
+                  if (traceObserver) { traceObserver.disconnect(); traceObserver = null; }
+                  if (traceTimer !== null) { clearInterval(traceTimer); traceTimer = null; }
                   report('状态：Flash trace 已接入');
                 } catch (err) {
                   report('状态：Flash trace 监听错误：' + String(err).slice(0, 120));
                 }
               }
-              var flashObserver = new MutationObserver(attachFlashTrace);
-              flashObserver.observe(document, { childList: true, subtree: true });
+              traceObserver = new MutationObserver(attachFlashTrace);
+              traceObserver.observe(document, { childList: true, subtree: true });
               var traceChecks = 0;
-              var traceTimer = setInterval(function () {
+              traceTimer = setInterval(function () {
                 attachFlashTrace();
                 if (++traceChecks >= 120) {
-                  clearInterval(traceTimer);
-                  flashObserver.disconnect();
+                  clearInterval(traceTimer); traceTimer = null;
+                  if (traceObserver) { traceObserver.disconnect(); traceObserver = null; }
                 }
               }, 500);
               // Observe Ruffle runtime progress without collecting packets or credentials.
@@ -827,7 +833,9 @@ struct GameWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         context.coordinator.lastControlGeneration = controlGeneration
         webView.navigationDelegate = context.coordinator
-        webView.isOpaque = false
+        // Opaque backing matches the always-black Flash stage and avoids
+        // an unnecessary transparent layer during long GPU-heavy sessions.
+        webView.isOpaque = true
         webView.backgroundColor = .black
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
