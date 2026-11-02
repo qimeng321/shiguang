@@ -1,4 +1,4 @@
-/* Shiguang v5.0: NoNo hover-safe precision mouse with optional delayed release.
+/* Shiguang v5.1: NoNo-safe precision mouse + opt-in direct-screen delayed release.
    Ruffle 0.7.1 reads PointerEvent.offsetX/Y from its inner canvas. */
 (function(){
 "use strict";
@@ -6,6 +6,8 @@ window.ShiguangTouchControls=function(player,report){
   var root=player&&player.shadowRoot,canvas=null,hover=false,enabled=false,drag=false;
   var pos=null,padGesture=null,headerGesture=null,clickPending=null,clickTimer=null;
   var pressDelayTimer=null,delayedTap=false;
+  var directTouch=null,directPressTimer=null,directReleaseTimer=null;
+  var lastDirectTouchAt=0,directTapCount=0;
   var count=0,recoveries=0,lastMissing=false,speedIndex=1;
   var speeds=[0.85,1.45,2.2],tipTimer=null;
   try{
@@ -165,10 +167,130 @@ window.ShiguangTouchControls=function(player,report){
     count++;
     if(count<=5||count%15===0)report("鼠标：已点击 "+count+" 次"+(delayedTap?"（延迟抬起）":"")+"；手指交替可继续使用");
   }
+  // Optional direct-screen touch-to-mouse bridge. This is separate from the
+  // on-screen trackpad; it runs only when the user turns delayed tap ON.
+  // Capture before Ruffle processes trusted touches to avoid double clicks.
+  function gameTarget(ev){
+    var path=typeof ev.composedPath==="function"?ev.composedPath():[];
+    if(path.indexOf(player)<0)return false;
+    for(var i=0;i<path.length;i++){
+      var node=path[i],name=node&&node.tagName;
+      if(name&&/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(name))return false;
+      if(node&&node.id==="sh-mouse")return false;
+    }
+    return !!canvasNow();
+  }
+  function blockNative(ev){
+    if(ev.cancelable)ev.preventDefault();
+    ev.stopImmediatePropagation();
+  }
+  function clearDirectTimers(){
+    if(directPressTimer!==null){clearTimeout(directPressTimer);directPressTimer=null;}
+    if(directReleaseTimer!==null){clearTimeout(directReleaseTimer);directReleaseTimer=null;}
+  }
+  function finishDirect(cancelled){
+    clearDirectTimers();
+    var t=directTouch;
+    if(!t)return;
+    directTouch=null;
+    if(t.pressed)emit("pointerup",t.point,0,0);
+    if(!cancelled){
+      directTapCount++;
+      if(directTapCount<=5||directTapCount%15===0)
+        report("触屏延迟：已释放 "+directTapCount+" 次"+(t.moved?"（滑动，不延迟）":"（按住350ms）"));
+    }
+  }
+  function queueDirectRelease(t){
+    if(directTouch!==t||!t.pressed)return;
+    if(t.moved){finishDirect(false);return;}
+    var remaining=Math.max(0,350-(performance.now()-t.pressedAt));
+    if(remaining<1){finishDirect(false);return;}
+    if(directReleaseTimer!==null)clearTimeout(directReleaseTimer);
+    directReleaseTimer=setTimeout(function(){
+      directReleaseTimer=null;
+      if(directTouch===t)finishDirect(false);
+    },remaining);
+  }
+  function pressDirect(t){
+    if(directTouch!==t||t.pressed)return;
+    if(directPressTimer!==null){clearTimeout(directPressTimer);directPressTimer=null;}
+    // Flash hover targets (NoNo) need the cursor movement BEFORE press.
+    if(!emit("pointermove",t.point,0)) { finishDirect(true);return; }
+    if(!emit("pointerdown",t.point,1,0)) { finishDirect(true);return; }
+    t.pressed=true;t.pressedAt=performance.now();
+    if(t.released)queueDirectRelease(t);
+  }
+  function directPointerDown(ev){
+    if(!delayedTap||!ev.isTrusted||ev.pointerType!=="touch"||!gameTarget(ev))return;
+    blockNative(ev);
+    lastDirectTouchAt=performance.now();
+    if(directTouch)finishDirect(true);
+    var t={id:ev.pointerId,startX:ev.clientX,startY:ev.clientY,
+      point:{x:ev.clientX,y:ev.clientY},moved:false,pressed:false,released:false,pressedAt:0};
+    directTouch=t;
+    // Hover first, then delay press. Very short taps still get a full click.
+    emit("pointermove",t.point,0);
+    directPressTimer=setTimeout(function(){directPressTimer=null;pressDirect(t);},120);
+  }
+  function directPointerMove(ev){
+    var t=directTouch;
+    if(!delayedTap||!t||!ev.isTrusted||ev.pointerType!=="touch"||ev.pointerId!==t.id)return;
+    blockNative(ev);
+    if(t.released)return;
+    t.point={x:ev.clientX,y:ev.clientY};
+    if(Math.hypot(ev.clientX-t.startX,ev.clientY-t.startY)>12)t.moved=true;
+    if(t.moved&&!t.pressed)pressDirect(t);
+    emit("pointermove",t.point,t.pressed?1:0);
+  }
+  function directPointerUp(ev){
+    var t=directTouch;
+    if(!delayedTap||!t||!ev.isTrusted||ev.pointerType!=="touch"||ev.pointerId!==t.id)return;
+    blockNative(ev);
+    lastDirectTouchAt=performance.now();
+    t.point={x:ev.clientX,y:ev.clientY};
+    t.released=true;
+    // A swipe ends on the physical release; only a tap holds for 350ms.
+    if(t.pressed)queueDirectRelease(t);
+  }
+  function directPointerCancel(ev){
+    var t=directTouch;
+    if(!delayedTap||!t||!ev.isTrusted||ev.pointerType!=="touch"||ev.pointerId!==t.id)return;
+    blockNative(ev);finishDirect(true);
+  }
+  // Document CAPTURE is earlier than Ruffle's canvas/shadow listeners. The
+  // events created by emit() are untrusted and bypass these interceptors.
+  document.addEventListener("pointerdown",directPointerDown,true);
+  document.addEventListener("pointermove",directPointerMove,true);
+  document.addEventListener("pointerup",directPointerUp,true);
+  document.addEventListener("pointercancel",directPointerCancel,true);
+  ["pointerout","pointerleave"].forEach(function(type){
+    document.addEventListener(type,function(ev){
+      if(delayedTap&&directTouch&&ev.isTrusted&&ev.pointerType==="touch"&&ev.pointerId===directTouch.id)blockNative(ev);
+    },true);
+  });
+  // iOS dispatches compatibility touch/mouse events in addition to pointer
+  // events. Consume only those belonging to the Flash surface while active.
+  ["touchstart","touchmove","touchend","touchcancel"].forEach(function(type){
+    document.addEventListener(type,function(ev){
+      if(delayedTap&&ev.isTrusted&&(directTouch||gameTarget(ev))){
+        lastDirectTouchAt=performance.now();
+        blockNative(ev);
+      }
+    },true);
+  });
+  ["mousedown","mouseup","click"].forEach(function(type){
+    document.addEventListener(type,function(ev){
+      if(delayedTap&&ev.isTrusted&&performance.now()-lastDirectTouchAt<700&&gameTarget(ev))
+        blockNative(ev);
+    },true);
+  });
   function setDelayedTap(on){
     endClick();
+    finishDirect(true);
     delayedTap=!!on;
-    report("鼠标：延迟点按自动抬起"+(delayedTap?"开启（悬停120ms + 按住350ms）":"关闭（按住125ms）"));
+    report("触屏延迟：自动抬起"+(delayedTap?
+      "已开启（手指直点及精准鼠标，悬停120ms + 保持按下350ms）":
+      "已关闭（触屏恢复原生，精准鼠标保持125ms）"));
   }
   function endDrag(){
     if(!drag)return;
@@ -231,12 +353,12 @@ window.ShiguangTouchControls=function(player,report){
     else{endClick();endDrag();padGesture=null;hover=false;}
     report("鼠标："+(enabled?"开启":"关闭")+"；真实触摸后的状态自动恢复");
   }
-  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();}});
-  window.addEventListener("pagehide",function(){endClick();endDrag();});
+  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);}});
+  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);});
   try{new ResizeObserver(function(){
     if(enabled&&pos){var p=clamp(pos);if(p){pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";}}
   }).observe(player);}catch(e){}
-  report("鼠标 v5.0：NoNo 悬浮菜单防重复 pointerenter；可选延迟抬起，触控板禁止选中");
+  report("鼠标 v5.1：NoNo 悬浮菜单点击保护；可选手指直接点按延迟350ms，触控板禁止选中");
   return {enableMouse:function(){setMode(true);},disableMouse:function(){setMode(false);},
     hideAll:function(){setMode(false);},resetCursor:center,
     cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap};
