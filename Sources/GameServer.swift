@@ -524,7 +524,7 @@ final class GameServer {
         // Normal clients keep the original no-store policy. This opt-in mode
         // caches only tiny immutable icons; version/map/login/core never cache.
         let low = relative.lowercased()
-        let tinyIcon = compatibilityModeEnabled && !isPartial && total > 0 &&
+        let tinyIcon = compatibilityModeEnabled && base == root && !isPartial && total > 0 &&
             total <= 32 * 1024 && low.hasSuffix(".swf") &&
             (low.hasPrefix("resource/item/cloth/icon/") ||
              low.hasPrefix("resource/item/cloth/prev/") ||
