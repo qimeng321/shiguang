@@ -1,3 +1,23 @@
+# iPhone 15 Pro · WebKit 终止稳定性专版 (正式版 1.02 / Build 107)
+
+仅针对此前在 iPhone 15 Pro / iOS 26.6.2 约半分钟到两分钟内频繁发生的 WebKit WebContent 进程终止问题，单独试验 Ruffle 渲染配置。**此分支只给对应用户测试，不合并正式 main。**
+
+## 唯一主要行为改动
+- Ruffle 0.7.1 `preferredRenderer: "webgl"`（全局配置和每次 load 的 options 两处同步指定），尝试绕过原来的自动 `wgpu-webgl` 路径。Ruffle 本身可按支持情况回退，不能保证实际使用的引擎后端永远固定。
+- 不改变 `quality`、SWF 帧率、地图尺寸、DPR、中文字体、NoNo 按钮、虚拟鼠标、直接触屏延迟和导入流程。
+- 增加渲染 Canvas 像素尺寸报告（游戏启动后第10、第40秒）及 WebGL contextlost/contextrestored 诊断，不主动调用 `getContext()`，避免新建 GPU 上下文。
+- Ruffle 文档指出 vanilla `webgl` 可能缺失高级混合模式、位图绘制等效果，因此**若出现画面/特效异常或更卡**，使用原正式版 1.02 Build 106，并反馈日志。
+
+## 版本与安装
+显示版本继续为 **正式版 1.02**；iOS `CFBundleShortVersionString=1.0.2`、`CFBundleVersion=107`，目的是和正式版 Build 106 区分并允许安全覆盖升级。Bundle ID `cn.shiguanghao.launcher` 保持不变。unsigned IPA 需使用和原版相同的签名配置覆盖安装；**不要卸载 App，防止丢失美化包**。
+
+## 对照测试
+- iPhone 15 Pro，同一个 .srom；先用均衡画质、最高帧率60并记录测试时间，再尝试高清/不限制；
+- 地图站立、NoNo、背包/刻印、战斗分别试用20–30分钟，重复做以前会复现的操作；
+- 若有黑屏，请导出 `diagnostics.txt`，关注 `[严重诊断]`、`WebGL 上下文丢失`、`渲染检查`；提供 iOS 的 JetsamEvent / WebKit.WebContent IPS 是确定内存 vs 渲染故障的必要佐证。
+
+---
+
 # 正式版 1.02 更新构建 Build 106 · 直接触屏延迟点按
 
 保留版本号 **1.0.2**，构建号由 105 更新至 **106**，可用原包名、原签名覆盖安装。本构建只改点击辅助逻辑，不替换游戏引擎、不删除资源、不增加大体积游戏包。
