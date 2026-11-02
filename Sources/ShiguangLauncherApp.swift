@@ -67,7 +67,6 @@ enum GameQualityPreset: String, CaseIterable, Identifiable {
         case .ultra: return "best"
         }
     }
-    var highDpi: Bool { self == .ultra }
     static let defaultsKey = "shiguang.qualityPreset"
     static var saved: GameQualityPreset {
         GameQualityPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .balanced
