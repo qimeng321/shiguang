@@ -113,7 +113,7 @@ jobs:
             cp "$RUFFLE_EXE" Assets/RuffleDesktop/ruffle
             chmod +x Assets/RuffleDesktop/ruffle
           fi
-          NATIVE_EXE="$(find Assets/RuffleDesktop -type f \\( -name 'ruffle' -o -name 'Ruffle' \\) -print -quit)"
+          NATIVE_EXE="Assets/RuffleDesktop/Ruffle.app/Contents/MacOS/ruffle"
           test -n "$NATIVE_EXE"
           chmod +x "$NATIVE_EXE"
           file "$NATIVE_EXE"
@@ -145,7 +145,7 @@ jobs:
           test "$(find "$APP/Contents/Resources/RuffleNightly" -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
           test -s "$APP/Contents/Resources/Ruffle/pako_inflate.min.js"
           test -d "$APP/Contents/Resources/RuffleDesktop"
-          test -n "$(find "$APP/Contents/Resources/RuffleDesktop" -type f \( -name ruffle -o -name Ruffle \) -print -quit)"
+          test -s "$APP/Contents/Resources/RuffleDesktop/Ruffle.app/Contents/MacOS/ruffle"
           cp dist/ShiguangMac-v1.6-native.zip dist/ShiguangMac-v1.6-Intel-APP.zip
           mkdir -p "$RUNNER_TEMP/dmg-stage"
           ditto "$APP" "$RUNNER_TEMP/dmg-stage/拾光号 Mac 1.6.app"
