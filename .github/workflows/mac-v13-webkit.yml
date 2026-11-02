@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - mac-v1.3-intel-test
+      - mac-v1.3-webkit-test
     paths:
       - 'Mac/v1.1/**'
       - '.github/workflows/mac-v13-webkit.yml'
