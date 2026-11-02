@@ -13,6 +13,7 @@ final class GameServer {
     var startError: String? { queue.sync { failureMessage } }
     var bridgeError: String? { bridge?.failureDescription }
     private let packagedWebApp: Bool
+    private let compatibilityModeEnabled: Bool
     private var tracedRequestCount = 0
     private let maxTracedRequests = 300
     private var versionGetCount = 0
@@ -91,6 +92,9 @@ final class GameServer {
     init(root: URL, packagedWebApp: Bool = false) throws {
         self.root = root.resolvingSymlinksInPath()
         self.packagedWebApp = packagedWebApp
+        self.compatibilityModeEnabled = UserDefaults.standard.bool(
+            forKey: "shiguang.compatibilityMode103"
+        )
         self.bridge = packagedWebApp ? try GameSocketBridge() : nil
         guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path) else {
@@ -496,7 +500,18 @@ final class GameServer {
         traceRequest(headOnly ? "HEAD" : "GET", "/" + relative,
                      status: isPartial ? 206 : 200, size: byteCount)
         let contentRange = isPartial ? "Content-Range: bytes \(first)-\(last)/\(total)\r\n" : ""
-        let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+        // Normal clients keep the original no-store policy. This opt-in mode
+        // caches only tiny immutable icons; version/map/login/core never cache.
+        let low = relative.lowercased()
+        let tinyIcon = compatibilityModeEnabled && !isPartial && total > 0 &&
+            total <= 32 * 1024 && low.hasSuffix(".swf") &&
+            (low.hasPrefix("resource/item/cloth/icon/") ||
+             low.hasPrefix("resource/item/cloth/prev/") ||
+             low.hasPrefix("resource/item/cloth/swf/") ||
+             low.hasPrefix("resource/item/petitem/icon/") ||
+             low.hasPrefix("resource/item/doodle/icon/"))
+        let cacheHeader = tinyIcon ? "Cache-Control: private, max-age=45" : "Cache-Control: no-store"
+        let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)\(cacheHeader)\r\nConnection: close\r\n\r\n"
         if !headOnly {
             do { try handle.seek(toOffset: first) }
             catch {
@@ -628,7 +643,7 @@ final class GameServer {
         // Read the user's choice for each new page load. Do not affect the
         // local resource package, Flash stage geometry, or pointer coordinates.
         let qualityPreset = GameQualityPreset.saved
-        let selectedQuality = qualityPreset.ruffleQuality
+        let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
@@ -989,7 +1004,7 @@ final class GameServer {
             await player.ruffle().load(options);
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
-            report("画质选择：quality="+configuredQuality+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
+            report("画质选择：quality="+configuredQuality+"；兼容模式="+\(compatibilityModeEnabled ? "\"true\"" : "\"false\"")+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
               +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
