@@ -495,6 +495,14 @@ final class GameServer {
         let response = isPartial ? "206 Partial Content" : "200 OK"
         traceRequest(headOnly ? "HEAD" : "GET", "/" + relative,
                      status: isPartial ? 206 : 200, size: byteCount)
+        // Continue tracing map loads even after the ordinary 300-request cap.
+        // HTTP completion is NOT proof that Flash applied or rendered the map.
+        let mapRelative = relative.lowercased()
+        let isMapAsset = mapRelative.hasPrefix("resource/map/") ||
+            mapRelative == "resource/worldmap.swf"
+        if isMapAsset && !headOnly {
+            LaunchDiagnostics.log("[地图资源] 请求开始：\(relative)；预期字节=\(byteCount)")
+        }
         let contentRange = isPartial ? "Content-Range: bytes \(first)-\(last)/\(total)\r\n" : ""
         let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)Cache-Control: no-store\r\nConnection: close\r\n\r\n"
         if !headOnly {
@@ -516,7 +524,9 @@ final class GameServer {
                 self.finishHTTPResponse(connection)
             } else {
                 let pvm = relative.lowercased() == "version.swf" && !isPartial
-                self.stream(handle, to: connection, remaining: byteCount, observeCompletion: pvm)
+                self.stream(handle, to: connection, remaining: byteCount,
+                            observeCompletion: pvm,
+                            mapTrace: isMapAsset ? relative : nil)
             }
         })
     }
@@ -546,10 +556,12 @@ final class GameServer {
     }
 
     private func stream(_ handle: FileHandle, to connection: NWConnection,
-                        remaining: UInt64, observeCompletion: Bool = false) {
+                        remaining: UInt64, observeCompletion: Bool = false,
+                        mapTrace: String? = nil) {
         guard remaining > 0 else {
             try? handle.close()
             if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf 数据已发完，准备 TCP FIN") }
+            if let mapTrace { LaunchDiagnostics.log("[地图资源] 全部字节交给网络层：\(mapTrace)；Flash 是否完成地图初始化仍未知") }
             finishHTTPResponse(connection, pvm: observeCompletion)
             return
         }
@@ -557,6 +569,7 @@ final class GameServer {
         guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else {
             try? handle.close()
             if observeCompletion { LaunchDiagnostics.log("[PVM 传输] 读取异常，剩余 \(remaining) 字节") }
+            if let mapTrace { LaunchDiagnostics.log("[地图资源] 读取失败：\(mapTrace)；剩余=\(remaining)") }
             connection.cancel()
             return
         }
@@ -564,9 +577,10 @@ final class GameServer {
             guard let self else { try? handle.close(); connection.cancel(); return }
             if error == nil {
                 self.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
-                            observeCompletion: observeCompletion)
+                            observeCompletion: observeCompletion, mapTrace: mapTrace)
             } else {
                 if observeCompletion { LaunchDiagnostics.log("[PVM 传输] 写入失败：" + (error?.localizedDescription ?? "未知")) }
+                if let mapTrace { LaunchDiagnostics.log("[地图资源] 发送失败：\(mapTrace)；" + (error?.localizedDescription ?? "未知")) }
                 try? handle.close()
                 connection.cancel()
             }
