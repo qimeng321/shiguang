@@ -645,7 +645,7 @@ final class GameServer {
           window.RufflePlayer.config={
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
-            quality:"best",
+            quality:"high",highDpi:false,
             allowScriptAccess:true,publicPath:"/ruffle/",
             fontSources:["/ruffle/fonts/NotoSansCJKsc-Regular.otf"],
             defaultFonts:{
@@ -802,7 +802,40 @@ final class GameServer {
             if(touchControls)touchControls.hideAll();
             setDockVisible(!inputShown,"三点菜单切换输入栏");
           }
-          window.ShiguangControls={
+          // Display browser frame-callback cadence, NOT the SWF's actual frame count.
+          // Fully dormant until enabled; sampling stops when page is hidden.
+          var fpsActive=false,fpsHandle=0,fpsCount=0,fpsStart=0,fpsBadge=null;
+          function fpsTick(t){
+            if(!fpsActive||document.hidden){fpsHandle=0;return;}
+            if(!fpsStart)fpsStart=t;
+            fpsCount++;
+            if(t-fpsStart>=1000){
+              if(fpsBadge)fpsBadge.textContent="画面刷新 "+Math.round(fpsCount*1000/(t-fpsStart))+" FPS";
+              fpsCount=0;fpsStart=t;
+            }
+            fpsHandle=requestAnimationFrame(fpsTick);
+          }
+          function setFps(on){
+            fpsActive=!!on;fpsCount=0;fpsStart=0;
+            if(fpsHandle){cancelAnimationFrame(fpsHandle);fpsHandle=0;}
+            if(!fpsBadge){
+              fpsBadge=document.createElement("div");
+              fpsBadge.setAttribute("aria-label","浏览器画面刷新频率，非 Flash 实际帧率");
+              Object.assign(fpsBadge.style,{position:"fixed",bottom:"14px",left:"14px",
+                zIndex:"2147482990",background:"rgba(0,0,0,.72)",color:"#85ffb8",
+                font:"bold 12px -apple-system,monospace",padding:"6px 9px",
+                borderRadius:"7px",pointerEvents:"none"});
+              document.body.appendChild(fpsBadge);
+            }
+            fpsBadge.style.display=fpsActive?"block":"none";
+            if(fpsActive){fpsBadge.textContent="画面刷新 测量中";if(!document.hidden)fpsHandle=requestAnimationFrame(fpsTick);}
+            report("画面刷新监视："+(fpsActive?"开启":"关闭")+"（rAF 采样，不是 SWF 实际帧率）");
+          }
+          document.addEventListener("visibilitychange",function(){
+            if(fpsHandle){cancelAnimationFrame(fpsHandle);fpsHandle=0;}
+            if(!document.hidden&&fpsActive){fpsCount=0;fpsStart=0;fpsHandle=requestAnimationFrame(fpsTick);}
+          });
+          window.ShiguangControls={toggleFPS:function(){setFps(!fpsActive);},
             toggleKeyboard:toggleKeyboard,
             enableMouse:function(){
               if(inputShown)setDockVisible(false,"启用虚拟鼠标");
@@ -872,7 +905,8 @@ final class GameServer {
               japaneseGothicMono:["Noto Sans CJK SC"],
               japaneseMincho:["Noto Sans CJK SC"]
             };
-            options.quality="best";
+            options.quality="high";
+            options.highDpi=false;
             try{
               var chk=await fetch("/ruffle/fonts/NotoSansCJKsc-Regular.otf",{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC");
@@ -888,7 +922,7 @@ final class GameServer {
             await player.ruffle().load(options);
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
-            report("高清模式：Flash quality=best；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+            report("测试版低功耗：Flash quality=high、highDpi=false；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();
