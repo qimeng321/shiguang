@@ -65,7 +65,7 @@ jobs:
           test -s "$BIN"
           file "$BIN"
           lipo -info "$BIN"
-          lipo -verify_arch x86_64 "$BIN"
+          lipo "$BIN" -verify_arch x86_64
           plutil -lint "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
           codesign --verify --deep --strict --verbose=2 "$APP"
