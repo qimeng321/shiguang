@@ -73,6 +73,37 @@ enum GameQualityPreset: String, CaseIterable, Identifiable {
     }
 }
 
+// A scheduling ceiling, not a Flash movie frameRate override.
+enum GameFrameCapPreset: String, CaseIterable, Identifiable {
+    case unlimited, fps60, fps30
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .unlimited: return "不限制"
+        case .fps60: return "最高 60"
+        case .fps30: return "最高 30"
+        }
+    }
+    var fpsLimit: Int {
+        switch self {
+        case .unlimited: return 0
+        case .fps60: return 60
+        case .fps30: return 30
+        }
+    }
+    var description: String {
+        switch self {
+        case .unlimited: return "默认，跟随系统及 Flash 原始运行节奏"
+        case .fps60: return "尝试把浏览器动画帧调度限制在每秒最多约 60 次"
+        case .fps30: return "尝试减少动画渲染频率，以降低发热和耗电"
+        }
+    }
+    static let defaultsKey = "shiguang.maxFrameRate"
+    static var saved: GameFrameCapPreset {
+        GameFrameCapPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .unlimited
+    }
+}
+
 struct LauncherView: View {
     @EnvironmentObject private var launcher: LauncherModel
     @State private var showingPicker = false
@@ -81,6 +112,7 @@ struct LauncherView: View {
     @State private var showingClearConfirmation = false
     @State private var showingGame = false
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
+    @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.unlimited.rawValue
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -106,7 +138,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("测试版 1.0.1")
+                        Text("测试版 1.02")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -120,8 +152,11 @@ struct LauncherView: View {
                         .foregroundStyle(subtleInk)
                         .padding(.top, 7)
 
-                    qualityPicker
-                        .padding(.top, 26)
+                    VStack(spacing: 12) {
+                        qualityPicker
+                        frameCapPicker
+                    }
+                    .padding(.top, 23)
 
                     VStack(spacing: 15) {
                         if geometry.size.width > 500 {
@@ -308,6 +343,42 @@ struct LauncherView: View {
                 GameView(root: root, entry: launcher.selectedEntry) { showingGame = false }
             }
         }
+    }
+
+    private var frameCapPicker: some View {
+        let current = GameFrameCapPreset(rawValue: frameCapPreset) ?? .unlimited
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                Image(systemName: "speedometer")
+                    .foregroundStyle(blue)
+                Text("最高帧率")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ink)
+                Spacer()
+                Text(current.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(blue)
+            }
+            Picker("最高帧率", selection: $frameCapPreset) {
+                ForEach(GameFrameCapPreset.allCases) { option in
+                    Text(option.title).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("最高帧率限制")
+            Text(current.description)
+                .font(.system(size: 12))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("实验性帧调度限制，不修改游戏原始帧率。选择后重新进入游戏生效。")
+                .font(.system(size: 11))
+                .foregroundStyle(subtleInk.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 19))
+        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
     }
 
     private var qualityPicker: some View {
