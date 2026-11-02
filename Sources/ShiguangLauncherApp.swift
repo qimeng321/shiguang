@@ -42,6 +42,38 @@ struct PackageDocumentPicker: UIViewControllerRepresentable {
     }
 }
 
+// Kept in the existing Swift source file so the Xcode target needs no changes.
+enum GameQualityPreset: String, CaseIterable, Identifiable {
+    case saving, balanced, ultra
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .saving: return "省电"
+        case .balanced: return "均衡"
+        case .ultra: return "高清"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .saving: return "降低渲染负担，适合长时间游玩"
+        case .balanced: return "兼顾清晰度与功耗，推荐日常使用"
+        case .ultra: return "优先显示效果，可能更容易发热"
+        }
+    }
+    var ruffleQuality: String {
+        switch self {
+        case .saving: return "medium"
+        case .balanced: return "high"
+        case .ultra: return "best"
+        }
+    }
+    var highDpi: Bool { self == .ultra }
+    static let defaultsKey = "shiguang.qualityPreset"
+    static var saved: GameQualityPreset {
+        GameQualityPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .balanced
+    }
+}
+
 struct LauncherView: View {
     @EnvironmentObject private var launcher: LauncherModel
     @State private var showingPicker = false
@@ -49,6 +81,7 @@ struct LauncherView: View {
     @State private var showingLocalFiles = false
     @State private var showingClearConfirmation = false
     @State private var showingGame = false
+    @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -88,6 +121,9 @@ struct LauncherView: View {
                         .foregroundStyle(subtleInk)
                         .padding(.top, 7)
 
+                    qualityPicker
+                        .padding(.top, 26)
+
                     VStack(spacing: 15) {
                         if geometry.size.width > 500 {
                             HStack(spacing: 14) { importButton; clearButton }
@@ -112,7 +148,7 @@ struct LauncherView: View {
                         .disabled(!launcher.canStartGame || launcher.isImporting)
                         .buttonStyle(.plain)
                     }
-                    .padding(.top, 32)
+                    .padding(.top, 19)
 
                     VStack(spacing: 10) {
                         HStack(spacing: 8) {
@@ -273,6 +309,41 @@ struct LauncherView: View {
                 GameView(root: root, entry: launcher.selectedEntry) { showingGame = false }
             }
         }
+    }
+
+    private var qualityPicker: some View {
+        let current = GameQualityPreset(rawValue: qualityPreset) ?? .balanced
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                Image(systemName: "slider.horizontal.3")
+                    .foregroundStyle(blue)
+                Text("游戏画质")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ink)
+                Spacer()
+                Text(current.title + "模式")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(blue)
+            }
+            Picker("游戏画质", selection: $qualityPreset) {
+                ForEach(GameQualityPreset.allCases) { option in
+                    Text(option.title).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("游戏画质档位")
+            Text(current.detail)
+                .font(.system(size: 12))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("进入游戏时生效 · 自动记住上次选择")
+                .font(.system(size: 11))
+                .foregroundStyle(subtleInk.opacity(0.85))
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 19))
+        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
     }
 
     private var importButton: some View {
