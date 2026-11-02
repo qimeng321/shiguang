@@ -628,6 +628,7 @@ final class GameServer {
         // local resource package, Flash stage geometry, or pointer coordinates.
         let qualityPreset = GameQualityPreset.saved
         let selectedQuality = qualityPreset.ruffleQuality
+        let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
             return String(String(data: data, encoding: .utf8)!.dropFirst().dropLast())
@@ -635,6 +636,7 @@ final class GameServer {
         return """
         <!doctype html><html lang="zh-CN"><head>
         <meta charset="utf-8"><meta name="shiguang-quality" content="\(selectedQuality)">
+        <meta name="shiguang-max-fps" content="\(selectedFrameCap)">
         <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
         <style>
           :root {--game-w:960px;--game-h:560px}
@@ -646,6 +648,7 @@ final class GameServer {
           /* Mouse and map controls are lazily mounted by touch-controls.js,
              so the normal game viewport has no transparent intercepting overlay. */
         </style>
+        <script src="/ruffle/frame-cap.js"></script>
         <script>
           var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
           window.RufflePlayer=window.RufflePlayer||{};
@@ -812,19 +815,32 @@ final class GameServer {
           // Display browser frame-callback cadence, NOT the SWF's actual frame count.
           // Fully dormant until enabled; sampling stops when page is hidden.
           var fpsActive=false,fpsHandle=0,fpsCount=0,fpsStart=0,fpsBadge=null;
+          // Never let the FPS meter itself consume the constrained animation
+          // callback budget; it samples via the untouched native browser rAF.
+          var frameLimiter=window.ShiguangFrameCap;
+          var fpsRequest=frameLimiter?frameLimiter.nativeRequestFrame:window.requestAnimationFrame.bind(window);
+          var fpsCancel=frameLimiter?frameLimiter.nativeCancelFrame:window.cancelAnimationFrame.bind(window);
           function fpsTick(t){
             if(!fpsActive||document.hidden){fpsHandle=0;return;}
             if(!fpsStart)fpsStart=t;
             fpsCount++;
             if(t-fpsStart>=1000){
-              if(fpsBadge)fpsBadge.textContent="画面刷新 "+Math.round(fpsCount*1000/(t-fpsStart))+" FPS";
+              if(fpsBadge){
+                var nativeHz=Math.round(fpsCount*1000/(t-fpsStart));
+                if(frameLimiter&&frameLimiter.limit){
+                  fpsBadge.textContent="动画回调 ≈"+frameLimiter.getRecentUpdates()
+                    +" FPS（上限 "+frameLimiter.limit+"） · 页面 "+nativeHz;
+                }else{
+                  fpsBadge.textContent="页面刷新 ≈"+nativeHz+" FPS（非 SWF 帧率）";
+                }
+              }
               fpsCount=0;fpsStart=t;
             }
-            fpsHandle=requestAnimationFrame(fpsTick);
+            fpsHandle=fpsRequest(fpsTick);
           }
           function setFps(on){
             fpsActive=!!on;fpsCount=0;fpsStart=0;
-            if(fpsHandle){cancelAnimationFrame(fpsHandle);fpsHandle=0;}
+            if(fpsHandle){fpsCancel(fpsHandle);fpsHandle=0;}
             if(!fpsBadge){
               fpsBadge=document.createElement("div");
               fpsBadge.setAttribute("aria-label","浏览器画面刷新频率，非 Flash 实际帧率");
@@ -835,12 +851,12 @@ final class GameServer {
               document.body.appendChild(fpsBadge);
             }
             fpsBadge.style.display=fpsActive?"block":"none";
-            if(fpsActive){fpsBadge.textContent="画面刷新 测量中";if(!document.hidden)fpsHandle=requestAnimationFrame(fpsTick);}
+            if(fpsActive){fpsBadge.textContent="刷新采样中…";if(!document.hidden)fpsHandle=fpsRequest(fpsTick);}
             report("画面刷新监视："+(fpsActive?"开启":"关闭")+"（rAF 采样，不是 SWF 实际帧率）");
           }
           document.addEventListener("visibilitychange",function(){
-            if(fpsHandle){cancelAnimationFrame(fpsHandle);fpsHandle=0;}
-            if(!document.hidden&&fpsActive){fpsCount=0;fpsStart=0;fpsHandle=requestAnimationFrame(fpsTick);}
+            if(fpsHandle){fpsCancel(fpsHandle);fpsHandle=0;}
+            if(!document.hidden&&fpsActive){fpsCount=0;fpsStart=0;fpsHandle=fpsRequest(fpsTick);}
           });
           window.ShiguangControls={toggleFPS:function(){setFps(!fpsActive);},
             toggleKeyboard:toggleKeyboard,
@@ -928,7 +944,8 @@ final class GameServer {
             await player.ruffle().load(options);
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
-            report("画质选择：quality="+configuredQuality+"；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+            report("画质选择：quality="+configuredQuality+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
+              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();
