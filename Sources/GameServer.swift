@@ -671,9 +671,8 @@ final class GameServer {
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
             quality:configuredQuality,
-            // iPhone 15 Pro isolated stability experiment: bypass wgpu-WebGL.
-            // Vanilla WebGL may lack some Flash blend/bitmap effects.
-            preferredRenderer:"webgl",
+            // Build 109 A/B: no preferredRenderer override.
+            // Return to the Ruffle 0.7.1 default used by working Build 106.
             allowScriptAccess:true,publicPath:"/ruffle/",
             fontSources:["/ruffle/fonts/NotoSansCJKsc-Regular.otf"],
             defaultFonts:{
@@ -1013,8 +1012,7 @@ final class GameServer {
               japaneseMincho:["Noto Sans CJK SC"]
             };
             options.quality=configuredQuality;
-            options.preferredRenderer="webgl";
-            report("渲染稳定性专版：优先请求 vanilla WebGL（不是自动 wgpu-webgl）；实际后端以 Ruffle 为准");
+            report("地图兼容回归对照：已移除 Build107/108 的 WebGL 强制偏好，恢复 Ruffle 自动渲染后端；保留 Build108 原生诊断");
             try{
               var chk=await fetch("/ruffle/fonts/NotoSansCJKsc-Regular.otf",{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC");
@@ -1031,7 +1029,7 @@ final class GameServer {
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
             report("画质选择：quality="+configuredQuality+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
-              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；请求后端=webgl（可回退）");
+              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择（Build106 配置）");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();
