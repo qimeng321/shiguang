@@ -32,6 +32,12 @@ jobs:
           assert 'Math.min(w/960,h/560)' in source
           assert 'case unlimited, fps60, fps30' in swift
           assert 'case saving, balanced, ultra' in swift
+          # 0.0.1 intentionally permits the empty-resources experiment
+          assert 'Button {' in swift
+          assert 'allowMissingGameResources: testWithoutPackage' in swift
+          assert 'useMicroclientProbe = allowMissingGameResources && !packagedWebApp' in swift
+          assert 'LaunchDiagnostics.documents' in swift
+          assert 'GameServer(root: packagedWebApp ? candidate : root' in swift
           print('1.02 keyboard, adaptive canvas and frame-cap invariants OK')
           PY_CHECK
   build:
@@ -206,22 +212,16 @@ jobs:
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
       - name: Check formal version and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.2'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '102'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '0.0.1'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.0 project source ZIP
+      - name: Confirm isolated throwaway bundle identity
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.0.2-test/             --output=/tmp/ShiguangLauncher-v1.0.2-test-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.0.2-test-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.0.2-test-source.zip | grep -Fx 'ShiguangLauncher-v1.0.2-test/Sources/ShiguangLauncherApp.swift'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.nopackageprobe'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0.2-test-unsigned-ipa
+          name: ShiguangLauncher-v0.0.1-nopackage-probe-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ShiguangLauncher-v1.0.2-test-source
-          path: /tmp/ShiguangLauncher-v1.0.2-test-source.zip
-          if-no-files-found: error
+          retention-days: 1
