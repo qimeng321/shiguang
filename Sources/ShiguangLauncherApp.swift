@@ -12,7 +12,13 @@ struct ShiguangLauncherApp: App {
             LauncherView()
                 .environmentObject(launcher)
                 // Files → share/open in 拾光号 is a second route for .srom.
-                .onOpenURL { url in launcher.importPackage(url) }
+                .onOpenURL { url in
+                    if url.pathExtension.lowercased() == "sgpatch" {
+                        launcher.importMobilePatch(url)
+                    } else {
+                        launcher.importPackage(url)
+                    }
+                }
         }
     }
 }
