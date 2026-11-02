@@ -59,7 +59,19 @@ jobs:
           assert 'preferredRenderer:"webgl"' not in source
           assert 'options.preferredRenderer=' not in source
           assert 'GPU 后端自动选择（Build106 配置）' in source
-          assert '地图兼容回归对照：已移除' in source
+          assert '15Pro单人专项 Build110' in source
+          assert 'let selectedQuality = "low"' in source
+          assert 'private, max-age=45' in source
+          assert 'total <= 32 * 1024' in source
+          assert 'iconPath.hasPrefix("resource/item/cloth/icon/")' in source
+          assert 'iconPath.hasPrefix("resource/item/petitem/icon/")' in source
+          assert 'let cacheHeader = cacheableIcon' in source
+          assert 'Cache-Control: no-store' in source
+          assert 'swfBurstCount >= 40' in source
+          assert '[资源峰值]' in source
+          assert 'UIApplication.didReceiveMemoryWarningNotification' in swift
+          assert '.disabled(true) // This one-person test build' in swift
+          assert '保存的原画质选择' in swift
           assert 'reportExistingCanvas("加载后10秒")' in source
           assert 'webglcontextlost' in source
           assert '[地图资源] 请求开始' in source
@@ -198,6 +210,8 @@ jobs:
           assert '@AppStorage(GameQualityPreset.defaultsKey)' in swift
           assert 'Picker("游戏画质", selection: $qualityPreset)' in swift
           assert 'GameQualityPreset.saved' in html
+          assert 'let selectedQuality = "low"' in html
+          assert 'Text("15Pro 专项 · 低负载")' in swift
           assert 'options.quality=configuredQuality' in html
           assert 'highDpi' not in html  # Not a documented Ruffle Web option
           assert 'quality:configuredQuality' in html
@@ -226,7 +240,7 @@ jobs:
           assert 'inputHasFocus()' in html
           assert 'if(state!==last)' in html
           assert 'dockLast=' not in html
-          print("Verified persistent three-tier quality controls and game setting wiring")
+          print("Verified customer-only fixed low Ruffle MSAA, saved preset unchanged and original frame-cap wiring")
           print("Verified separate Canvas-pointer module and HTML wiring")
           PY_TOUCH
       - name: Check embedded touch controls JavaScript syntax
@@ -272,21 +286,21 @@ jobs:
       - name: Check formal version and build metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.2'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '109'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '110'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.02 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109/ --output=/tmp/ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source.zip | grep -Fx 'ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.02-iPhone15Pro-BagSafe-b110/ --output=/tmp/ShiguangLauncher-v1.02-iPhone15Pro-BagSafe-b110-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.02-iPhone15Pro-BagSafe-b110-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-iPhone15Pro-BagSafe-b110-source.zip | grep -Fx 'ShiguangLauncher-v1.02-iPhone15Pro-BagSafe-b110/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-ipa
+          name: ShiguangLauncher-v1.02-iPhone15Pro-BagSafe-b110-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source
-          path: /tmp/ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source.zip
+          name: ShiguangLauncher-v1.02-iPhone15Pro-BagSafe-b110-source
+          path: /tmp/ShiguangLauncher-v1.02-iPhone15Pro-BagSafe-b110-source.zip
           if-no-files-found: error
