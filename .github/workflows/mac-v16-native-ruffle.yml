@@ -1,0 +1,176 @@
+name: Build Shiguang Mac v1.6 Native Ruffle Experiment
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - mac-v1.6-native-engine-test
+    paths:
+      - 'Mac/v1.1/**'
+      - '.github/workflows/mac-v16-native-ruffle.yml'
+jobs:
+  mac-intel:
+    runs-on: macos-15-intel
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source and validate version 1.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Mac/v1.1/build
+          base64 -D -i Mac/v1.1/source-v16.tar.xz.b64 | xz -dc | tar -x -C Mac/v1.1/build
+          cd Mac/v1.1/build
+          test -s Package.swift
+          test -s Sources/ShiguangMacApp.swift
+          grep -q 'macEngine' Sources/ShiguangMacApp.swift
+          test -s Sources/NativeRuffle.swift
+          grep -q 'NativeClientSWF.prepare' Sources/ShiguangMacApp.swift
+          grep -q 'installNativeMovie' Sources/GameServer.swift
+          grep -q 'ruffle-nightly' Sources/GameServer.swift
+          grep -q '资源传输完成' Sources/GameServer.swift
+          test -s '一键编译.command'
+          grep -q 'installDesktopKeyboardDedup' Sources/GameServer.swift
+          grep -q 'options.preferredRenderer = "wgpu-webgl"' Sources/GameServer.swift
+          grep -q 'shiguang.mac.perf' Sources/ShiguangMacApp.swift
+          sed -i '' 's/Mac 1\.1/Mac 1.6/g; s/Mac v1\.1/Mac v1.6/g; s/v1\.1/v1.6/g; s/<string>1\.1<\/string>/<string>1.6<\/string>/g; s/<string>110<\/string>/<string>160<\/string>/g' '一键编译.command' Sources/ShiguangMacApp.swift
+          echo 'v1.6 keyboard dedup + performance profiles; macOS 12+, Intel x86_64'
+          uname -m
+      - name: Provide Ruffle and Windows-compatible network parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Mac/v1.1/build
+          mkdir -p Assets/Ruffle/fonts
+          curl --fail --location --retry 3 --show-error 'https://github.com/ruffle-rs/ruffle/releases/download/v0.7.1/ruffle-0.7.1-web-selfhosted.zip' -o "$RUNNER_TEMP/ruffle-web.zip"
+          mkdir -p "$RUNNER_TEMP/web"
+          unzip -q "$RUNNER_TEMP/ruffle-web.zip" -d "$RUNNER_TEMP/web"
+          RUFFLE_JS="$(find "$RUNNER_TEMP/web" -name ruffle.js -type f -print -quit)"
+          test -s "$RUFFLE_JS"
+          ditto "$(dirname "$RUFFLE_JS")" Assets/Ruffle
+          # Nightly is an optional compatibility engine: the known-good stable one stays available.
+          curl --fail --location --retry 3 --show-error 'https://github.com/ruffle-rs/ruffle/releases/download/nightly-2026-11-01/ruffle-nightly-2026_11_01-web-selfhosted.zip' -o "$RUNNER_TEMP/ruffle-nightly.zip"
+          mkdir -p "$RUNNER_TEMP/nightly-web"
+          unzip -q "$RUNNER_TEMP/ruffle-nightly.zip" -d "$RUNNER_TEMP/nightly-web"
+          NIGHTLY_JS="$(find "$RUNNER_TEMP/nightly-web" -name ruffle.js -type f -print -quit)"
+          test -s "$NIGHTLY_JS"
+          mkdir -p Assets/RuffleNightly
+          ditto "$(dirname "$NIGHTLY_JS")" Assets/RuffleNightly
+          test -s Assets/RuffleNightly/ruffle.js
+          test "$(find Assets/RuffleNightly -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
+          printf 'Ruffle web 0.7.1; Windows reference uses GameEngine.exe (desktop Ruffle)\n' > Assets/Ruffle/engine-version.txt
+          cp ../../../Patches/pvm-compat.js Assets/Ruffle/pvm-compat.js
+          cp ../../../Patches/pvm-compat.b64 Assets/Ruffle/pvm-compat.b64
+          cp ../../../Patches/byte-loader-followup.b64 Assets/Ruffle/byte-loader-followup.b64
+          cp ../../../Patches/touch-controls.js Assets/Ruffle/touch-controls.js
+          curl --fail --location --retry 3 --show-error 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako_inflate.min.js' -o Assets/Ruffle/pako_inflate.min.js
+          test -s Assets/Ruffle/pako_inflate.min.js
+          node --check Assets/Ruffle/pako_inflate.min.js
+          node --check Assets/Ruffle/pvm-compat.js
+          node - <<'JS'
+          const zlib = require('node:zlib');
+          const pako = require('./Assets/Ruffle/pako_inflate.min.js');
+          const input = Buffer.from('Shiguang-PVM-compatibility-test');
+          const out = pako.inflate(zlib.deflateSync(input));
+          if (Buffer.compare(Buffer.from(out), input) !== 0) throw Error('pako decompression failed');
+          console.log('Offline JS zlib inflater verified');
+          JS
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Sources/GameSocketBridge.swift')
+          s = p.read_text().replace('sessions.values.forEach { $0.stop("启动器返回首页") }', 'Array(sessions.values).forEach { $0.stop("启动器返回首页") }')
+          p.write_text(s)
+          assert 'Array(sessions.values).forEach' in s
+          page = Path('Sources/GameServer.swift').read_text()
+          assert '<script src="/ruffle/pako_inflate.min.js"></script>' in page
+          assert 'service?.shutdown()' in Path('Sources/ShiguangMacApp.swift').read_text()
+          PY
+          curl --fail --location --show-error --retry 3 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' -o Assets/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          curl --fail --location --show-error --retry 3 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE' -o Assets/Ruffle/fonts/OFL-LICENSE.txt
+          mkdir -p "$RUNNER_TEMP/Shiguang.iconset"
+          for spec in '16:16x16' '32:16x16@2x' '32:32x32' '64:32x32@2x' '128:128x128' '256:128x128@2x' '256:256x256' '512:256x256@2x' '512:512x512' '1024:512x512@2x'; do
+            size="${spec%%:*}"
+            tag="${spec#*:}"
+            sips -s format png -z "$size" "$size" ../../../Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png --out "$RUNNER_TEMP/Shiguang.iconset/icon_${tag}.png" >/dev/null
+          done
+          iconutil -c icns "$RUNNER_TEMP/Shiguang.iconset" -o Assets/AppIcon.icns
+      - name: Bundle official Ruffle native desktop runtime (universal macOS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Mac/v1.1/build
+          curl --fail --location --retry 3 --show-error 'https://github.com/ruffle-rs/ruffle/releases/download/nightly-2026-11-01/ruffle-nightly-2026_11_01-macos-universal.tar.gz' -o "$RUNNER_TEMP/ruffle-native.tar.gz"
+          mkdir -p "$RUNNER_TEMP/ruffle-native" Assets/RuffleDesktop
+          tar -xzf "$RUNNER_TEMP/ruffle-native.tar.gz" -C "$RUNNER_TEMP/ruffle-native"
+          echo "Native runtime layout:"
+          find "$RUNNER_TEMP/ruffle-native" -maxdepth 5 -type f | head -25
+          MAC_APP="$(find "$RUNNER_TEMP/ruffle-native" -type d -name 'Ruffle.app' -print -quit)"
+          if [ -n "$MAC_APP" ]; then
+            ditto "$MAC_APP" Assets/RuffleDesktop/Ruffle.app
+          else
+            RUFFLE_EXE="$(find "$RUNNER_TEMP/ruffle-native" -type f -name 'ruffle' -print -quit)"
+            test -s "$RUFFLE_EXE"
+            cp "$RUFFLE_EXE" Assets/RuffleDesktop/ruffle
+            chmod +x Assets/RuffleDesktop/ruffle
+          fi
+          NATIVE_EXE="$(find Assets/RuffleDesktop -type f \\( -name 'ruffle' -o -name 'Ruffle' \\) -print -quit)"
+          test -n "$NATIVE_EXE"
+          chmod +x "$NATIVE_EXE"
+          file "$NATIVE_EXE"
+          lipo "$NATIVE_EXE" -verify_arch x86_64
+          "$NATIVE_EXE" --help > "$RUNNER_TEMP/ruffle-help.txt"
+          grep -q -- '--tcp-connections' "$RUNNER_TEMP/ruffle-help.txt"
+          grep -q -- '--base' "$RUNNER_TEMP/ruffle-help.txt"
+          grep -q -- '--quality' "$RUNNER_TEMP/ruffle-help.txt"
+          test -s Assets/Ruffle/pvm-compat.b64
+          test -s Assets/Ruffle/byte-loader-followup.b64
+          echo 'Verified official native Ruffle supports Intel, base URL, native TCP and quality options.'
+      - name: Build native Intel x86_64 application
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Mac/v1.1/build
+          export CI=1
+          bash './一键编译.command'
+          APP='dist/拾光号 Mac 1.6.app'
+          BIN="$APP/Contents/MacOS/ShiguangMac"
+          test -s "$BIN"
+          file "$BIN"
+          lipo -info "$BIN"
+          lipo "$BIN" -verify_arch x86_64
+          plutil -lint "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          test -s "$APP/Contents/Resources/RuffleNightly/ruffle.js"
+          test "$(find "$APP/Contents/Resources/RuffleNightly" -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
+          test -s "$APP/Contents/Resources/Ruffle/pako_inflate.min.js"
+          test -d "$APP/Contents/Resources/RuffleDesktop"
+          test -n "$(find "$APP/Contents/Resources/RuffleDesktop" -type f \( -name ruffle -o -name Ruffle \) -print -quit)"
+          cp dist/ShiguangMac-v1.6-native.zip dist/ShiguangMac-v1.6-Intel-APP.zip
+          mkdir -p "$RUNNER_TEMP/dmg-stage"
+          ditto "$APP" "$RUNNER_TEMP/dmg-stage/拾光号 Mac 1.6.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-stage/Applications"
+          # DiskImages helper intermittently returns EBUSY on macOS runners. Retry an isolated temp image.
+          DMG_TMP="$RUNNER_TEMP/shiguang-v15-${GITHUB_RUN_ATTEMPT}.dmg"
+          for attempt in 1 2 3 4; do
+            rm -f "$DMG_TMP"
+            if hdiutil create -volname '拾光号 Mac 1.6 Intel' -srcfolder "$RUNNER_TEMP/dmg-stage" -ov -format UDZO "$DMG_TMP"; then
+              mv "$DMG_TMP" dist/ShiguangMac-v1.6-Intel.dmg
+              break
+            fi
+            echo "hdiutil was busy (attempt $attempt); retrying..."
+            sleep $((attempt * 5))
+          done
+          test -s dist/ShiguangMac-v1.6-Intel.dmg
+          hdiutil verify dist/ShiguangMac-v1.6-Intel.dmg
+          ls -lh dist/ShiguangMac-v1.6-Intel.*
+          shasum -a 256 dist/ShiguangMac-v1.6-Intel.dmg dist/ShiguangMac-v1.6-Intel-APP.zip
+      - name: Upload Intel DMG and zipped APP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangMac-v1.6-Intel-Installers
+          path: |
+            Mac/v1.1/build/dist/ShiguangMac-v1.6-Intel.dmg
+            Mac/v1.1/build/dist/ShiguangMac-v1.6-Intel-APP.zip
+          if-no-files-found: error
+          retention-days: 30
