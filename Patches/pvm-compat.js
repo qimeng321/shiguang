@@ -17,11 +17,15 @@ window.ShiguangPVMCompat = async function (resourceURL, report) {
     report('游戏文件不是预期的 CWS 格式，跳过补丁');
     return null;
   }
-  if (!window.DecompressionStream) {
-    report('此 WebKit 不支持 DecompressionStream，保留原始文件');
+  // Older macOS WebKit lacks DecompressionStream. Use bundled pako as offline fallback.
+  const hasPako = !!(window.pako && typeof window.pako.inflate === 'function');
+  if (!hasPako && !window.DecompressionStream) {
+    report('兼容补丁失败：缺少 pako 与 DecompressionStream，无法解压 CWS');
     return null;
   }
+  report(hasPako ? 'PVM 解压器：内置 pako（兼容旧版 WebKit）' : 'PVM 解压器：DecompressionStream');
   async function inflate(bytes) {
+    if (hasPako) return window.pako.inflate(bytes);
     const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
