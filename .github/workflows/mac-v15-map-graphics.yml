@@ -14,7 +14,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Restore source and set version 1.2
+      - name: Restore source and validate version 1.5
         shell: bash
         run: |
           set -euo pipefail
@@ -28,7 +28,7 @@ jobs:
           grep -q '资源传输完成' Sources/GameServer.swift
           test -s '一键编译.command'
           grep -q 'installDesktopKeyboardDedup' Sources/GameServer.swift
-          grep -q 'preferredRenderer = macFast' Sources/GameServer.swift
+          grep -q 'options.preferredRenderer = "wgpu-webgl"' Sources/GameServer.swift
           grep -q 'shiguang.mac.perf' Sources/ShiguangMacApp.swift
           sed -i '' 's/Mac 1\.1/Mac 1.5/g; s/Mac v1\.1/Mac v1.5/g; s/v1\.1/v1.5/g; s/<string>1\.1<\/string>/<string>1.4<\/string>/g; s/<string>110<\/string>/<string>150<\/string>/g' '一键编译.command' Sources/ShiguangMacApp.swift
           echo 'v1.5 keyboard dedup + performance profiles; macOS 12+, Intel x86_64'
