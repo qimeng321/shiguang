@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - mac-v1.7-native-engine-test
+      - mac-v1.7-native-diagnostics
     paths:
       - 'Mac/v1.1/**'
       - '.github/workflows/mac-v17-native-diagnostics.yml'
