@@ -1004,7 +1004,7 @@ final class GameServer {
             await player.ruffle().load(options);
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
-            report("画质选择：quality="+configuredQuality+"；兼容模式="+\(compatibilityModeEnabled ? "\"true\"" : "\"false\"")+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
+            report("画质选择：quality="+configuredQuality+"；兼容模式="+(configuredQuality==="low"?"开启":"关闭")+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
               +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
