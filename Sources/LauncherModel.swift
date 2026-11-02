@@ -299,6 +299,14 @@ final class LauncherModel: ObservableObject {
     }
 
     func refreshResourceCheck() {
+        // Failed extraction may have removed the unusable private Game directory.
+        // Do not keep a stale gameRoot pointer that makes "清除美化包" look enabled.
+        if let root = gameRoot, !FileManager.default.fileExists(atPath: root.path) {
+            gameRoot = nil
+            entries = []
+            selectedEntry = ""
+            isInstalledValidated = false
+        }
         // v1.8 could retain an entry discovered in the temporary extraction
         // directory, even if it was not present at the final installation path.
         if let gameRoot, !selectedEntry.isEmpty,
