@@ -949,10 +949,22 @@ enum MobilePatchManager {
         var caseInsensitivePaths = Set<String>()
         var totalBytes: UInt64 = 0
         for entry in archive {
-            if entry.type == .symlink { throw MobilePatchError.unsafePath(entry.path) }
-            if entry.type == .directory { continue }
-            guard entry.type == .file else { throw MobilePatchError.unsafePath(entry.path) }
             let name = entry.path
+            // Directories are checked too: never skip ZIP path traversal checks.
+            let bare = name.hasSuffix("/") ? String(name.dropLast()) : name
+            guard !bare.hasPrefix("/"), !bare.contains("\\"), !bare.contains("%"),
+                  !bare.unicodeScalars.contains(where: { $0.value < 32 }),
+                  bare.split(separator: "/", omittingEmptySubsequences: false)
+                      .allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+                throw MobilePatchError.unsafePath(name)
+            }
+            if entry.type == .directory {
+                guard bare == "resource" || bare.hasPrefix("resource/") else {
+                    throw MobilePatchError.unsafePath(name)
+                }
+                continue
+            }
+            guard entry.type == .file else { throw MobilePatchError.unsafePath(name) }
             guard name == "mobile-patch.json" || permitted(name) else {
                 throw MobilePatchError.unsafePath(name)
             }
