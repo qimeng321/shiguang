@@ -14,7 +14,7 @@ struct ShiguangLauncherApp: App {
                 .environmentObject(launcher)
                 // Files → share/open in 拾光号 is a second route for .srom.
                 .onOpenURL { url in launcher.importPackage(url) }
-                .onChange(of: scenePhase) { _, phase in
+                .onChange(of: scenePhase) { phase in
                     switch phase {
                     case .active:
                         LaunchDiagnostics.markState("app-active", detail: "应用回到前台")
