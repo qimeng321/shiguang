@@ -10,6 +10,30 @@ on:
       - main
 
 jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm FPS and keyboard/layout test invariants
+        run: |
+          node --check Patches/frame-cap.js
+          node --check Patches/touch-controls.js
+          node Patches/test-frame-cap.js
+          python3 - <<'PY_CHECK'
+          from pathlib import Path
+          source=Path('Sources/GameServer.swift').read_text()
+          swift=Path('Sources/ShiguangLauncherApp.swift').read_text()
+          assert 'input.type="email"' in source
+          assert 'input.setAttribute("inputmode","email")' in source
+          assert 'input.setAttribute("lang","en-US")' in source
+          assert 'var stableViewport=null,fitTimer=null' in source
+          assert 'function scheduleFit()' in source
+          assert 'dockLast=' not in source
+          assert 'Math.min(w/960,h/560)' in source
+          assert 'case unlimited, fps60, fps30' in swift
+          assert 'case saving, balanced, ultra' in swift
+          print('1.02 keyboard, adaptive canvas and frame-cap invariants OK')
+          PY_CHECK
   build:
     runs-on: macos-15-intel
     steps:
