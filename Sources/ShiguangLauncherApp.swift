@@ -42,6 +42,68 @@ struct PackageDocumentPicker: UIViewControllerRepresentable {
     }
 }
 
+// Kept in the existing Swift source file so the Xcode target needs no changes.
+enum GameQualityPreset: String, CaseIterable, Identifiable {
+    case saving, balanced, ultra
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .saving: return "省电"
+        case .balanced: return "均衡"
+        case .ultra: return "高清"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .saving: return "降低渲染负担，适合长时间游玩"
+        case .balanced: return "兼顾清晰度与功耗，推荐日常使用"
+        case .ultra: return "优先显示效果，可能更容易发热"
+        }
+    }
+    var ruffleQuality: String {
+        switch self {
+        case .saving: return "medium"
+        case .balanced: return "high"
+        case .ultra: return "best"
+        }
+    }
+    static let defaultsKey = "shiguang.qualityPreset"
+    static var saved: GameQualityPreset {
+        GameQualityPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .balanced
+    }
+}
+
+// A scheduling ceiling, not a Flash movie frameRate override.
+enum GameFrameCapPreset: String, CaseIterable, Identifiable {
+    case unlimited, fps60, fps30
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .unlimited: return "不限制"
+        case .fps60: return "最高 60"
+        case .fps30: return "最高 30"
+        }
+    }
+    var fpsLimit: Int {
+        switch self {
+        case .unlimited: return 0
+        case .fps60: return 60
+        case .fps30: return 30
+        }
+    }
+    var description: String {
+        switch self {
+        case .unlimited: return "默认，跟随系统及 Flash 原始运行节奏"
+        case .fps60: return "尝试把浏览器动画帧调度限制在每秒最多约 60 次"
+        case .fps30: return "尝试减少动画渲染频率，以降低发热和耗电"
+        }
+    }
+    static let defaultsKey = "shiguang.maxFrameRate"
+    static var saved: GameFrameCapPreset {
+        GameFrameCapPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .unlimited
+    }
+}
+
 struct LauncherView: View {
     @EnvironmentObject private var launcher: LauncherModel
     @State private var showingPicker = false
@@ -49,6 +111,8 @@ struct LauncherView: View {
     @State private var showingLocalFiles = false
     @State private var showingClearConfirmation = false
     @State private var showingGame = false
+    @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
+    @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.unlimited.rawValue
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -74,7 +138,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.0")
+                        Text("正式版 1.01")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -87,6 +151,12 @@ struct LauncherView: View {
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(subtleInk)
                         .padding(.top, 7)
+
+                    VStack(spacing: 12) {
+                        qualityPicker
+                        frameCapPicker
+                    }
+                    .padding(.top, 23)
 
                     VStack(spacing: 15) {
                         if geometry.size.width > 500 {
@@ -112,7 +182,7 @@ struct LauncherView: View {
                         .disabled(!launcher.canStartGame || launcher.isImporting)
                         .buttonStyle(.plain)
                     }
-                    .padding(.top, 32)
+                    .padding(.top, 19)
 
                     VStack(spacing: 10) {
                         HStack(spacing: 8) {
@@ -275,6 +345,77 @@ struct LauncherView: View {
         }
     }
 
+    private var frameCapPicker: some View {
+        let current = GameFrameCapPreset(rawValue: frameCapPreset) ?? .unlimited
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                Image(systemName: "speedometer")
+                    .foregroundStyle(blue)
+                Text("最高帧率")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ink)
+                Spacer()
+                Text(current.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(blue)
+            }
+            Picker("最高帧率", selection: $frameCapPreset) {
+                ForEach(GameFrameCapPreset.allCases) { option in
+                    Text(option.title).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("最高帧率限制")
+            Text(current.description)
+                .font(.system(size: 12))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("实验性帧调度限制，不修改游戏原始帧率。选择后重新进入游戏生效。")
+                .font(.system(size: 11))
+                .foregroundStyle(subtleInk.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 19))
+        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
+    }
+
+    private var qualityPicker: some View {
+        let current = GameQualityPreset(rawValue: qualityPreset) ?? .balanced
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                Image(systemName: "slider.horizontal.3")
+                    .foregroundStyle(blue)
+                Text("游戏画质")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ink)
+                Spacer()
+                Text(current.title + "模式")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(blue)
+            }
+            Picker("游戏画质", selection: $qualityPreset) {
+                ForEach(GameQualityPreset.allCases) { option in
+                    Text(option.title).tag(option.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("游戏画质档位")
+            Text(current.detail)
+                .font(.system(size: 12))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("进入游戏时生效 · 自动记住上次选择")
+                .font(.system(size: 11))
+                .foregroundStyle(subtleInk.opacity(0.85))
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 19))
+        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
+    }
+
     private var importButton: some View {
         Button { showingImportChoices = true } label: {
             Label("导入美化包", systemImage: "square.and.arrow.down.fill")
@@ -321,6 +462,7 @@ struct GameView: View {
     @State private var controlGeneration = 0
     @State private var controlAction = ""
     @State private var virtualMouseEnabled = false
+    @State private var fpsEnabled = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -387,6 +529,10 @@ struct GameView: View {
                                     gameTool("gauge", "切换鼠标速度") {
                                         sendControl("cycleSpeed")
                                     }
+                                }
+                                gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
+                                    fpsEnabled.toggle()
+                                    sendControl("toggleFPS")
                                 }
                                 Divider().padding(.vertical, 3)
                                 gameTool("arrow.clockwise", "刷新游戏") {
@@ -521,6 +667,7 @@ struct GameView: View {
         guard server != nil && !isClearingWebCache else { return }
         errorText = nil
         virtualMouseEnabled = false
+        fpsEnabled = false
         reloadGeneration += 1
         LaunchDiagnostics.log("[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
     }
@@ -581,8 +728,9 @@ struct GameWebView: UIViewRepresentable {
               });
               // Capture Flash trace with bounded output. Observe document rather
               // than documentElement because this script runs at document start.
-              var traceCount = 0;
+              var traceCount = 0, traceObserver = null, traceTimer = null, traceAttached = false;
               function attachFlashTrace() {
+                if (traceAttached) return;
                 var node = document.querySelector('ruffle-player,ruffle-object,ruffle-embed');
                 if (!node || node.__shiguangTraceInstalled) return;
                 try {
@@ -595,19 +743,24 @@ struct GameWebView: UIViewRepresentable {
                     report('Flash trace：' + line);
                   };
                   node.__shiguangTraceInstalled = true;
+                  traceAttached = true;
+                  // Diagnostics must not watch the entire DOM for the rest
+                  // of a long game session after the player is available.
+                  if (traceObserver) { traceObserver.disconnect(); traceObserver = null; }
+                  if (traceTimer !== null) { clearInterval(traceTimer); traceTimer = null; }
                   report('状态：Flash trace 已接入');
                 } catch (err) {
                   report('状态：Flash trace 监听错误：' + String(err).slice(0, 120));
                 }
               }
-              var flashObserver = new MutationObserver(attachFlashTrace);
-              flashObserver.observe(document, { childList: true, subtree: true });
+              traceObserver = new MutationObserver(attachFlashTrace);
+              traceObserver.observe(document, { childList: true, subtree: true });
               var traceChecks = 0;
-              var traceTimer = setInterval(function () {
+              traceTimer = setInterval(function () {
                 attachFlashTrace();
                 if (++traceChecks >= 120) {
-                  clearInterval(traceTimer);
-                  flashObserver.disconnect();
+                  clearInterval(traceTimer); traceTimer = null;
+                  if (traceObserver) { traceObserver.disconnect(); traceObserver = null; }
                 }
               }, 500);
               // Observe Ruffle runtime progress without collecting packets or credentials.
@@ -680,7 +833,9 @@ struct GameWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         context.coordinator.lastControlGeneration = controlGeneration
         webView.navigationDelegate = context.coordinator
-        webView.isOpaque = false
+        // Opaque backing matches the always-black Flash stage and avoids
+        // an unnecessary transparent layer during long GPU-heavy sessions.
+        webView.isOpaque = true
         webView.backgroundColor = .black
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
@@ -693,7 +848,7 @@ struct GameWebView: UIViewRepresentable {
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
         let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
-                       "resetCursor", "cycleSpeed"]
+                       "resetCursor", "cycleSpeed", "toggleFPS"]
         guard allowed.contains(controlAction) else { return }
         let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"
         webView.evaluateJavaScript(js) { _, error in

@@ -578,7 +578,8 @@ final class GameServer {
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
         let html = """
-        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1"></head>
         <body style="background:#111;color:#fff;font:16px/1.7 -apple-system,sans-serif;padding:72px 24px;white-space:pre-wrap">
         <h2>拾光号：游戏启动失败（HTTP \(status)）</h2><p>\(escaped)</p></body></html>
         """
@@ -623,13 +624,20 @@ final class GameServer {
 
     // Native microclient style SWF entry: no original React SPA or network WASM.
     private func page(swfURL: String, baseURL: String) -> String {
+        // Read the user's choice for each new page load. Do not affect the
+        // local resource package, Flash stage geometry, or pointer coordinates.
+        let qualityPreset = GameQualityPreset.saved
+        let selectedQuality = qualityPreset.ruffleQuality
+        let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
             return String(String(data: data, encoding: .utf8)!.dropFirst().dropLast())
         }
         return """
         <!doctype html><html lang="zh-CN"><head>
-        <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+        <meta charset="utf-8"><meta name="shiguang-quality" content="\(selectedQuality)">
+        <meta name="shiguang-max-fps" content="\(selectedFrameCap)">
+        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
         <style>
           :root {--game-w:960px;--game-h:560px}
           html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000}
@@ -640,12 +648,14 @@ final class GameServer {
           /* Mouse and map controls are lazily mounted by touch-controls.js,
              so the normal game viewport has no transparent intercepting overlay. */
         </style>
+        <script src="/ruffle/frame-cap.js"></script>
         <script>
+          var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
           window.RufflePlayer=window.RufflePlayer||{};
           window.RufflePlayer.config={
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
-            quality:"best",
+            quality:configuredQuality,
             allowScriptAccess:true,publicPath:"/ruffle/",
             fontSources:["/ruffle/fonts/NotoSansCJKsc-Regular.otf"],
             defaultFonts:{
@@ -736,8 +746,15 @@ final class GameServer {
             Object.keys(css).forEach(function(k){
               input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),css[k],"important");
             });
+            // Preserve Ruffle's one real virtual keyboard for Flash text focus.
+            // iOS otherwise restores the previously selected Chinese IME.
+            // Email layout is a best-effort ASCII-first keyboard hint.
+            if(input.type!=="email")input.type="email";
+            input.setAttribute("inputmode","email");
+            input.setAttribute("lang","en-US");
+            input.setAttribute("enterkeyhint","done");
             input.setAttribute("aria-hidden","false");
-            input.setAttribute("placeholder","点账号或密码框后，在此输入");
+            input.setAttribute("placeholder","账号/密码：优先英文键盘输入");
             input.setAttribute("autocomplete","off");
             input.setAttribute("autocorrect","off");
             input.setAttribute("autocapitalize","none");
@@ -786,9 +803,13 @@ final class GameServer {
               input.addEventListener("input",function(ev){
                 flush();
               },true);
-              input.addEventListener("focus",function(){report("键盘：真实输入框获得焦点");},true);
-              input.addEventListener("blur",function(){report("键盘：输入框失去焦点");},true);
-              report("键盘：保留 Ruffle 内部输入组件，使用相对游戏宽度绝对居中");
+              input.addEventListener("focus",function(){
+                report("键盘：输入框获得焦点（优先英文布局）");scheduleFit();
+              },true);
+              input.addEventListener("blur",function(){
+                report("键盘：输入框失去焦点");scheduleFit();
+              },true);
+              report("键盘：保留 Ruffle 内部输入组件；已设置 email 键盘布局提示");
             }
             placeInputDock();
             return input;
@@ -802,7 +823,53 @@ final class GameServer {
             if(touchControls)touchControls.hideAll();
             setDockVisible(!inputShown,"三点菜单切换输入栏");
           }
-          window.ShiguangControls={
+          // Display browser frame-callback cadence, NOT the SWF's actual frame count.
+          // Fully dormant until enabled; sampling stops when page is hidden.
+          var fpsActive=false,fpsHandle=0,fpsCount=0,fpsStart=0,fpsBadge=null;
+          // Never let the FPS meter itself consume the constrained animation
+          // callback budget; it samples via the untouched native browser rAF.
+          var frameLimiter=window.ShiguangFrameCap;
+          var fpsRequest=frameLimiter?frameLimiter.nativeRequestFrame:window.requestAnimationFrame.bind(window);
+          var fpsCancel=frameLimiter?frameLimiter.nativeCancelFrame:window.cancelAnimationFrame.bind(window);
+          function fpsTick(t){
+            if(!fpsActive||document.hidden){fpsHandle=0;return;}
+            if(!fpsStart)fpsStart=t;
+            fpsCount++;
+            if(t-fpsStart>=1000){
+              if(fpsBadge){
+                var nativeHz=Math.round(fpsCount*1000/(t-fpsStart));
+                if(frameLimiter&&frameLimiter.limit){
+                  fpsBadge.textContent="动画回调 ≈"+frameLimiter.getRecentUpdates()
+                    +" FPS（上限 "+frameLimiter.limit+"） · 页面 "+nativeHz;
+                }else{
+                  fpsBadge.textContent="页面刷新 ≈"+nativeHz+" FPS（非 SWF 帧率）";
+                }
+              }
+              fpsCount=0;fpsStart=t;
+            }
+            fpsHandle=fpsRequest(fpsTick);
+          }
+          function setFps(on){
+            fpsActive=!!on;fpsCount=0;fpsStart=0;
+            if(fpsHandle){fpsCancel(fpsHandle);fpsHandle=0;}
+            if(!fpsBadge){
+              fpsBadge=document.createElement("div");
+              fpsBadge.setAttribute("aria-label","浏览器画面刷新频率，非 Flash 实际帧率");
+              Object.assign(fpsBadge.style,{position:"fixed",bottom:"14px",left:"14px",
+                zIndex:"2147482990",background:"rgba(0,0,0,.72)",color:"#85ffb8",
+                font:"bold 12px -apple-system,monospace",padding:"6px 9px",
+                borderRadius:"7px",pointerEvents:"none"});
+              document.body.appendChild(fpsBadge);
+            }
+            fpsBadge.style.display=fpsActive?"block":"none";
+            if(fpsActive){fpsBadge.textContent="刷新采样中…";if(!document.hidden)fpsHandle=fpsRequest(fpsTick);}
+            report("画面刷新监视："+(fpsActive?"开启":"关闭")+"（rAF 采样，不是 SWF 实际帧率）");
+          }
+          document.addEventListener("visibilitychange",function(){
+            if(fpsHandle){fpsCancel(fpsHandle);fpsHandle=0;}
+            if(!document.hidden&&fpsActive){fpsCount=0;fpsStart=0;fpsHandle=fpsRequest(fpsTick);}
+          });
+          window.ShiguangControls={toggleFPS:function(){setFps(!fpsActive);},
             toggleKeyboard:toggleKeyboard,
             enableMouse:function(){
               if(inputShown)setDockVisible(false,"启用虚拟鼠标");
@@ -812,30 +879,58 @@ final class GameServer {
             resetCursor:function(){if(touchControls)touchControls.resetCursor();},
             cycleSpeed:function(){if(touchControls)touchControls.cycleSpeed();}
           };
-          var stableViewport=null;
+          // The iOS software keyboard shrinks visualViewport but the Flash
+          // stage must not jump. Preserve its height until a true rotation.
+          // Always scale 960x560 proportionally; no canvas transform applied.
+          var stableViewport=null,fitTimer=null;
+          function inputHasFocus(){
+            var field=keyboardInput();
+            return !!(field&&field.getRootNode().activeElement===field);
+          }
           function fit(){
-            var v=window.visualViewport,w0=v?v.width:window.innerWidth,h0=v?v.height:window.innerHeight;
-            if(!stableViewport||Math.abs(w0-stableViewport.w)>85){
-              stableViewport={w:w0,h:Math.max(h0,window.innerHeight)};
-            }else if(h0>stableViewport.h){
-              stableViewport.h=h0;
+            var v=window.visualViewport;
+            var measuredW=Math.max(1,Math.round(v?v.width:window.innerWidth));
+            var measuredH=Math.max(1,Math.round(Math.max(v?v.height:0,window.innerHeight||0)));
+            var keyboardFocused=inputHasFocus();
+            if(!stableViewport){
+              stableViewport={w:measuredW,h:measuredH};
+            }else if(Math.abs(measuredW-stableViewport.w)>64 && !keyboardFocused){
+              // Orientation or actual split-view width change.
+              stableViewport={w:measuredW,h:measuredH};
+            }else if(!keyboardFocused){
+              stableViewport.w=measuredW;
+              // Avoid transient keyboard shrink and toolbar animations.
+              if(measuredH>=stableViewport.h-64)stableViewport.h=measuredH;
             }
             var w=stableViewport.w,h=stableViewport.h;
             var factor=Math.min(w/960,h/560);
             var pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
-            document.documentElement.style.setProperty("--game-w",pw+"px");
-            document.documentElement.style.setProperty("--game-h",ph+"px");
-            var game=document.getElementById("game");
-            game.style.height=Math.round(h)+"px";
-            game.style.width=Math.round(w)+"px";
-            if(player){player.style.width=pw+"px";player.style.height=ph+"px";}
-            var state=pw+"×"+ph+"；基准屏幕 "+Math.round(w)+"×"+Math.round(h);
-            if(state!==last){last=state;report("稳定屏幕适配："+state);}
+            var state=pw+"×"+ph+"；可用屏幕 "+w+"×"+h;
+            // iOS may dispatch resize events repeatedly during keyboard
+            // animation. Avoid redundant CSS writes and forced layout work.
+            if(state!==last){
+              document.documentElement.style.setProperty("--game-w",pw+"px");
+              document.documentElement.style.setProperty("--game-h",ph+"px");
+              var game=document.getElementById("game");
+              game.style.height=h+"px";game.style.width=w+"px";
+              last=state;report("等比例自适应："+state);
+            }
+            if(player && (player.style.width!==pw+"px" || player.style.height!==ph+"px")){
+              player.style.width=pw+"px";player.style.height=ph+"px";
+            }
             placeInputDock();
           }
-          window.addEventListener("resize",fit);
-          window.addEventListener("orientationchange",function(){stableViewport=null;dockLast="";fit();});
-          if(window.visualViewport)window.visualViewport.addEventListener("resize",fit);
+          function scheduleFit(){
+            if(fitTimer!==null)clearTimeout(fitTimer);
+            fitTimer=setTimeout(function(){fitTimer=null;fit();},65);
+          }
+          window.addEventListener("resize",scheduleFit);
+          window.addEventListener("orientationchange",function(){
+            stableViewport=null;scheduleFit();
+            // WebKit reports rotation geometry in several asynchronous steps.
+            setTimeout(function(){stableViewport=null;fit();},350);
+          });
+          if(window.visualViewport)window.visualViewport.addEventListener("resize",scheduleFit);
           fit();
           try{
             if(!window.RufflePlayer||!window.RufflePlayer.newest)throw Error("Ruffle JS 未加载");
@@ -872,7 +967,7 @@ final class GameServer {
               japaneseGothicMono:["Noto Sans CJK SC"],
               japaneseMincho:["Noto Sans CJK SC"]
             };
-            options.quality="best";
+            options.quality=configuredQuality;
             try{
               var chk=await fetch("/ruffle/fonts/NotoSansCJKsc-Regular.otf",{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC");
@@ -888,7 +983,8 @@ final class GameServer {
             await player.ruffle().load(options);
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
-            report("高清模式：Flash quality=best；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+            report("画质选择：quality="+configuredQuality+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
+              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();

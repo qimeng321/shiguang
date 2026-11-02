@@ -2,11 +2,41 @@ name: Build unsigned iOS IPA
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
 
 jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm FPS and keyboard/layout test invariants
+        run: |
+          node --check Patches/frame-cap.js
+          node --check Patches/touch-controls.js
+          node Patches/test-frame-cap.js
+          python3 - <<'PY_CHECK'
+          from pathlib import Path
+          source=Path('Sources/GameServer.swift').read_text()
+          swift=Path('Sources/ShiguangLauncherApp.swift').read_text()
+          assert 'input.type="email"' in source
+          assert 'input.setAttribute("inputmode","email")' in source
+          assert 'input.setAttribute("lang","en-US")' in source
+          assert 'var stableViewport=null,fitTimer=null' in source
+          assert 'function scheduleFit()' in source
+          assert 'dockLast=' not in source
+          assert 'Math.min(w/960,h/560)' in source
+          assert 'case unlimited, fps60, fps30' in swift
+          assert 'case saving, balanced, ultra' in swift
+          assert 'Text("正式版 1.01")' in swift
+          assert 'webView.isOpaque = true' in swift
+          assert 'traceObserver.disconnect()' in swift
+          print('1.02 keyboard, adaptive canvas and frame-cap invariants OK')
+          PY_CHECK
   build:
     runs-on: macos-15-intel
     steps:
@@ -33,7 +63,9 @@ jobs:
           cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
           cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
           cp Patches/touch-controls.js Resources/Ruffle/touch-controls.js
+          cp Patches/frame-cap.js Resources/Ruffle/frame-cap.js
           test -s Resources/Ruffle/touch-controls.js
+          test -s Resources/Ruffle/frame-cap.js
           test -s Resources/Ruffle/byte-loader-followup.b64
           test -s Resources/Ruffle/pvm-compat.js
           test -s Resources/Ruffle/pvm-compat.b64
@@ -62,11 +94,29 @@ jobs:
           test -s Resources/Ruffle/fonts/OFL-LICENSE.txt
           test "$(stat -f%z Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)" -gt 16000000
           echo "Verified Noto Sans CJK SC font and OFL license"
+      - name: Set up Python for test font processing
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Adjust release CJK fallback font vertical placement
+        run: |
+          python3 -m pip install "fonttools==4.60.1"
+          python3 Patches/adjust-cjk-baseline.py Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          python3 - <<'PY_VERIFY_FONT'
+          from fontTools.ttLib import TTFont
+          font=TTFont('Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf')
+          matrix=list(font['CFF '].cff.topDictIndex[0].FontMatrix)
+          assert abs(float(matrix[5])-0.035)<0.000001, f'unexpected font vertical offset: {matrix}'
+          font.close()
+          print('Verified +35/1000 em fallback font baseline shift')
+          PY_VERIFY_FONT
       - name: Validate Canvas touch controls module
         shell: bash
         run: |
           set -euo pipefail
           node --check Patches/touch-controls.js
+          node --check Patches/frame-cap.js
+          node Patches/test-frame-cap.js
           node --check Resources/Ruffle/touch-controls.js
           python3 - <<'PY_TOUCH'
           from pathlib import Path
@@ -75,6 +125,7 @@ jobs:
           assert 'c.dispatchEvent(ev)' in js, "Pointer events must target inner Canvas"
           assert 'window.ShiguangTouchControls' in js
           assert '/ruffle/touch-controls.js' in html
+          assert '/ruffle/frame-cap.js' in html
           assert 'touchControls=window.ShiguangTouchControls(player,report)' in html
           assert 'Object.defineProperty(ev,"offsetX"' in js
           assert 'Object.defineProperty(ev,"offsetY"' in js
@@ -89,6 +140,40 @@ jobs:
           assert 'onProgress(fraction)' in model
           assert 'galaxyBookmarks' not in swift
           assert 'player.dispatchEvent(new PointerEvent(' not in html
+          # Quality choices are selected on home screen, stored in UserDefaults,
+          # and read server-side before generating a new Ruffle HTML page.
+          assert '@AppStorage(GameQualityPreset.defaultsKey)' in swift
+          assert 'Picker("游戏画质", selection: $qualityPreset)' in swift
+          assert 'GameQualityPreset.saved' in html
+          assert 'options.quality=configuredQuality' in html
+          assert 'highDpi' not in html  # Not a documented Ruffle Web option
+          assert 'quality:configuredQuality' in html
+          assert 'shiguang-quality' in html
+          assert 'case saving, balanced, ultra' in swift
+          assert '@AppStorage(GameFrameCapPreset.defaultsKey)' in swift
+          assert 'Picker("最高帧率", selection: $frameCapPreset)' in swift
+          assert 'GameFrameCapPreset.saved' in html
+          assert 'shiguang-max-fps' in html
+          assert 'window.ShiguangFrameCap' in html
+          assert 'options.frameRate' not in html
+          assert 'frameRate:configured' not in html
+          assert 'case unlimited, fps60, fps30' in swift
+          assert 'fpsRequest(fpsTick)' in html
+          # iOS email keyboard hint is deliberately on the existing Ruffle
+          # virtual-keyboard element; the single path prevents double input.
+          assert 'input.type="email"' in html
+          assert 'input.setAttribute("inputmode","email")' in html
+          assert 'input.setAttribute("lang","en-US")' in html
+          assert 'input.__shiguangNativeInput' in html
+          assert 'input.addEventListener("input",function(ev)' in html
+          assert 'input.addEventListener("input",function(ev)' in html
+          # Stable stage survives transient on-screen keyboard resizing.
+          assert 'function scheduleFit()' in html
+          assert 'Math.min(w/960,h/560)' in html
+          assert 'inputHasFocus()' in html
+          assert 'if(state!==last)' in html
+          assert 'dockLast=' not in html
+          print("Verified persistent three-tier quality controls and game setting wiring")
           print("Verified separate Canvas-pointer module and HTML wiring")
           PY_TOUCH
       - name: Check embedded touch controls JavaScript syntax
@@ -133,22 +218,22 @@ jobs:
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
       - name: Check formal version and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '100'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.1'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '103'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.0 project source ZIP
+      - name: Package formal 1.01 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.0/             --output=/tmp/ShiguangLauncher-v1.0-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.0-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.0-source.zip | grep -Fx 'ShiguangLauncher-v1.0/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.01-formal/ --output=/tmp/ShiguangLauncher-v1.01-formal-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.01-formal-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.01-formal-source.zip | grep -Fx 'ShiguangLauncher-v1.01-formal/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0-unsigned-ipa
+          name: ShiguangLauncher-v1.01-formal-unsigned-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0-source
-          path: /tmp/ShiguangLauncher-v1.0-source.zip
+          name: ShiguangLauncher-v1.01-formal-source
+          path: /tmp/ShiguangLauncher-v1.01-formal-source.zip
           if-no-files-found: error
