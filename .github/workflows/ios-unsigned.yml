@@ -104,9 +104,9 @@ jobs:
           assert 'Picker("游戏画质", selection: $qualityPreset)' in swift
           assert 'GameQualityPreset.saved' in html
           assert 'options.quality=configuredQuality' in html
-          assert 'options.highDpi=configuredHighDpi' in html
-          assert 'quality:configuredQuality,highDpi:configuredHighDpi' in html
-          assert 'shiguang-quality' in html and 'shiguang-high-dpi' in html
+          assert 'highDpi' not in html  # Not a documented Ruffle Web option
+          assert 'quality:configuredQuality' in html
+          assert 'shiguang-quality' in html
           assert 'case saving, balanced, ultra' in swift
           print("Verified persistent three-tier quality controls and game setting wiring")
           print("Verified separate Canvas-pointer module and HTML wiring")
