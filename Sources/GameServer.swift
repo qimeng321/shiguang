@@ -15,6 +15,13 @@ final class GameServer {
     private let packagedWebApp: Bool
     private var tracedRequestCount = 0
     private let maxTracedRequests = 300
+    // Lightweight request-burst counters, independent of 300-line HTTP cap.
+    // They measure local HTTP loads, not Ruffle decompression/GPU usage.
+    private var swfBurstStarted = Date()
+    private var swfBurstCount = 0
+    private var swfBurstBytes: UInt64 = 0
+    private var swfBurstNames = Set<String>()
+    private var swfBurstReported = 0
     private var versionGetCount = 0
     private var proceededBeyondVersion = false
     private var inspectedVersionHeader = false
@@ -51,6 +58,26 @@ final class GameServer {
     // resources explicitly to distinguish 'Flash never requested it' from 404.
     private func traceRequest(_ method: String, _ path: String, status: Int, size: UInt64? = nil) {
         let lower = path.lowercased()
+        if method == "GET" && status == 200 && lower.hasSuffix(".swf") {
+            let now = Date()
+            if now.timeIntervalSince(swfBurstStarted) >= 5 {
+                if swfBurstCount >= 20 {
+                    LaunchDiagnostics.log("[资源峰值] 5秒请求=\(swfBurstCount)；资源种类=\(swfBurstNames.count)；重复请求=\(max(0, swfBurstCount - swfBurstNames.count))；文件总字节=\(swfBurstBytes)（不代表内存占用）")
+                }
+                swfBurstStarted = now
+                swfBurstCount = 0
+                swfBurstBytes = 0
+                swfBurstNames.removeAll(keepingCapacity: true)
+                swfBurstReported = 0
+            }
+            swfBurstCount += 1
+            swfBurstBytes += size ?? 0
+            swfBurstNames.insert(lower)
+            if swfBurstCount >= 40 && swfBurstCount - swfBurstReported >= 40 {
+                swfBurstReported = swfBurstCount
+                LaunchDiagnostics.log("[资源峰值] 突发 SWF 请求=\(swfBurstCount)/5秒内；重复=\(max(0, swfBurstCount - swfBurstNames.count))；文件总字节=\(swfBurstBytes)（解码占用未知）")
+            }
+        }
         if method == "GET" && status == 200 {
             if lower == "/version.swf" {
                 versionGetCount += 1
@@ -495,8 +522,30 @@ final class GameServer {
         let response = isPartial ? "206 Partial Content" : "200 OK"
         traceRequest(headOnly ? "HEAD" : "GET", "/" + relative,
                      status: isPartial ? 206 : 200, size: byteCount)
+        // Continue tracing map loads even after the ordinary 300-request cap.
+        // HTTP completion is NOT proof that Flash applied or rendered the map.
+        let mapRelative = relative.lowercased()
+        let isMapAsset = mapRelative.hasPrefix("resource/map/") ||
+            mapRelative == "resource/worldmap.swf"
+        if isMapAsset && !headOnly {
+            LaunchDiagnostics.log("[地图资源] 请求开始：\(relative)；预期字节=\(byteCount)")
+        }
         let contentRange = isPartial ? "Content-Range: bytes \(first)-\(last)/\(total)\r\n" : ""
-        let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+        // This build caches ONLY tiny, immutable icon SWFs for 45 seconds.
+        // Never cache map/version/login/config/game-core/large assets or
+        // partial responses. A short lifetime limits stale assets after import.
+        let iconPath = relative.lowercased()
+        let cacheableIcon = !isPartial && total > 0 && total <= 32 * 1024 &&
+            (iconPath.hasPrefix("resource/item/cloth/swf/") ||
+             iconPath.hasPrefix("resource/item/cloth/icon/") ||
+             iconPath.hasPrefix("resource/item/cloth/prev/") ||
+             iconPath.hasPrefix("resource/item/petitem/icon/") ||
+             iconPath.hasPrefix("resource/item/doodle/icon/")) &&
+            iconPath.hasSuffix(".swf")
+        let cacheHeader = cacheableIcon
+            ? "Cache-Control: private, max-age=45"
+            : "Cache-Control: no-store"
+        let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)\(cacheHeader)\r\nConnection: close\r\n\r\n"
         if !headOnly {
             do { try handle.seek(toOffset: first) }
             catch {
@@ -516,7 +565,9 @@ final class GameServer {
                 self.finishHTTPResponse(connection)
             } else {
                 let pvm = relative.lowercased() == "version.swf" && !isPartial
-                self.stream(handle, to: connection, remaining: byteCount, observeCompletion: pvm)
+                self.stream(handle, to: connection, remaining: byteCount,
+                            observeCompletion: pvm,
+                            mapTrace: isMapAsset ? relative : nil)
             }
         })
     }
@@ -546,10 +597,12 @@ final class GameServer {
     }
 
     private func stream(_ handle: FileHandle, to connection: NWConnection,
-                        remaining: UInt64, observeCompletion: Bool = false) {
+                        remaining: UInt64, observeCompletion: Bool = false,
+                        mapTrace: String? = nil) {
         guard remaining > 0 else {
             try? handle.close()
             if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf 数据已发完，准备 TCP FIN") }
+            if let mapTrace { LaunchDiagnostics.log("[地图资源] 全部字节交给网络层：\(mapTrace)；Flash 是否完成地图初始化仍未知") }
             finishHTTPResponse(connection, pvm: observeCompletion)
             return
         }
@@ -557,6 +610,7 @@ final class GameServer {
         guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else {
             try? handle.close()
             if observeCompletion { LaunchDiagnostics.log("[PVM 传输] 读取异常，剩余 \(remaining) 字节") }
+            if let mapTrace { LaunchDiagnostics.log("[地图资源] 读取失败：\(mapTrace)；剩余=\(remaining)") }
             connection.cancel()
             return
         }
@@ -564,9 +618,10 @@ final class GameServer {
             guard let self else { try? handle.close(); connection.cancel(); return }
             if error == nil {
                 self.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
-                            observeCompletion: observeCompletion)
+                            observeCompletion: observeCompletion, mapTrace: mapTrace)
             } else {
                 if observeCompletion { LaunchDiagnostics.log("[PVM 传输] 写入失败：" + (error?.localizedDescription ?? "未知")) }
+                if let mapTrace { LaunchDiagnostics.log("[地图资源] 发送失败：\(mapTrace)；" + (error?.localizedDescription ?? "未知")) }
                 try? handle.close()
                 connection.cancel()
             }
@@ -628,7 +683,10 @@ final class GameServer {
         // Read the user's choice for each new page load. Do not affect the
         // local resource package, Flash stage geometry, or pointer coordinates.
         let qualityPreset = GameQualityPreset.saved
-        let selectedQuality = qualityPreset.ruffleQuality
+        // Single-customer experimental build: reduce MSAA sample cost on
+        // iPhone 15 Pro. Do not mutate the user's saved preset. UI discloses
+        // that the actual rendered quality is temporarily capped to "low".
+        let selectedQuality = "low"
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
@@ -657,6 +715,8 @@ final class GameServer {
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
             quality:configuredQuality,
+            // Build 109 A/B: no preferredRenderer override.
+            // Return to the Ruffle 0.7.1 default used by working Build 106.
             allowScriptAccess:true,publicPath:"/ruffle/",
             fontSources:["/ruffle/fonts/NotoSansCJKsc-Regular.otf"],
             defaultFonts:{
@@ -815,6 +875,28 @@ final class GameServer {
             placeInputDock();
             return input;
           }
+          // Diagnostics for graphics-pressure and WebGL context loss.
+          // Only inspect existing canvases; never create an extra GL context.
+          function reportExistingCanvas(label){
+            try{
+              var p=player||document.querySelector("ruffle-player");
+              var nodes=p&&p.shadowRoot&&p.shadowRoot.querySelectorAll("canvas");
+              if(!nodes||!nodes.length){report("渲染检查 "+label+"：尚无 Canvas");return;}
+              var values=Array.prototype.map.call(nodes,function(c){
+                var r=c.getBoundingClientRect();
+                return c.width+"×"+c.height+"像素 / 屏幕"+Math.round(r.width)+"×"+Math.round(r.height);
+              });
+              report("渲染检查 "+label+"："+values.slice(0,3).join("，"));
+            }catch(e){report("渲染检查失败："+String(e).slice(0,90));}
+          }
+          document.addEventListener("webglcontextlost",function(ev){
+            report("严重诊断：WebGL 上下文丢失；目标="+(ev.target&&ev.target.tagName||"未知"));
+          },true);
+          document.addEventListener("webglcontextrestored",function(){
+            report("渲染诊断：WebGL 上下文恢复");
+          },true);
+          setTimeout(function(){reportExistingCanvas("加载后10秒");},10000);
+          setTimeout(function(){reportExistingCanvas("加载后40秒");},40000);
           // Native three-dot menu sends fixed, allowlisted commands.
           // The mouse/map implementation lives in a separately syntax-checked
           // script, and creates its overlays only when explicitly enabled.
@@ -974,6 +1056,7 @@ final class GameServer {
               japaneseMincho:["Noto Sans CJK SC"]
             };
             options.quality=configuredQuality;
+            report("15Pro单人专项 Build110：自动 GPU 后端保持 Build109；仅此包将 Ruffle quality 固定 low（降低抗锯齿样本），背包小图标短时缓存45秒；保留全部原生诊断");
             try{
               var chk=await fetch("/ruffle/fonts/NotoSansCJKsc-Regular.otf",{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC");
@@ -989,8 +1072,8 @@ final class GameServer {
             await player.ruffle().load(options);
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
-            report("画质选择：quality="+configuredQuality+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
-              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+            report("画质选择：Build110 专项生效 quality="+configuredQuality+"（设置里保存的画质未更改）；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
+              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择（Build106 配置）");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();

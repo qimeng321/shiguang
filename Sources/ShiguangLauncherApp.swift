@@ -6,6 +6,7 @@ import UIKit
 @main
 struct ShiguangLauncherApp: App {
     @StateObject private var launcher = LauncherModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -13,6 +14,18 @@ struct ShiguangLauncherApp: App {
                 .environmentObject(launcher)
                 // Files → share/open in 拾光号 is a second route for .srom.
                 .onOpenURL { url in launcher.importPackage(url) }
+                .onChange(of: scenePhase) { phase in
+                    switch phase {
+                    case .active:
+                        LaunchDiagnostics.markState("app-active", detail: "应用回到前台")
+                    case .inactive:
+                        LaunchDiagnostics.markState("app-inactive", detail: "切换中、控制中心或来电均可能触发")
+                    case .background:
+                        LaunchDiagnostics.markState("app-background", detail: "应用进入后台；这不等于闪退")
+                    @unknown default:
+                        break
+                    }
+                }
         }
     }
 }
@@ -408,7 +421,7 @@ struct LauncherView: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(ink)
                 Spacer()
-                Text(current.title + "模式")
+                Text("15Pro 专项 · 低负载")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(blue)
             }
@@ -419,11 +432,13 @@ struct LauncherView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityLabel("游戏画质档位")
-            Text(current.detail)
+            .disabled(true) // This one-person test build forces Ruffle quality=low.
+            .opacity(0.50)
+            Text("本专版实际固定为省电抗锯齿（Ruffle quality=low），降低 GPU 负担。保存的原画质选择（\(current.title)）不会被覆盖。")
                 .font(.system(size: 12))
                 .foregroundStyle(subtleInk)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("进入游戏时生效 · 自动记住上次选择")
+            Text("只限 iPhone 15 Pro 诊断版；其他用户正式版画质不变")
                 .font(.system(size: 11))
                 .foregroundStyle(subtleInk.opacity(0.85))
         }
@@ -656,7 +671,18 @@ struct GameView: View {
                 LaunchDiagnostics.log("本地服务创建失败：" + error.localizedDescription)
             }
         }
-        .onDisappear { server = nil }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.didReceiveMemoryWarningNotification
+        )) { _ in
+            // A native memory warning does NOT measure the separate WebContent
+            // process. Only record it as a clue; do not clear caches mid-game.
+            LaunchDiagnostics.markState("native-memory-warning",
+                detail: "iOS 向 App 发送内存警告；不代表 WebKit 内容进程内存用量")
+        }
+        .onDisappear {
+            LaunchDiagnostics.markState("game-view-closed", detail: "SwiftUI 游戏视图正常关闭")
+            server = nil
+        }
     }
 
     private func gameTool(_ icon: String, _ label: String,
@@ -744,6 +770,32 @@ struct GameWebView: UIViewRepresentable {
               }
               function status(message) { report('状态：' + message); }
               function fail(message) { report('错误：' + message); }
+              // SWF map progress is drawn INTO canvas, so cannot read its 100%
+              // label from DOM. This only measures JS/animation responsiveness.
+              var heartbeatFrames = 0;
+              function heartbeatFrame(ts) {
+                heartbeatFrames++;
+                requestAnimationFrame(heartbeatFrame);
+              }
+              requestAnimationFrame(heartbeatFrame);
+              setInterval(function () {
+                if (document.hidden) return;
+                var frames = heartbeatFrames;
+                heartbeatFrames = 0;
+                var host = document.querySelector('ruffle-player,ruffle-object,ruffle-embed');
+                var ready = '未知', playing = '未知', canvas = '未知';
+                try {
+                  if (host) {
+                    var player = typeof host.ruffle === 'function' ? host.ruffle() : host;
+                    ready = String(player && player.readyState);
+                    playing = String(player && player.isPlaying);
+                    var c = host.shadowRoot && host.shadowRoot.querySelector('canvas');
+                    if (c) canvas = c.width + 'x' + c.height;
+                  }
+                } catch (_) {}
+                report('心跳：JS线程响应；5秒动画帧=' + frames +
+                  '；Ruffle=' + ready + '/' + playing + '；Canvas=' + canvas);
+              }, 5000);
               // Forward a bounded subset of Ruffle warnings/errors to the shared log.
               // This is a diagnostic build; do not forward arbitrary console messages.
               var consoleCount = 0;
@@ -908,6 +960,7 @@ struct GameWebView: UIViewRepresentable {
         }
     }
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.stopHeartbeatWatchdog()
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "gameDiagnostics")
@@ -918,6 +971,10 @@ struct GameWebView: UIViewRepresentable {
         var lastControlGeneration = 0
         var lastDelayedTapEnabled = false
         private var navigationCount = 0
+        private var lastJSHeartbeat = Date()
+        private var lastSavedHeartbeat = Date.distantPast
+        private var didWarnStall = false
+        private var heartbeatWatchdog: Timer?
         let onStatus: (String) -> Void
         let onError: (String) -> Void
         init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
@@ -927,6 +984,19 @@ struct GameWebView: UIViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
             guard let details = message.body as? String else { return }
+            if details.hasPrefix("心跳：") {
+                lastJSHeartbeat = Date()
+                if didWarnStall {
+                    didWarnStall = false
+                    LaunchDiagnostics.markState("js-heartbeat-recovered",
+                        detail: "心跳恢复：" + String(details.prefix(120)))
+                }
+                if Date().timeIntervalSince(lastSavedHeartbeat) >= 15 {
+                    lastSavedHeartbeat = Date()
+                    LaunchDiagnostics.markState("js-heartbeat-ok", detail: String(details.prefix(160)))
+                }
+                return
+            }
             if details.hasPrefix("状态：") { onStatus(String(details.dropFirst(3))) }
             else if details.hasPrefix("错误：") { onError(String(details.dropFirst(3))) }
             else { onStatus(details) }
@@ -941,14 +1011,23 @@ struct GameWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             navigationCount += 1
+            stopHeartbeatWatchdog()
             let path = webView.url?.path ?? "未知"
+            LaunchDiagnostics.markState("game-page-loading",
+                detail: "主框架第\(navigationCount)次导航：\(path)")
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            stopHeartbeatWatchdog()
+            LaunchDiagnostics.markState("webcontent-terminated",
+                detail: "WebKit 内容进程终止；不等于网络连接断开")
             LaunchDiagnostics.log("[严重诊断] WebKit WebContent 进程终止；可能是内存压力/渲染进程崩溃。保持现场，等待用户点击重新加载。")
             onError("游戏网页进程已终止，可能存在内存压力或渲染异常。点击「重新加载游戏」继续；可导出 diagnostics.txt 排查。")
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            startHeartbeatWatchdog()
+            LaunchDiagnostics.markState("game-page-loaded",
+                detail: "主框架 HTML 导航完成，等待 SWF 初始化")
             let value = lastDelayedTapEnabled ? "true" : "false"
             webView.evaluateJavaScript("window.__shiguangDelayedTapChoice=\(value); window.ShiguangControls && window.ShiguangControls.setDelayedTap(\(value));") { _, _ in }
             LaunchDiagnostics.log("[页面生命周期] 主框架完成第\(navigationCount)次导航：\(webView.url?.path ?? "未知")")
@@ -964,7 +1043,27 @@ struct GameWebView: UIViewRepresentable {
                 }
             }
         }
+        func stopHeartbeatWatchdog() {
+            heartbeatWatchdog?.invalidate()
+            heartbeatWatchdog = nil
+        }
+        private func startHeartbeatWatchdog() {
+            stopHeartbeatWatchdog()
+            lastJSHeartbeat = Date()
+            lastSavedHeartbeat = .distantPast
+            didWarnStall = false
+            heartbeatWatchdog = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+                guard let self, UIApplication.shared.applicationState == .active else { return }
+                let gap = Int(Date().timeIntervalSince(self.lastJSHeartbeat))
+                if gap >= 16 && !self.didWarnStall {
+                    self.didWarnStall = true
+                    LaunchDiagnostics.markState("suspected-web-freeze",
+                        detail: "主页面心跳连续约\(gap)秒未响应；可能 JS 卡死或 WebKit 被暂停，并非确诊崩溃")
+                }
+            }
+        }
         private func reportNavigationError(_ error: Error, webView: WKWebView) {
+            stopHeartbeatWatchdog()
             let nsError = error as NSError
             let requestURL = (nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String)
                 ?? webView.url?.absoluteString ?? "未知地址"
