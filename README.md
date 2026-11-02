@@ -1,3 +1,27 @@
+# iPhone 15 Pro 单人资源负载专项（正式 1.02 · Build 110）
+
+**仅给一位 iPhone 15 Pro 用户测试，不合并公共正式分支。** Build 109 已恢复自动 GPU 渲染并能进入地图；但最新诊断中，在打开背包（bagUI.swf）后约四秒内连续发起大量 SWF 图标加载请求，WebKit 触发 `webViewWebContentProcessDidTerminate`，随后的 WebSocket NWError 96 可能只是结果。日志**不能证明**终止具体是 Jetsam 内存超限还是 Ruffle/WebKit/GPU 崩溃，也不代表这个包已彻底修好。
+
+## 针对这台手机的实验改动
+
+1. **保持 Build 109 自动渲染后端**：不强制 `preferredRenderer`（Build 107/108 的 WebGL 单独偏好曾伴随地图 100% 卡住）。
+2. **仅此构建的低负载抗锯齿**：使用 Ruffle 文档支持的 `quality: "low"`。降低多重采样抗锯齿开销，但不会修改内部 DPR / Canvas 像素尺寸。首页画质选择暂时灰掉并明确提示固定低画质，**不覆盖用户原本保存在 UserDefaults 的画质偏好**；其他正式版不受影响。
+3. **仅微型图标 SWF 短时 HTTP 缓存**：只允许游戏资源中小于等于 32 KiB 的服装缩略图、图标、petItem/doodle 图标在非 Range 请求下使用 `Cache-Control: private, max-age=45`。其他所有资源（地图、版本文件、登录、游戏模块、任务、视频及大文件）继续 `no-store`。这是减轻重复小文件传输的试验，并不保证降低 Ruffle 解码内存；短暂缓存可能影响安装新资源包后不超过 45 秒的同名图标更新。
+4. **资源突发负载诊断**：每五秒采样 SWF 本地资源请求数、独立文件数、重复请求数及文件字节和，出现 40 次请求即发出一次汇总；本地原始日志最多详细记录 300 条。字节数**不是** GPU 或 WebContent 实际内存使用量。
+5. **原生内存警告记录**：仅记录 iOS App 自身收到的警告；WebKit 的网页内容运行在独立进程，未必同步发给 App。继续保留 Build 108 的 JS heartbeat、原生 watchdog、进程终止和地图传输诊断。
+
+## 安装与回归测试
+
+显示版本依然是 **正式版 1.02**（`CFBundleShortVersionString=1.0.2`），内部构建号升到 **110**，Bundle ID 保持不变，便于和 Build109 对照。IPA **未签名**，须用原签名配置覆盖安装，不要先卸载旧 App 以免游戏包丢失。
+
+在同一台手机、同一份 `.srom`、同一账号上：
+- 先进入地图停留约两分钟，再打开背包，重复切换服装/物品页、NoNo 和战斗功能。
+- 如果超过 20～30 分钟未再发生 WebContent 终止，再确认不会有背包图标缺失、画质变差不可接受和触控偏移。
+- 若崩溃，重新打开 App，导出完整 `diagnostics.txt` 及 `run-state.json`；查找 `[资源峰值]`、`native-memory-warning`、`webcontent-terminated` 与时间先后。
+- 当前不会武断声称修复原因已查明，仍需 iOS Jetsam/IPS 系统报告来判断内存超限 vs 其他异常。
+
+---
+
 # iPhone 15 Pro · 地图 100% 卡住回归对照版（正式 1.02 · Build 109）
 
 **目标：** 客户报告 Build 107/108 在登录成功后始终停留在「加载地图 100%／快去探索」，而 Build 106 曾能进入游戏场景（但存在 WebKit WebContent 进程终止）。Build 108 诊断证据证明：`resource/map/1.swf` 的 915434 字节由本地 HTTP 完整交给网络层，`CMD1001` 登录/选服成功，JS 心跳和浏览器动画帧连续正常超过一分钟，用户之后手动点击刷新；这**不等于 Flash 地图脚本初始化完成**，也未证明 WebGL 是唯一根因。
