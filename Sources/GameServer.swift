@@ -657,6 +657,9 @@ final class GameServer {
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
             quality:configuredQuality,
+            // iPhone 15 Pro isolated stability experiment: bypass wgpu-WebGL.
+            // Vanilla WebGL may lack some Flash blend/bitmap effects.
+            preferredRenderer:"webgl",
             allowScriptAccess:true,publicPath:"/ruffle/",
             fontSources:["/ruffle/fonts/NotoSansCJKsc-Regular.otf"],
             defaultFonts:{
@@ -815,6 +818,28 @@ final class GameServer {
             placeInputDock();
             return input;
           }
+          // Diagnostics for graphics-pressure and WebGL context loss.
+          // Only inspect existing canvases; never create an extra GL context.
+          function reportExistingCanvas(label){
+            try{
+              var p=player||document.querySelector("ruffle-player");
+              var nodes=p&&p.shadowRoot&&p.shadowRoot.querySelectorAll("canvas");
+              if(!nodes||!nodes.length){report("渲染检查 "+label+"：尚无 Canvas");return;}
+              var values=Array.prototype.map.call(nodes,function(c){
+                var r=c.getBoundingClientRect();
+                return c.width+"×"+c.height+"像素 / 屏幕"+Math.round(r.width)+"×"+Math.round(r.height);
+              });
+              report("渲染检查 "+label+"："+values.slice(0,3).join("，"));
+            }catch(e){report("渲染检查失败："+String(e).slice(0,90));}
+          }
+          document.addEventListener("webglcontextlost",function(ev){
+            report("严重诊断：WebGL 上下文丢失；目标="+(ev.target&&ev.target.tagName||"未知"));
+          },true);
+          document.addEventListener("webglcontextrestored",function(){
+            report("渲染诊断：WebGL 上下文恢复");
+          },true);
+          setTimeout(function(){reportExistingCanvas("加载后10秒");},10000);
+          setTimeout(function(){reportExistingCanvas("加载后40秒");},40000);
           // Native three-dot menu sends fixed, allowlisted commands.
           // The mouse/map implementation lives in a separately syntax-checked
           // script, and creates its overlays only when explicitly enabled.
@@ -974,6 +999,8 @@ final class GameServer {
               japaneseMincho:["Noto Sans CJK SC"]
             };
             options.quality=configuredQuality;
+            options.preferredRenderer="webgl";
+            report("渲染稳定性专版：优先请求 vanilla WebGL（不是自动 wgpu-webgl）；实际后端以 Ruffle 为准");
             try{
               var chk=await fetch("/ruffle/fonts/NotoSansCJKsc-Regular.otf",{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC");
@@ -990,7 +1017,7 @@ final class GameServer {
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
             report("画质选择：quality="+configuredQuality+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
-              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；请求后端=webgl（可回退）");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();

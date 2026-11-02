@@ -277,7 +277,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.02（Build 106）启动；启用关键文件内容校验、失败自动清理和弹窗重试")
+        LaunchDiagnostics.log("启动器 正式版 1.02（Build 107 · iPhone15Pro WebGL稳定性专版）启动；启用关键文件内容校验、失败自动清理和弹窗重试")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
