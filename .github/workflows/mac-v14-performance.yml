@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - mac-v1.4-webkit-test
+      - mac-v1.4-performance-test
     paths:
       - 'Mac/v1.1/**'
       - '.github/workflows/mac-v14-performance.yml'
