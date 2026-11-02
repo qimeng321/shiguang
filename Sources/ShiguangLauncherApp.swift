@@ -229,15 +229,32 @@ struct LauncherView: View {
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(ink)
                                 Spacer()
-                                Text("\(Int((launcher.importProgress * 100).rounded(.down)))%")
-                                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundStyle(blue)
+                                if launcher.isImportFinishing {
+                                    Text("收尾处理中")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(blue)
+                                } else {
+                                    Text("\(Int((launcher.importProgress * 100).rounded(.down)))%")
+                                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                                        .monospacedDigit()
+                                        .foregroundStyle(blue)
+                                }
                             }
-                            ProgressView(value: launcher.importProgress, total: 1.0)
-                                .progressViewStyle(.linear)
-                                .tint(blue)
-                                .accessibilityLabel("美化包导入实际进度")
+                            if launcher.isImportFinishing {
+                                ProgressView()
+                                    .tint(blue)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .accessibilityLabel("解压已完成，正在核验并安装游戏资源")
+                                Text("压缩包解压与 CRC 校验已结束。正在处理安装、检查和旧版备份；此阶段无法准确计算百分比，请勿退出。")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(subtleInk)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                ProgressView(value: launcher.importProgress, total: 1.0)
+                                    .progressViewStyle(.linear)
+                                    .tint(blue)
+                                    .accessibilityLabel("资源包复制与解压字节进度")
+                            }
                         } else if launcher.isClearing {
                             ProgressView("正在清除美化包…")
                                 .tint(blue)

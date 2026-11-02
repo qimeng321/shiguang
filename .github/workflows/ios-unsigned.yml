@@ -25,6 +25,26 @@ jobs:
           source=Path('Sources/GameServer.swift').read_text()
           swift=Path('Sources/ShiguangLauncherApp.swift').read_text()
           model=Path('Sources/LauncherModel.swift').read_text()
+          assert 'isImportFinishing' in model
+          assert 'private func reportImportFinalizing(_ rank: Int, phase: String)' in model
+          assert 'guard isImporting, !isImportFinishing, value.isFinite else { return }' in model
+          assert 'onFinalizing(1, "解压 100% · 正在扫描游戏入口")' in model
+          assert 'onFinalizing(2, "正在校验地图、配置和核心文件")' in model
+          assert 'onFinalizing(3, "正在准备安全安装及旧版备份")' in model
+          assert 'onFinalizing(4, "正在安装新资源包（保留原版备份）")' in model
+          assert 'onFinalizing(5, "正在核验已安装的游戏文件")' in model
+          assert 'onFinalizing(6, "正在清理旧版备份并完成安装")' in model
+          assert 'let installedEntries = entries' in model
+          assert 'let installedEntries = findEntries(in: savedGameRoot)' not in model
+          assert 'try manager.unzipItem(at: source, to: staging, skipCRC32: false' in model
+          assert 'skipCRC32: true' not in model
+          assert 'if existing { try? manager.moveItem(at: backup, to: savedGameRoot) }' in model
+          assert 'launcher.isImportFinishing' in swift
+          assert 'Text("收尾处理中")' in swift
+          assert 'ProgressView()' in swift
+          assert 'CRC 校验已结束' in swift
+          assert 'Text("正式版 1.03")' in swift
+          assert 'preferredRenderer:"webgl"' not in source
           assert 'input.type="email"' in source
           assert 'input.setAttribute("inputmode","email")' in source
           assert 'input.setAttribute("lang","en-US")' in source
@@ -271,21 +291,21 @@ jobs:
       - name: Check formal version and build metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.3'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '111'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '112'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.03 project source ZIP
+      - name: Package formal 1.03 maintenance project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.03-formal-b111/ --output=/tmp/ShiguangLauncher-v1.03-formal-b111-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.03-formal-b111-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.03-formal-b111-source.zip | grep -Fx 'ShiguangLauncher-v1.03-formal-b111/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.03-progress-fix-b112/ --output=/tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip | grep -Fx 'ShiguangLauncher-v1.03-progress-fix-b112/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.03-formal-b111-ipa
+          name: ShiguangLauncher-v1.03-progress-fix-b112-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.03-formal-b111-source
-          path: /tmp/ShiguangLauncher-v1.03-formal-b111-source.zip
+          name: ShiguangLauncher-v1.03-progress-fix-b112-source
+          path: /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip
           if-no-files-found: error

@@ -268,6 +268,10 @@ final class LauncherModel: ObservableObject {
     @Published var isImporting = false
     @Published private(set) var importProgress: Double = 0
     @Published private(set) var importPhase = ""
+    // The copy/unzip bar measures byte progress only. Once unzip ends, show
+    // indeterminate installation stages instead of leaving a misleading 93%.
+    @Published private(set) var isImportFinishing = false
+    private var importStageRank = 0
     @Published var localPackages: [URL] = []
     @Published var entries: [String] = []
     @Published var selectedEntry = ""
@@ -289,7 +293,7 @@ final class LauncherModel: ObservableObject {
     var hasInstalledPackage: Bool { gameRoot != nil }
 
     private func reportImportProgress(_ value: Double, phase: String) {
-        guard isImporting, value.isFinite else { return }
+        guard isImporting, !isImportFinishing, value.isFinite else { return }
         let normalized = min(1, max(0, value))
         // Multiple background tasks may report completion out of order.
         // Never let the visible bar go backward during an active import.
@@ -299,9 +303,18 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    private func reportImportFinalizing(_ rank: Int, phase: String) {
+        guard isImporting, rank > importStageRank else { return }
+        importStageRank = rank
+        isImportFinishing = true
+        importPhase = phase
+        status = "解压及 CRC 校验已完成，正在完成安装与最终核验，请勿关闭应用…"
+        LaunchDiagnostics.log("[资源导入收尾] 阶段\(rank)：\(phase)")
+    }
+
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.03（Build 111）启动；启用关键文件内容校验、失败自动清理和弹窗重试")
+        LaunchDiagnostics.log("启动器 正式版 1.03（Build 112 · 导入进度修复）启动；解压阶段结束后显示安装收尾状态，保护原资源包")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -394,6 +407,8 @@ final class LauncherModel: ObservableObject {
         lastImportFailed = false
         importFailureMessage = nil
         isImporting = true
+        isImportFinishing = false
+        importStageRank = 0
         importProgress = 0
         importPhase = "复制资源包"
         LaunchDiagnostics.log("开始导入美化包：\(source.lastPathComponent)")
@@ -435,7 +450,14 @@ final class LauncherModel: ObservableObject {
                 }
                 let entries: [String]
                 do {
-                    entries = try Self.extractPackage(localArchive, progress: unzipProgress)
+                    entries = try Self.extractPackage(
+                        localArchive, progress: unzipProgress,
+                        onFinalizing: { rank, phase in
+                            Task { @MainActor in
+                                self.reportImportFinalizing(rank, phase: phase)
+                            }
+                        }
+                    )
                 } catch {
                     monitor.cancel()
                     await monitor.value
@@ -444,7 +466,7 @@ final class LauncherModel: ObservableObject {
                 monitor.cancel()
                 await monitor.value
                 await MainActor.run {
-                    self.reportImportProgress(0.96, phase: "正在核对游戏入口")
+                    self.reportImportFinalizing(7, phase: "正在刷新安装状态")
                     self.gameRoot = Self.savedGameRoot
                     self.entries = entries
                     self.selectedEntry = Self.preferredEntry(in: entries)
@@ -462,7 +484,9 @@ final class LauncherModel: ObservableObject {
                         return
                     }
                     LaunchDiagnostics.log("资源导入完成：\(entries.count) 个可启动入口")
-                    self.reportImportProgress(1.0, phase: "安装完成")
+                    self.isImportFinishing = false
+                    self.importProgress = 1.0
+                    self.importPhase = "安装完成"
                     self.isImporting = false
                 }
             } catch {
@@ -476,6 +500,7 @@ final class LauncherModel: ObservableObject {
                     self.status = self.isInstalledValidated
                         ? "本次导入失败，原有完好资源已保留。"
                         : "导入失败；临时及无效资源已清理，请重新导入。"
+                    self.isImportFinishing = false
                     self.importPhase = "导入失败"
                     self.importFailureMessage = "导入失败：\(error.localizedDescription)\n\n\(cleanup)\n请选择美化包重新导入。"
                     LaunchDiagnostics.log("资源导入失败：\(error.localizedDescription)；清理：\(cleanup)")
@@ -607,7 +632,10 @@ final class LauncherModel: ObservableObject {
             .appendingPathComponent("Game", isDirectory: true)
     }
 
-    private nonisolated static func extractPackage(_ source: URL, progress: Progress) throws -> [String] {
+    private nonisolated static func extractPackage(
+        _ source: URL, progress: Progress,
+        onFinalizing: @escaping @Sendable (Int, String) -> Void
+    ) throws -> [String] {
         let manager = FileManager.default
         // The extension .srom alone does not prove the file is ZIP-based.
         // Read only the signature, not the entire (possibly multi-GB) package.
@@ -651,9 +679,11 @@ final class LauncherModel: ObservableObject {
         defer { try? manager.removeItem(at: staging) }
 
         try manager.unzipItem(at: source, to: staging, skipCRC32: false, progress: progress)
+        onFinalizing(1, "解压 100% · 正在扫描游戏入口")
         let entries = findEntries(in: staging)
         guard !entries.isEmpty else { throw ImportError.noGameFiles }
         let chosenEntry = preferredEntry(in: entries)
+        onFinalizing(2, "正在校验地图、配置和核心文件")
         let issues = LaunchDiagnostics.validateInstalledPackage(root: staging, entry: chosenEntry)
         guard issues.isEmpty else {
             throw ImportError.invalidContents(issues.prefix(3).joined(separator: "；"))
@@ -665,37 +695,35 @@ final class LauncherModel: ObservableObject {
         try "full-unzip-crc32-ok; key-files-valid; v1.03\n".write(
             to: receipt, atomically: true, encoding: .utf8)
 
+        onFinalizing(3, "正在准备安全安装及旧版备份")
         if manager.fileExists(atPath: backup.path) {
             try manager.removeItem(at: backup)
         }
         let existing = manager.fileExists(atPath: savedGameRoot.path)
         if existing { try manager.moveItem(at: savedGameRoot, to: backup) }
+        onFinalizing(4, "正在安装新资源包（保留原版备份）")
         do {
             try manager.moveItem(at: staging, to: savedGameRoot)
         } catch {
             if existing { try? manager.moveItem(at: backup, to: savedGameRoot) }
             throw error
         }
-        // The staging folder has moved. Re-enumerate the actual installed path
-        // rather than assuming every staging relative path still resolves.
-        // This also catches a partial package or an unexpected ZIP wrapper.
-        let installedEntries = findEntries(in: savedGameRoot)
-        guard !installedEntries.isEmpty else {
-            // Never leave a broken installation in place after replacing an old one.
-            try? manager.removeItem(at: savedGameRoot)
-            if existing && manager.fileExists(atPath: backup.path) {
-                try? manager.moveItem(at: backup, to: savedGameRoot)
-            }
-            throw ImportError.noGameFiles
-        }
+        // Avoid re-enumerating tens of thousands of files after an atomic
+        // directory move. Verify the SAME discovered entry paths at destination
+        // and re-check critical file headers; restore the old installation if
+        // the new destination has unexpectedly become incomplete.
+        onFinalizing(5, "正在核验已安装的游戏文件")
+        let installedEntries = entries
         for relative in installedEntries {
             let actual = savedGameRoot.appendingPathComponent(relative)
             guard manager.fileExists(atPath: actual.path) else {
+                try? manager.removeItem(at: savedGameRoot)
+                if existing { try? manager.moveItem(at: backup, to: savedGameRoot) }
                 throw ImportError.invalidPackage
             }
         }
         let postIssues = LaunchDiagnostics.validateInstalledPackage(
-            root: savedGameRoot, entry: preferredEntry(in: installedEntries)
+            root: savedGameRoot, entry: chosenEntry
         )
         guard postIssues.isEmpty else {
             try? manager.removeItem(at: savedGameRoot)
@@ -703,6 +731,7 @@ final class LauncherModel: ObservableObject {
             throw ImportError.invalidContents(postIssues.prefix(3).joined(separator: "；"))
         }
         LaunchDiagnostics.log("安装后路径校验完成：\(installedEntries.joined(separator: ", "))")
+        onFinalizing(6, "正在清理旧版备份并完成安装")
         if existing { try? manager.removeItem(at: backup) }
         return installedEntries
     }
