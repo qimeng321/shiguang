@@ -205,7 +205,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.01（Build 103）启动；已启用真实相对路径扫描与文件校验；旧资源路径不变")
+        LaunchDiagnostics.log("启动器 测试版 1.03（Build 104）启动；已启用真实相对路径扫描与文件校验；旧资源路径不变")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
