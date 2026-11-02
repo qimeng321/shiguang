@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - name: Align Ruffle Web engine with Windows microclient (0.7.1)
@@ -124,6 +124,19 @@ jobs:
           assert 'frameRate:configured' not in html
           assert 'case unlimited, fps60, fps30' in swift
           assert 'fpsRequest(fpsTick)' in html
+          # iOS email keyboard hint is deliberately on the existing Ruffle
+          # virtual-keyboard element; the single path prevents double input.
+          assert 'input.type="email"' in html
+          assert 'input.setAttribute("inputmode","email")' in html
+          assert 'input.setAttribute("lang","en-US")' in html
+          assert 'input.__shiguangNativeInput' in html
+          assert 'input.addEventListener("input",function(ev)' in html
+          assert 'input.addEventListener("input",function(ev)' in html
+          # Stable stage survives transient on-screen keyboard resizing.
+          assert 'function scheduleFit()' in html
+          assert 'Math.min(w/960,h/560)' in html
+          assert 'inputHasFocus()' in html
+          assert 'dockLast=' not in html
           print("Verified persistent three-tier quality controls and game setting wiring")
           print("Verified separate Canvas-pointer module and HTML wiring")
           PY_TOUCH
