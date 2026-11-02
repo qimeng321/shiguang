@@ -138,7 +138,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("测试版 1.02")
+                        Text("无包实验 0.0.1")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -165,7 +165,8 @@ struct LauncherView: View {
                             VStack(spacing: 12) { importButton; clearButton }
                         }
                         Button {
-                            if launcher.canStartGame { showingGame = true }
+                            // TEMP 0.0.1: explicitly probe launch without Client.swf.
+                            if !launcher.isImporting && !launcher.isClearing { showingGame = true }
                         } label: {
                             Label("进入游戏", systemImage: "play.fill")
                                 .font(.system(size: 19, weight: .bold))
@@ -177,9 +178,9 @@ struct LauncherView: View {
                                                    startPoint: .leading, endPoint: .trailing),
                                     in: RoundedRectangle(cornerRadius: 17, style: .continuous)
                                 )
-                                .opacity(launcher.canStartGame && !launcher.isImporting ? 1 : 0.46)
+                                .opacity(!launcher.isImporting && !launcher.isClearing ? 1 : 0.46)
                         }
-                        .disabled(!launcher.canStartGame || launcher.isImporting)
+                        .disabled(launcher.isImporting || launcher.isClearing)
                         .buttonStyle(.plain)
                     }
                     .padding(.top, 19)
@@ -190,7 +191,7 @@ struct LauncherView: View {
                                   (launcher.canStartGame ? "checkmark.circle.fill" : "info.circle.fill"))
                                 .foregroundStyle(launcher.canStartGame && !launcher.isImporting ? green : blue)
                             Text(launcher.isImporting ? "正在安装美化包" :
-                                 (launcher.canStartGame ? "美化包已就绪" : "请先导入美化包"))
+                                 (launcher.canStartGame ? "美化包已就绪" : "未安装资源包 · 允许无包启动实验"))
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(ink)
                             Spacer(minLength: 0)
@@ -339,8 +340,12 @@ struct LauncherView: View {
             launcher.refreshResourceCheck()
         }
         .fullScreenCover(isPresented: $showingGame) {
-            if let root = launcher.gameRoot {
-                GameView(root: root, entry: launcher.selectedEntry) { showingGame = false }
+            let testWithoutPackage = !launcher.canStartGame
+            let testRoot = launcher.gameRoot ?? LaunchDiagnostics.documents
+            let testEntry = launcher.selectedEntry.isEmpty ? "Client.swf" : launcher.selectedEntry
+            GameView(root: testRoot, entry: testEntry,
+                     allowMissingGameResources: testWithoutPackage) {
+                showingGame = false
             }
         }
     }
@@ -451,6 +456,7 @@ struct LauncherView: View {
 struct GameView: View {
     let root: URL
     let entry: String
+    let allowMissingGameResources: Bool
     let close: () -> Void
     @State private var server: GameServer?
     @State private var errorText: String?
@@ -587,19 +593,27 @@ struct GameView: View {
             LaunchDiagnostics.log("进入游戏：\(entry)")
             do {
                 let actualSWF = root.appendingPathComponent(entry)
-                guard FileManager.default.fileExists(atPath: actualSWF.path) else {
-                    errorText = "已安装目录中没有找到游戏入口：\(entry)。请返回首页查看资源检查，再提供 diagnostics.txt。"
-                    LaunchDiagnostics.log("游戏启动前检查失败：\(actualSWF.path) 不存在")
-                    return
+                if !FileManager.default.fileExists(atPath: actualSWF.path) {
+                    if allowMissingGameResources {
+                        LaunchDiagnostics.log("[0.0.1 无包实验] 放行缺失的 SWF：\(actualSWF.path)；观察是否能进入真实游戏；不会伪造 Client.swf")
+                    } else {
+                        errorText = "已安装目录中没有找到游戏入口：\(entry)。请返回首页查看资源检查，再提供 diagnostics.txt。"
+                        LaunchDiagnostics.log("游戏启动前检查失败：\(actualSWF.path) 不存在")
+                        return
+                    }
                 }
                 let entryFolder = (entry as NSString).deletingLastPathComponent
                 let candidate = root.appendingPathComponent(entryFolder, isDirectory: true)
                 let packagedWebApp = FileManager.default.fileExists(
                     atPath: candidate.appendingPathComponent("index.html").path
                 )
-                LaunchDiagnostics.log("网页根目录：\(packagedWebApp ? candidate.path : root.path)；原网页模式：\(packagedWebApp)")
+                let useMicroclientProbe = allowMissingGameResources && !packagedWebApp
+                LaunchDiagnostics.log("网页根目录：\(packagedWebApp ? candidate.path : root.path)；原网页模式：\(packagedWebApp)；无包实验：\(useMicroclientProbe)")
+                // Force the existing microclient game page for a missing-asset
+                // experiment. It still requests real /Client.swf and reports
+                // 404 when absent; no bundled fake game or success is asserted.
                 let service = try GameServer(root: packagedWebApp ? candidate : root,
-                                             packagedWebApp: packagedWebApp)
+                                             packagedWebApp: packagedWebApp || useMicroclientProbe)
                 for _ in 0..<100 {
                     if let reason = service.startError ?? service.bridgeError {
                         errorText = reason
