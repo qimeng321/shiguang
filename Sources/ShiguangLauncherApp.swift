@@ -138,7 +138,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("测试版 1.03")
+                        Text("正式版 1.02")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -187,10 +187,14 @@ struct LauncherView: View {
                     VStack(spacing: 10) {
                         HStack(spacing: 8) {
                             Image(systemName: launcher.isImporting ? "arrow.down.circle.fill" :
-                                  (launcher.canStartGame ? "checkmark.circle.fill" : "info.circle.fill"))
-                                .foregroundStyle(launcher.canStartGame && !launcher.isImporting ? green : blue)
+                                  (launcher.lastImportFailed ? "xmark.octagon.fill" :
+                                  (launcher.canStartGame ? "checkmark.circle.fill" : "info.circle.fill")))
+                                .foregroundStyle(launcher.lastImportFailed ? red :
+                                                 (launcher.canStartGame && !launcher.isImporting ? green : blue))
                             Text(launcher.isImporting ? "正在安装美化包" :
-                                 (launcher.canStartGame ? "美化包已就绪" : "请先导入美化包"))
+                                 (launcher.lastImportFailed ? "本次导入失败，请重新选择" :
+                                  (launcher.canStartGame ? "美化包已就绪" :
+                                   (launcher.hasInstalledPackage ? "美化包校验未通过" : "请先导入美化包"))))
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(ink)
                             Spacer(minLength: 0)
@@ -203,8 +207,9 @@ struct LauncherView: View {
                             .textSelection(.enabled)
                         Divider().opacity(0.35)
                         HStack(alignment: .top, spacing: 7) {
-                            Image(systemName: "checkmark.shield")
-                                .foregroundStyle(blue)
+                            Image(systemName: launcher.isInstalledValidated ?
+                                  "checkmark.shield" : "exclamationmark.shield")
+                                .foregroundStyle(launcher.isInstalledValidated ? green : red)
                             Text(launcher.resourceCheckSummary)
                                 .font(.system(size: 12))
                                 .foregroundStyle(subtleInk)
@@ -267,6 +272,18 @@ struct LauncherView: View {
                                startPoint: .topLeading, endPoint: .bottomTrailing)
                     .ignoresSafeArea()
             }
+        }
+        .alert("美化包导入失败", isPresented: Binding(
+            get: { launcher.importFailureMessage != nil },
+            set: { if !$0 { launcher.importFailureMessage = nil } }
+        )) {
+            Button("重新选择美化包") {
+                launcher.importFailureMessage = nil
+                showingImportChoices = true
+            }
+            Button("稍后再试", role: .cancel) { launcher.importFailureMessage = nil }
+        } message: {
+            Text(launcher.importFailureMessage ?? "导入失败，请检查资源包后重试。")
         }
         .confirmationDialog("导入美化包", isPresented: $showingImportChoices,
                             titleVisibility: .visible) {
