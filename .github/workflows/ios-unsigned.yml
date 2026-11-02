@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - test/iphone13pm-thermal-fps-1.0.1
 
 jobs:
   build:
@@ -62,6 +63,10 @@ jobs:
           test -s Resources/Ruffle/fonts/OFL-LICENSE.txt
           test "$(stat -f%z Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)" -gt 16000000
           echo "Verified Noto Sans CJK SC font and OFL license"
+      - name: Adjust test-only CJK font vertical placement
+        run: |
+          python3 -m pip install --break-system-packages "fonttools==4.60.1"
+          python3 Patches/adjust-cjk-baseline.py Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
       - name: Validate Canvas touch controls module
         shell: bash
         run: |
@@ -133,22 +138,22 @@ jobs:
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
       - name: Check formal version and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '100'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.1'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '101'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.0 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.0/             --output=/tmp/ShiguangLauncher-v1.0-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.0-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.0-source.zip | grep -Fx 'ShiguangLauncher-v1.0/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.0.1-test/             --output=/tmp/ShiguangLauncher-v1.0.1-test-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.0.1-test-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.0.1-test-source.zip | grep -Fx 'ShiguangLauncher-v1.0.1-test/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0-unsigned-ipa
+          name: ShiguangLauncher-v1.0.1-test-unsigned-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0-source
-          path: /tmp/ShiguangLauncher-v1.0-source.zip
+          name: ShiguangLauncher-v1.0.1-test-source
+          path: /tmp/ShiguangLauncher-v1.0.1-test-source.zip
           if-no-files-found: error
