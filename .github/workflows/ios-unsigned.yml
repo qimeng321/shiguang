@@ -32,7 +32,16 @@ jobs:
           assert 'Math.min(w/960,h/560)' in source
           assert 'case unlimited, fps60, fps30' in swift
           assert 'case saving, balanced, ultra' in swift
-          assert 'Text("正式版 1.01")' in swift
+          assert 'Text("测试版 1.03")' in swift
+          assert 'webViewWebContentProcessDidTerminate' in swift
+          assert 'delayedTapEnabled' in swift
+          mouse=Path('Patches/touch-controls.js').read_text()
+          assert 'if(!hover){' in mouse
+          assert 'setDelayedTap:setDelayedTap' in mouse
+          assert '-webkit-touch-callout:none' in mouse
+          assert 'contextmenu' in mouse and 'selectstart' in mouse
+          assert 'bridge?.resetGameEntryForNewPage()' in source
+          assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'webView.isOpaque = true' in swift
           assert 'traceObserver.disconnect()' in swift
           print('1.02 keyboard, adaptive canvas and frame-cap invariants OK')
@@ -130,7 +139,7 @@ jobs:
           assert 'Object.defineProperty(ev,"offsetX"' in js
           assert 'Object.defineProperty(ev,"offsetY"' in js
           assert 'finishPendingClick' not in js
-          assert 'if(!hover||type==="pointerdown")' in js
+          assert 'if(!hover){' in js
           assert 'enableMapSwipe' not in js
           assert 'galaxy-navigation' not in html
           swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
@@ -218,22 +227,22 @@ jobs:
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
       - name: Check formal version and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.1'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '103'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.3'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '104'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.01 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.01-formal/ --output=/tmp/ShiguangLauncher-v1.01-formal-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.01-formal-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.01-formal-source.zip | grep -Fx 'ShiguangLauncher-v1.01-formal/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.03-test/ --output=/tmp/ShiguangLauncher-v1.03-test-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.03-test-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.03-test-source.zip | grep -Fx 'ShiguangLauncher-v1.03-test/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.01-formal-unsigned-ipa
+          name: ShiguangLauncher-v1.03-test-unsigned-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.01-formal-source
-          path: /tmp/ShiguangLauncher-v1.01-formal-source.zip
+          name: ShiguangLauncher-v1.03-test-source
+          path: /tmp/ShiguangLauncher-v1.03-test-source.zip
           if-no-files-found: error
