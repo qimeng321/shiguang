@@ -63,9 +63,13 @@ jobs:
           test -s Resources/Ruffle/fonts/OFL-LICENSE.txt
           test "$(stat -f%z Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)" -gt 16000000
           echo "Verified Noto Sans CJK SC font and OFL license"
+      - name: Set up Python for test font processing
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Adjust test-only CJK font vertical placement
         run: |
-          python3 -m pip install --break-system-packages "fonttools==4.60.1"
+          python3 -m pip install "fonttools==4.60.1"
           python3 Patches/adjust-cjk-baseline.py Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
       - name: Validate Canvas touch controls module
         shell: bash
@@ -94,6 +98,17 @@ jobs:
           assert 'onProgress(fraction)' in model
           assert 'galaxyBookmarks' not in swift
           assert 'player.dispatchEvent(new PointerEvent(' not in html
+          # Quality choices are selected on home screen, stored in UserDefaults,
+          # and read server-side before generating a new Ruffle HTML page.
+          assert '@AppStorage(GameQualityPreset.defaultsKey)' in swift
+          assert 'Picker("游戏画质", selection: $qualityPreset)' in swift
+          assert 'GameQualityPreset.saved' in html
+          assert 'options.quality=configuredQuality' in html
+          assert 'options.highDpi=configuredHighDpi' in html
+          assert 'quality:configuredQuality,highDpi:configuredHighDpi' in html
+          assert 'shiguang-quality' in html and 'shiguang-high-dpi' in html
+          assert 'case saving, balanced, ultra' in swift
+          print("Verified persistent three-tier quality controls and game setting wiring")
           print("Verified separate Canvas-pointer module and HTML wiring")
           PY_TOUCH
       - name: Check embedded touch controls JavaScript syntax
