@@ -138,7 +138,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.01")
+                        Text("测试版 1.03")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -463,6 +463,8 @@ struct GameView: View {
     @State private var controlAction = ""
     @State private var virtualMouseEnabled = false
     @State private var fpsEnabled = false
+    // Saved across WebView reloads; off by default for normal click speed.
+    @AppStorage("shiguang.delayedTap103") private var delayedTapEnabled = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -475,7 +477,8 @@ struct GameView: View {
                     .tint(.white)
             } else if let server, let url = server.playURL(for: entry) {
                 GameWebView(url: url, controlGeneration: controlGeneration,
-                            controlAction: controlAction, onStatus: { message in
+                            controlAction: controlAction, delayedTapEnabled: delayedTapEnabled,
+                            onStatus: { message in
                     LaunchDiagnostics.log("网页状态：" + message)
                 }, onError: { message in
                     errorText = message
@@ -530,6 +533,11 @@ struct GameView: View {
                                         sendControl("cycleSpeed")
                                     }
                                 }
+                                gameTool(delayedTapEnabled ? "checkmark.circle.fill" : "hand.tap",
+                                         delayedTapEnabled ? "延迟点按：开" : "延迟点按：关") {
+                                    delayedTapEnabled.toggle()
+                                    LaunchDiagnostics.log("[触控辅助] 延迟点按自动抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
+                                }
                                 gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
                                     fpsEnabled.toggle()
                                     sendControl("toggleFPS")
@@ -547,7 +555,7 @@ struct GameView: View {
                                 .disabled(isClearingWebCache)
                             }
                             .padding(8)
-                            .frame(width: 154)
+                            .frame(width: 168)
                             .background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 15))
                             .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
                         }
@@ -562,10 +570,20 @@ struct GameView: View {
             if let errorText {
                 VStack {
                     Spacer()
-                    Text(errorText)
-                        .font(.footnote)
-                        .foregroundStyle(.white)
-                        .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(errorText)
+                            .font(.footnote)
+                            .foregroundStyle(.white)
+                            .textSelection(.enabled)
+                        if server != nil && !isClearingWebCache {
+                            Button("重新加载游戏") { reloadGame() }
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.white, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(.red.opacity(0.88), in: RoundedRectangle(cornerRadius: 12))
@@ -694,6 +712,7 @@ struct GameWebView: UIViewRepresentable {
     let url: URL
     let controlGeneration: Int
     let controlAction: String
+    let delayedTapEnabled: Bool
     let onStatus: (String) -> Void
     let onError: (String) -> Void
 
@@ -830,8 +849,13 @@ struct GameWebView: UIViewRepresentable {
         configuration.userContentController.addUserScript(
             WKUserScript(source: diagnostics, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         )
+        // Make the choice available before Ruffle's asynchronous startup.
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: "window.__shiguangDelayedTapChoice = \(delayedTapEnabled ? "true" : "false");",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let webView = WKWebView(frame: .zero, configuration: configuration)
         context.coordinator.lastControlGeneration = controlGeneration
+        context.coordinator.lastDelayedTapEnabled = delayedTapEnabled
         webView.navigationDelegate = context.coordinator
         // Opaque backing matches the always-black Flash stage and avoids
         // an unnecessary transparent layer during long GPU-heavy sessions.
@@ -845,6 +869,15 @@ struct GameWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
+        if context.coordinator.lastDelayedTapEnabled != delayedTapEnabled {
+            context.coordinator.lastDelayedTapEnabled = delayedTapEnabled
+            let value = delayedTapEnabled ? "true" : "false"
+            webView.evaluateJavaScript(
+                "window.__shiguangDelayedTapChoice=\(value); window.ShiguangControls && window.ShiguangControls.setDelayedTap(\(value));"
+            ) { _, error in
+                if let error { LaunchDiagnostics.log("[触控辅助] 延迟点按设置异常：" + error.localizedDescription) }
+            }
+        }
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
         let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
@@ -866,6 +899,8 @@ struct GameWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var lastControlGeneration = 0
+        var lastDelayedTapEnabled = false
+        private var navigationCount = 0
         let onStatus: (String) -> Void
         let onError: (String) -> Void
         init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
@@ -879,7 +914,27 @@ struct GameWebView: UIViewRepresentable {
             else if details.hasPrefix("错误：") { onError(String(details.dropFirst(3))) }
             else { onStatus(details) }
         }
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if navigationAction.targetFrame?.isMainFrame == true {
+                let path = navigationAction.request.url?.path ?? "未知"
+                LaunchDiagnostics.log("[页面生命周期] 主框架请求：\(path)，方式=\(navigationAction.navigationType.rawValue)")
+            }
+            decisionHandler(.allow)
+        }
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            navigationCount += 1
+            let path = webView.url?.path ?? "未知"
+            LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
+        }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            LaunchDiagnostics.log("[严重诊断] WebKit WebContent 进程终止；可能是内存压力/渲染进程崩溃。保持现场，等待用户点击重新加载。")
+            onError("游戏网页进程已终止，可能存在内存压力或渲染异常。点击「重新加载游戏」继续；可导出 diagnostics.txt 排查。")
+        }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            let value = lastDelayedTapEnabled ? "true" : "false"
+            webView.evaluateJavaScript("window.__shiguangDelayedTapChoice=\(value); window.ShiguangControls && window.ShiguangControls.setDelayedTap(\(value));") { _, _ in }
+            LaunchDiagnostics.log("[页面生命周期] 主框架完成第\(navigationCount)次导航：\(webView.url?.path ?? "未知")")
             onStatus("网页主文档已打开，检查启动脚本与服务响应…")
             webView.evaluateJavaScript("({title:document.title,body:(document.body?.innerText||'').slice(0,180), scripts:[...document.scripts].map(s=>s.getAttribute('src')).filter(Boolean).slice(0,8), ruffle:!!window.RufflePlayer})") { [weak self] result, error in
                 if let error {
