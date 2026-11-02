@@ -220,6 +220,7 @@ final class GameServer {
             return
         }
         if packagedWebApp && path == "/__micro/game.html" {
+            if !headOnly { bridge?.resetGameEntryForNewPage() }
             versionGetCount = 0
             proceededBeyondVersion = false
             inspectedVersionHeader = false
@@ -877,7 +878,11 @@ final class GameServer {
             },
             disableMouse:function(){if(touchControls)touchControls.disableMouse();},
             resetCursor:function(){if(touchControls)touchControls.resetCursor();},
-            cycleSpeed:function(){if(touchControls)touchControls.cycleSpeed();}
+            cycleSpeed:function(){if(touchControls)touchControls.cycleSpeed();},
+            setDelayedTap:function(on){
+              window.__shiguangDelayedTapChoice=!!on;
+              if(touchControls)touchControls.setDelayedTap(!!on);
+            }
           };
           // The iOS software keyboard shrinks visualViewport but the Flash
           // stage must not jump. Preserve its height until a true rotation.
@@ -939,6 +944,7 @@ final class GameServer {
             try{
               if(window.ShiguangTouchControls){
                 touchControls=window.ShiguangTouchControls(player,report);
+                touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true);
               }else{
                 report("触控辅助：脚本缺失，触控增强暂不可用（不影响游戏启动）");
               }

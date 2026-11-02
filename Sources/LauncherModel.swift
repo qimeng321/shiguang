@@ -91,6 +91,71 @@ enum LaunchDiagnostics {
         try? handle.close()
     }
 
+    // A completed unzip already checks CRC32. For launch/upgrade checks, examine
+    // the critical game files and their headers, not merely the SWF filename.
+    // This is a bounded disk check (11 small headers/metadata) even for 3GB packs.
+    static let receiptName = ".shiguang-install-verified"
+    static func validateInstalledPackage(root: URL, entry: String) -> [String] {
+        let fm = FileManager.default
+        guard !entry.isEmpty else { return ["没有找到可启动的游戏 SWF 入口"] }
+        let folder = (entry as NSString).deletingLastPathComponent
+        let base = folder.isEmpty ? root : root.appendingPathComponent(folder, isDirectory: true)
+        var failures: [String] = []
+        func require(_ relative: String, minimum: UInt64 = 1,
+                     magic: [UInt8]? = nil) {
+            let file = base.appendingPathComponent(relative)
+            guard let values = try? file.resourceValues(forKeys: [
+                .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey
+            ]), values.isRegularFile == true,
+                  values.isSymbolicLink != true,
+                  UInt64(max(0, values.fileSize ?? 0)) >= minimum,
+                  fm.isReadableFile(atPath: file.path) else {
+                failures.append("\(relative)：缺失、不可读或大小异常")
+                return
+            }
+            if let magic {
+                do {
+                    let handle = try FileHandle(forReadingFrom: file)
+                    defer { try? handle.close() }
+                    let data = try handle.read(upToCount: magic.count) ?? Data()
+                    if Array(data) != magic { failures.append("\(relative)：文件头无效") }
+                } catch {
+                    failures.append("\(relative)：无法读取文件头")
+                }
+            }
+        }
+        // SWF must have a valid FWS/CWS/ZWS signature; reject empty/damaged stubs.
+        let swf = root.appendingPathComponent(entry)
+        if let attributes = try? fm.attributesOfItem(atPath: swf.path),
+           let count = (attributes[.size] as? NSNumber)?.uint64Value,
+           count >= 64, fm.isReadableFile(atPath: swf.path),
+           let handle = try? FileHandle(forReadingFrom: swf) {
+            let prefix = (try? handle.read(upToCount: 3)) ?? Data()
+            try? handle.close()
+            if !["FWS", "CWS", "ZWS"].contains(String(data: prefix, encoding: .ascii) ?? "") {
+                failures.append("游戏入口 \(entry)：SWF 文件头无效")
+            }
+        } else {
+            failures.append("游戏入口 \(entry)：文件缺失或内容过短")
+        }
+        // A NieoData web package has known runtime dependencies; all must
+        // exist. Generic stand-alone SWF files keep the legacy fallback mode.
+        if fm.fileExists(atPath: base.appendingPathComponent("index.html").path)
+            || !folder.isEmpty {
+            require("index.html", minimum: 64)
+            require("assets/index.js", minimum: 64)
+            require("assets/nieo_wasm_core_bg.wasm", minimum: 8)
+            require("config/doorConfig.xml", minimum: 8)
+            require("config/ServerR.xml", minimum: 8)
+            require("config/dll.xml", minimum: 8)
+            require("version.swf", minimum: 6)
+            require("resource/main_resource.swf", minimum: 64)
+            require("dll/NieoCore.swf", minimum: 64)
+            require("login/Login.swf", minimum: 64)
+        }
+        return failures
+    }
+
     // This is a STATIC file-presence check, not an assertion that the game is
     // playable, that each file is valid, or that remote servers are reachable.
     static func checkResources(root: URL?, entry: String) -> (summary: String, details: [String]) {
@@ -145,9 +210,11 @@ enum LaunchDiagnostics {
             lines.append("[缺失] 内置 Ruffle 文件夹")
             missingRequired += 1
         }
-        let summary = missingRequired == 0
-          ? "关键文件静态检查通过（不代表游戏已正常加载）"
-          : "发现 \(missingRequired) 项关键文件缺失；查看 diagnostics.txt"
+        let issues = validateInstalledPackage(root: root, entry: entry)
+        for issue in issues.prefix(12) { lines.append("[校验失败] " + issue) }
+        let summary = (missingRequired == 0 && issues.isEmpty)
+          ? "关键文件校验通过（不代表完整资源或游戏联网已正常）"
+          : "资源校验未通过：\(missingRequired) 项关键文件缺失、\(issues.count) 项内容异常；请重新导入"
         return (summary, lines)
     }
 }
@@ -157,6 +224,7 @@ enum ImportError: LocalizedError {
     case unsafeEntry(String)
     case noGameFiles
     case invalidPackage
+    case invalidContents(String)
     case unsupportedFormat(String)
 
     var errorDescription: String? {
@@ -165,6 +233,7 @@ enum ImportError: LocalizedError {
         case .unsafeEntry(let path): return "资源包含不安全路径：\(path)"
         case .noGameFiles: return "资源包内没有找到 SWF。请确认这是完整的游戏资源包。"
         case .invalidPackage: return "找不到已导入的游戏资源。"
+        case .invalidContents(let details): return "美化包关键文件不完整或异常：\(details)"
         case .unsupportedFormat(let magic): return "文件不是标准 ZIP 压缩格式（文件头：\(magic)）。请提供实际 .srom 文件以确认它的封装格式。"
         }
     }
@@ -183,9 +252,12 @@ final class LauncherModel: ObservableObject {
     @Published var isClearing = false
     @Published var resourceCheckSummary = "尚未检测资源"
     @Published var resourceCheckDetails: [String] = []
+    @Published private(set) var isInstalledValidated = false
+    @Published private(set) var lastImportFailed = false
+    @Published var importFailureMessage: String?
 
     var canStartGame: Bool {
-        guard let gameRoot, !selectedEntry.isEmpty else { return false }
+        guard let gameRoot, !selectedEntry.isEmpty, isInstalledValidated else { return false }
         return !isImporting && !isClearing && FileManager.default.fileExists(
             atPath: gameRoot.appendingPathComponent(selectedEntry).path
         )
@@ -205,18 +277,36 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.01（Build 103）启动；已启用真实相对路径扫描与文件校验；旧资源路径不变")
+        LaunchDiagnostics.log("启动器 正式版 1.02（Build 105）启动；启用关键文件内容校验、失败自动清理和弹窗重试")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
             entries = Self.findEntries(in: root)
             selectedEntry = Self.preferredEntry(in: entries)
-            status = entries.isEmpty ? "已安装资源，但没有找到 SWF 游戏入口。" : "美化包已就绪，可以进入游戏。"
+            status = "正在核对上次安装的资源…"
         }
         refreshResourceCheck()
+        if isInstalledValidated {
+            let hasReceipt = FileManager.default.fileExists(
+                atPath: root.appendingPathComponent(LaunchDiagnostics.receiptName).path
+            )
+            status = hasReceipt
+                ? "已验证上次完整导入，关键资源正常，可进入游戏。"
+                : "旧版已安装资源通过关键文件校验，可进入游戏；重新导入可完成完整 CRC 校验。"
+        } else if gameRoot != nil {
+            status = "检测到不完整的旧美化包，请清除并重新导入。"
+        }
     }
 
     func refreshResourceCheck() {
+        // Failed extraction may have removed the unusable private Game directory.
+        // Do not keep a stale gameRoot pointer that makes "清除美化包" look enabled.
+        if let root = gameRoot, !FileManager.default.fileExists(atPath: root.path) {
+            gameRoot = nil
+            entries = []
+            selectedEntry = ""
+            isInstalledValidated = false
+        }
         // v1.8 could retain an entry discovered in the temporary extraction
         // directory, even if it was not present at the final installation path.
         if let gameRoot, !selectedEntry.isEmpty,
@@ -228,6 +318,13 @@ final class LauncherModel: ObservableObject {
                 ? "安装目录存在，但未找到可读取的 Client.swf。请查看诊断日志。"
                 : "已修正游戏入口路径，请重试进入游戏。"
             LaunchDiagnostics.log("自动重新扫描已安装资源，发现 \(verified.count) 个 SWF 游戏入口")
+        }
+        if let gameRoot {
+            isInstalledValidated = LaunchDiagnostics.validateInstalledPackage(
+                root: gameRoot, entry: selectedEntry
+            ).isEmpty
+        } else {
+            isInstalledValidated = false
         }
         let result = LaunchDiagnostics.checkResources(root: gameRoot, entry: selectedEntry)
         resourceCheckSummary = result.summary
@@ -261,9 +358,13 @@ final class LauncherModel: ObservableObject {
         guard !isImporting && !isClearing else { return }
         let fileExtension = source.pathExtension.lowercased()
         guard fileExtension == "srom" || fileExtension == "zip" else {
-            status = "请选择 .srom 或 .zip 格式的游戏资源包。"
+            lastImportFailed = true
+            status = "导入失败：文件格式不支持。"
+            importFailureMessage = "请选择 .srom 或 .zip 格式的游戏资源包。"
             return
         }
+        lastImportFailed = false
+        importFailureMessage = nil
         isImporting = true
         importProgress = 0
         importPhase = "复制资源包"
@@ -321,16 +422,37 @@ final class LauncherModel: ObservableObject {
                     self.selectedEntry = Self.preferredEntry(in: entries)
                     self.status = "美化包已安装，已验证 \(entries.count) 个实际游戏入口。"
                     self.refreshResourceCheck()
+                    guard self.isInstalledValidated else {
+                        // A failed content check must never result in a green
+                        // ready label even when a Client.swf filename exists.
+                        self.status = "安装后的资源校验失败，请重新导入。"
+                        self.importPhase = "资源校验失败"
+                        self.lastImportFailed = true
+                        self.importFailureMessage = "美化包文件缺失或内容异常。请重新选择原始文件导入。"
+                        LaunchDiagnostics.log("[资源校验失败] " + self.resourceCheckSummary)
+                        self.isImporting = false
+                        return
+                    }
                     LaunchDiagnostics.log("资源导入完成：\(entries.count) 个可启动入口")
                     self.reportImportProgress(1.0, phase: "安装完成")
                     self.isImporting = false
                 }
             } catch {
+                // Remove only failed incoming copies and incomplete staging.
+                // An older VALID Game installation must never be erased by a
+                // broken replacement archive.
+                let cleanup = Self.cleanupFailedImport()
                 await MainActor.run {
-                    self.status = "导入失败：\(error.localizedDescription)"
+                    self.refreshResourceCheck()
+                    self.lastImportFailed = true
+                    self.status = self.isInstalledValidated
+                        ? "本次导入失败，原有完好资源已保留。"
+                        : "导入失败；临时及无效资源已清理，请重新导入。"
                     self.importPhase = "导入失败"
-                    LaunchDiagnostics.log("资源导入失败：\(error.localizedDescription)")
+                    self.importFailureMessage = "导入失败：\(error.localizedDescription)\n\n\(cleanup)\n请选择美化包重新导入。"
+                    LaunchDiagnostics.log("资源导入失败：\(error.localizedDescription)；清理：\(cleanup)")
                     self.isImporting = false
+                    self.importProgress = 0
                 }
             }
         }
@@ -358,6 +480,8 @@ final class LauncherModel: ObservableObject {
                     self.gameRoot = nil
                     self.entries = []
                     self.selectedEntry = ""
+                    self.isInstalledValidated = false
+                    self.lastImportFailed = false
                     self.status = "已清除美化包，可重新导入 .srom 或 .zip。"
                 }
                 self.refreshResourceCheck()
@@ -365,6 +489,31 @@ final class LauncherModel: ObservableObject {
                 self.isClearing = false
             }
         }
+    }
+
+    private nonisolated static func cleanupFailedImport() -> String {
+        let fm = FileManager.default
+        let support = savedGameRoot.deletingLastPathComponent()
+        var removed = 0
+        // No user-owned Downloads / Documents / Import files are touched.
+        let incoming = support.appendingPathComponent("ImportIncoming", isDirectory: true)
+        if fm.fileExists(atPath: incoming.path) {
+            if (try? fm.removeItem(at: incoming)) != nil { removed += 1 }
+        }
+        if let files = try? fm.contentsOfDirectory(at: support,
+                                                  includingPropertiesForKeys: nil) {
+            for url in files where url.lastPathComponent.hasPrefix("Game-import-") {
+                if (try? fm.removeItem(at: url)) != nil { removed += 1 }
+            }
+        }
+        let root = savedGameRoot
+        if fm.fileExists(atPath: root.path) {
+            let selected = preferredEntry(in: findEntries(in: root))
+            if !LaunchDiagnostics.validateInstalledPackage(root: root, entry: selected).isEmpty {
+                if (try? fm.removeItem(at: root)) != nil { removed += 1 }
+            }
+        }
+        return "已清理 \(removed) 处失败导入残留；“文件”App 中的原始资源包未删除。"
     }
 
     private nonisolated static func copyIntoSandbox(
@@ -465,7 +614,17 @@ final class LauncherModel: ObservableObject {
         try manager.unzipItem(at: source, to: staging, skipCRC32: false, progress: progress)
         let entries = findEntries(in: staging)
         guard !entries.isEmpty else { throw ImportError.noGameFiles }
+        let chosenEntry = preferredEntry(in: entries)
+        let issues = LaunchDiagnostics.validateInstalledPackage(root: staging, entry: chosenEntry)
+        guard issues.isEmpty else {
+            throw ImportError.invalidContents(issues.prefix(3).joined(separator: "；"))
+        }
         LaunchDiagnostics.log("临时解压目录已验证：\(entries.joined(separator: ", "))")
+        // Only a complete CRC32-verified import with all critical files may
+        // carry the ready receipt into the actual installed Game directory.
+        let receipt = staging.appendingPathComponent(LaunchDiagnostics.receiptName)
+        try "full-unzip-crc32-ok; key-files-valid; v1.02\n".write(
+            to: receipt, atomically: true, encoding: .utf8)
 
         if manager.fileExists(atPath: backup.path) {
             try manager.removeItem(at: backup)
@@ -495,6 +654,14 @@ final class LauncherModel: ObservableObject {
             guard manager.fileExists(atPath: actual.path) else {
                 throw ImportError.invalidPackage
             }
+        }
+        let postIssues = LaunchDiagnostics.validateInstalledPackage(
+            root: savedGameRoot, entry: preferredEntry(in: installedEntries)
+        )
+        guard postIssues.isEmpty else {
+            try? manager.removeItem(at: savedGameRoot)
+            if existing { try? manager.moveItem(at: backup, to: savedGameRoot) }
+            throw ImportError.invalidContents(postIssues.prefix(3).joined(separator: "；"))
         }
         LaunchDiagnostics.log("安装后路径校验完成：\(installedEntries.joined(separator: ", "))")
         if existing { try? manager.removeItem(at: backup) }

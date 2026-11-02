@@ -1,10 +1,11 @@
-/* Shiguang v4.8: precision mouse. No map or location controls.
+/* Shiguang v5.0: NoNo hover-safe precision mouse with optional delayed release.
    Ruffle 0.7.1 reads PointerEvent.offsetX/Y from its inner canvas. */
 (function(){
 "use strict";
 window.ShiguangTouchControls=function(player,report){
   var root=player&&player.shadowRoot,canvas=null,hover=false,enabled=false,drag=false;
   var pos=null,padGesture=null,headerGesture=null,clickPending=null,clickTimer=null;
+  var pressDelayTimer=null,delayedTap=false;
   var count=0,recoveries=0,lastMissing=false,speedIndex=1;
   var speeds=[0.85,1.45,2.2],tipTimer=null;
   try{
@@ -16,6 +17,8 @@ window.ShiguangTouchControls=function(player,report){
     "#sh-mouse{position:fixed;top:34%;left:17px;width:239px;display:none;z-index:2147482800;",
     "background:rgba(13,31,61,.91);color:#fff;border:1px solid #8bc6ff;border-radius:16px;",
     "box-shadow:0 5px 18px #0008;font:13px -apple-system,sans-serif;user-select:none;touch-action:none}",
+    "#sh-mouse,#sh-mouse *{-webkit-user-select:none!important;user-select:none!important;",
+    "-webkit-touch-callout:none!important;-webkit-tap-highlight-color:transparent}",
     "#sh-mouse-head{padding:9px 12px;border-radius:15px 15px 0 0;background:rgba(33,105,172,.58);",
     "cursor:move;touch-action:none}",
     "#sh-mouse-track{height:101px;margin:8px;border:1px dashed #a1d9ff;border-radius:10px;",
@@ -47,6 +50,10 @@ window.ShiguangTouchControls=function(player,report){
     return x;
   }
   var box=el("div","sh-mouse",document.body);
+  // Scope selection suppression to the custom pad. Never break login textfields.
+  ["contextmenu","selectstart","dragstart"].forEach(function(type){
+    box.addEventListener(type,function(e){e.preventDefault();e.stopPropagation();},true);
+  });
   var header=el("div","sh-mouse-head",box,"鼠标触控板 · 拖动标题可移位");
   var track=el("div","sh-mouse-track",box,"滑动移动准星，轻点点击");
   var row=el("div","sh-mouse-row",box);
@@ -104,7 +111,8 @@ window.ShiguangTouchControls=function(player,report){
     var r=c.getBoundingClientRect();
     var x=(p.x-r.left)*(c.offsetWidth||r.width)/r.width;
     var y=(p.y-r.top)*(c.offsetHeight||r.height)/r.height;
-    if(!hover||type==="pointerdown"){
+    // A second pointerenter on press resets Flash hover menus such as NoNo.
+    if(!hover){
       hover=true;
       c.dispatchEvent(new PointerEvent("pointerenter",{
         pointerId:77,pointerType:"mouse",isPrimary:true,clientX:p.x,clientY:p.y
@@ -122,26 +130,45 @@ window.ShiguangTouchControls=function(player,report){
     c.dispatchEvent(ev);return true;
   }
   function move(point){
+    if(pressDelayTimer!==null)endClick();
     var p=clamp(point);if(!p)return;
     pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";
     emit("pointermove",p,drag?1:0);
   }
   function center(){var r=bounds();if(r)move({x:r.left+r.width/2,y:r.top+r.height/2});}
   function endClick(){
+    if(pressDelayTimer!==null){clearTimeout(pressDelayTimer);pressDelayTimer=null;}
     if(clickTimer!==null){clearTimeout(clickTimer);clickTimer=null;}
     if(!clickPending)return;
     var p=clickPending;clickPending=null;
     emit("pointerup",p,0,0);
   }
+  function pressAt(p){
+    if(!enabled||drag||!emit("pointerdown",p,1,0))return;
+    clickPending=p;
+    // Default 125ms retains existing behavior. Optional longer hold can
+    // expose Flash hover-menu click targets without forcing the whole UI slow.
+    clickTimer=setTimeout(endClick,delayedTap?350:125);
+  }
   function click(){
     if(!enabled||drag||!pos)return;
-    endClick();hover=false;
-    if(!emit("pointermove",pos,0))return;
-    if(!emit("pointerdown",pos,1,0))return;
-    clickPending={x:pos.x,y:pos.y};
-    clickTimer=setTimeout(endClick,125);
+    endClick();
+    var target={x:pos.x,y:pos.y};
+    if(!emit("pointermove",target,0))return;
+    // Do not reset 'hover' here: NoNo's hover menu must survive pointerdown.
+    if(delayedTap){
+      pressDelayTimer=setTimeout(function(){
+        pressDelayTimer=null;
+        if(enabled&&!drag)pressAt(target);
+      },120);
+    }else{pressAt(target);}
     count++;
-    if(count<=5||count%15===0)report("鼠标：已点击 "+count+" 次；手指交替可继续使用");
+    if(count<=5||count%15===0)report("鼠标：已点击 "+count+" 次"+(delayedTap?"（延迟抬起）":"")+"；手指交替可继续使用");
+  }
+  function setDelayedTap(on){
+    endClick();
+    delayedTap=!!on;
+    report("鼠标：延迟点按自动抬起"+(delayedTap?"开启（悬停120ms + 按住350ms）":"关闭（按住125ms）"));
   }
   function endDrag(){
     if(!drag)return;
@@ -204,12 +231,14 @@ window.ShiguangTouchControls=function(player,report){
     else{endClick();endDrag();padGesture=null;hover=false;}
     report("鼠标："+(enabled?"开启":"关闭")+"；真实触摸后的状态自动恢复");
   }
+  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();}});
+  window.addEventListener("pagehide",function(){endClick();endDrag();});
   try{new ResizeObserver(function(){
     if(enabled&&pos){var p=clamp(pos);if(p){pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";}}
   }).observe(player);}catch(e){}
-  report("鼠标 v4.8：已加载无地图版，支持手指与虚拟鼠标交替使用");
+  report("鼠标 v5.0：NoNo 悬浮菜单防重复 pointerenter；可选延迟抬起，触控板禁止选中");
   return {enableMouse:function(){setMode(true);},disableMouse:function(){setMode(false);},
     hideAll:function(){setMode(false);},resetCursor:center,
-    cycleSpeed:function(){speedBtn.click();}};
+    cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap};
 };
 })();

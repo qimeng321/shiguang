@@ -21,6 +21,13 @@ final class GameSocketBridge {
     private var acceptedCount = 0
     private var gameEnteredFlag=false
     var hasEnteredGame: Bool { queue.sync { gameEnteredFlag } }
+    // A new Flash document must NEVER inherit a previous session's success.
+    // Keep live socket cleanup independent; a closing WebSocket may still
+    // deliver its terminal callback after the new page starts.
+    func resetGameEntryForNewPage() {
+        queue.sync { gameEnteredFlag = false }
+        LaunchDiagnostics.log("[页面生命周期] 新游戏页面：已重置旧选服成功标志")
+    }
     private var remoteProbe: NWConnection?
     var hasReceivedClient: Bool { queue.sync { acceptedCount > 0 } }
     // Access state through the listener queue, because the UI polls from the
