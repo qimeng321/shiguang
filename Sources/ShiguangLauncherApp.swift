@@ -12,7 +12,13 @@ struct ShiguangLauncherApp: App {
             LauncherView()
                 .environmentObject(launcher)
                 // Files → share/open in 拾光号 is a second route for .srom.
-                .onOpenURL { url in launcher.importPackage(url) }
+                .onOpenURL { url in
+                    if url.pathExtension.lowercased() == "sgpatch" {
+                        launcher.importMobilePatch(url)
+                    } else {
+                        launcher.importPackage(url)
+                    }
+                }
         }
     }
 }
@@ -110,6 +116,8 @@ struct LauncherView: View {
     @State private var showingImportChoices = false
     @State private var showingLocalFiles = false
     @State private var showingClearConfirmation = false
+    @State private var showingPatchPicker = false
+    @State private var showingPatchClearConfirmation = false
     @State private var showingGame = false
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
     @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.unlimited.rawValue
@@ -139,7 +147,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.03")
+                        Text("测试版 1.1")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -267,7 +275,10 @@ struct LauncherView: View {
                     .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.09), lineWidth: 1))
                     .padding(.top, 23)
 
-                    Text("支持 .srom / .zip；已安装资源保持私有，不占用共享文件夹额外空间")
+                    mobilePatchPanel
+                        .padding(.top, 18)
+
+                    Text("支持 .srom / .zip；测试版单独存放资源与补丁，不影响正式版数据")
                         .font(.system(size: 12))
                         .foregroundStyle(subtleInk.opacity(0.9))
                         .padding(.top, 18)
@@ -297,6 +308,14 @@ struct LauncherView: View {
                     .ignoresSafeArea()
             }
         }
+        .alert("手机补丁安装失败", isPresented: Binding(
+            get: { launcher.patchError != nil },
+            set: { if !$0 { launcher.patchError = nil } }
+        )) {
+            Button("知道了", role: .cancel) { launcher.patchError = nil }
+        } message: {
+            Text(launcher.patchError ?? "补丁无法安装，请检查补丁格式。")
+        }
         .alert("美化包导入失败", isPresented: Binding(
             get: { launcher.importFailureMessage != nil },
             set: { if !$0 { launcher.importFailureMessage = nil } }
@@ -325,6 +344,21 @@ struct LauncherView: View {
                 showingPicker = false
                 launcher.importPackage(url)
             }
+        }
+        .sheet(isPresented: $showingPatchPicker) {
+            PackageDocumentPicker { url in
+                showingPatchPicker = false
+                launcher.importMobilePatch(url)
+            }
+        }
+        .confirmationDialog("撤销当前手机补丁？", isPresented: $showingPatchClearConfirmation,
+                            titleVisibility: .visible) {
+            Button("清除补丁（保留游戏资源）", role: .destructive) {
+                launcher.clearMobilePatch()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("只删除测试版的手机补丁覆盖层，不修改已安装的 .srom 美化包。重新进入游戏后恢复原资源。")
         }
         .sheet(isPresented: $showingLocalFiles) {
             NavigationStack {
@@ -384,6 +418,60 @@ struct LauncherView: View {
                 GameView(root: root, entry: launcher.selectedEntry) { showingGame = false }
             }
         }
+    }
+
+    private var mobilePatchPanel: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                Image(systemName: "puzzlepiece.extension")
+                    .foregroundStyle(blue)
+                Text("手机适配补丁")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ink)
+                Spacer()
+                Text("测试功能")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(subtleInk)
+            }
+            Text(launcher.patchSummary)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(launcher.patchStatus)
+                .font(.system(size: 12))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            if launcher.patchBusy {
+                ProgressView("正在校验并安装补丁…")
+                    .font(.system(size: 12))
+            }
+            HStack(spacing: 10) {
+                Button {
+                    showingPatchPicker = true
+                } label: {
+                    Label("导入补丁", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!launcher.canStartGame || launcher.patchBusy)
+                Button {
+                    showingPatchClearConfirmation = true
+                } label: {
+                    Label("撤销补丁", systemImage: "arrow.uturn.backward")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                }
+                .buttonStyle(.bordered)
+                .disabled(launcher.patchSummary == "未安装手机适配补丁" || launcher.patchBusy)
+            }
+            Text("仅支持带 mobile-patch.json 清单的 .sgpatch / .zip；补丁必须是 resource/ 内的游戏资源。安装/撤销后重新进入游戏生效。")
+                .font(.system(size: 11))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(15)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18))
     }
 
     private var frameCapPicker: some View {
