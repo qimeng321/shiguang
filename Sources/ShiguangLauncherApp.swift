@@ -551,9 +551,9 @@ struct GameView: View {
                                     }
                                 }
                                 gameTool(delayedTapEnabled ? "checkmark.circle.fill" : "hand.tap",
-                                         delayedTapEnabled ? "延迟点按：开" : "延迟点按：关") {
+                                         delayedTapEnabled ? "触屏延迟：开" : "触屏延迟：关") {
                                     delayedTapEnabled.toggle()
-                                    LaunchDiagnostics.log("[触控辅助] 延迟点按自动抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
+                                    LaunchDiagnostics.log("[触控辅助] 手指直接点按及精准鼠标延迟抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
                                 }
                                 gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
                                     fpsEnabled.toggle()

@@ -19,6 +19,7 @@ jobs:
           node --check Patches/frame-cap.js
           node --check Patches/touch-controls.js
           node Patches/test-frame-cap.js
+          node Patches/test-direct-touch.js
           python3 - <<'PY_CHECK'
           from pathlib import Path
           source=Path('Sources/GameServer.swift').read_text()
@@ -50,6 +51,9 @@ jobs:
           assert 'setDelayedTap:setDelayedTap' in mouse
           assert '-webkit-touch-callout:none' in mouse
           assert 'contextmenu' in mouse and 'selectstart' in mouse
+          assert 'document.addEventListener("pointerdown",directPointerDown,true)' in mouse
+          assert 'document.addEventListener("pointerup",directPointerUp,true)' in mouse
+          assert 'Math.max(0,350-(performance.now()-t.pressedAt))' in mouse
           assert 'bridge?.resetGameEntryForNewPage()' in source
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'webView.isOpaque = true' in swift
@@ -136,6 +140,7 @@ jobs:
           node --check Patches/touch-controls.js
           node --check Patches/frame-cap.js
           node Patches/test-frame-cap.js
+          node Patches/test-direct-touch.js
           node --check Resources/Ruffle/touch-controls.js
           python3 - <<'PY_TOUCH'
           from pathlib import Path
@@ -150,6 +155,8 @@ jobs:
           assert 'Object.defineProperty(ev,"offsetY"' in js
           assert 'finishPendingClick' not in js
           assert 'if(!hover){' in js
+          assert 'function directPointerDown(ev)' in js
+          assert 'function directPointerUp(ev)' in js
           assert 'enableMapSwipe' not in js
           assert 'galaxy-navigation' not in html
           swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
@@ -242,21 +249,21 @@ jobs:
       - name: Check formal version and build metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.2'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '105'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '106'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.02 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.02-formal/ --output=/tmp/ShiguangLauncher-v1.02-formal-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.02-formal-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-formal-source.zip | grep -Fx 'ShiguangLauncher-v1.02-formal/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.02-b106/ --output=/tmp/ShiguangLauncher-v1.02-b106-direct-touch-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.02-b106-direct-touch-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-b106-direct-touch-source.zip | grep -Fx 'ShiguangLauncher-v1.02-b106/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-formal-unsigned-ipa
+          name: ShiguangLauncher-v1.02-b106-direct-touch-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-formal-source
-          path: /tmp/ShiguangLauncher-v1.02-formal-source.zip
+          name: ShiguangLauncher-v1.02-b106-direct-touch-source
+          path: /tmp/ShiguangLauncher-v1.02-b106-direct-touch-source.zip
           if-no-files-found: error
