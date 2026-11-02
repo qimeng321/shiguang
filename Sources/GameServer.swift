@@ -579,7 +579,6 @@ final class GameServer {
             .replacingOccurrences(of: ">", with: "&gt;")
         let html = """
         <!doctype html><html><head><meta charset="utf-8">
-        <meta name="shiguang-quality" content="\(selectedQuality)">
         <meta name="viewport" content="width=device-width,initial-scale=1"></head>
         <body style="background:#111;color:#fff;font:16px/1.7 -apple-system,sans-serif;padding:72px 24px;white-space:pre-wrap">
         <h2>拾光号：游戏启动失败（HTTP \(status)）</h2><p>\(escaped)</p></body></html>
@@ -635,7 +634,8 @@ final class GameServer {
         }
         return """
         <!doctype html><html lang="zh-CN"><head>
-        <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+        <meta charset="utf-8"><meta name="shiguang-quality" content="\(selectedQuality)">
+        <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
         <style>
           :root {--game-w:960px;--game-h:560px}
           html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000}
