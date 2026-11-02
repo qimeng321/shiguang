@@ -17,6 +17,47 @@ enum LaunchDiagnostics {
     static var logURL: URL {
         documents.appendingPathComponent("diagnostics.txt")
     }
+    // A tiny atomic native-process marker survives app termination, unlike an
+    // asynchronous diagnostic log queue. Never write credentials or packets.
+    static var runStateURL: URL {
+        documents.appendingPathComponent("run-state.json")
+    }
+    private static let currentRunID = UUID().uuidString
+
+    static func beginRun() {
+        fileQueue.sync {
+            prepareUnlocked()
+            if let oldData = try? Data(contentsOf: runStateURL),
+               let old = try? JSONSerialization.jsonObject(with: oldData) as? [String: String] {
+                let phase = old["phase"] ?? "未知"
+                let time = old["at"] ?? "未知"
+                let details = (old["detail"] ?? "").prefix(170)
+                appendUnlocked("[恢复诊断] 上一次进程最后标记：\(phase)；时间=\(time)；详情=\(details)；无法单凭标记认定闪退")
+            }
+            persistStateUnlocked("app-start", detail: "原生应用已启动")
+        }
+    }
+
+    static func markState(_ phase: String, detail: String = "") {
+        fileQueue.sync {
+            prepareUnlocked()
+            persistStateUnlocked(phase, detail: detail)
+            appendUnlocked("[原生状态] \(phase)：\(detail.prefix(180))")
+        }
+    }
+
+    private static func persistStateUnlocked(_ phase: String, detail: String) {
+        let state = [
+            "run": currentRunID,
+            "phase": String(phase.prefix(80)),
+            "detail": String(detail.prefix(180)),
+            "at": ISO8601DateFormatter().string(from: Date())
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]) {
+            do { try data.write(to: runStateURL, options: .atomic) }
+            catch { appendUnlocked("[原生状态] 原子状态保存失败：" + error.localizedDescription) }
+        }
+    }
 
     // Prepare synchronously so the folder becomes visible in Files immediately
     // after app launch, not only after an import or a successful game start.
@@ -277,7 +318,8 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.02（Build 106）启动；启用关键文件内容校验、失败自动清理和弹窗重试")
+        LaunchDiagnostics.beginRun()
+        LaunchDiagnostics.log("启动器 正式版 1.02（Build 109 · iPhone15Pro 自动渲染回归对照专版）启动；恢复 Build106 自动 GPU 后端并保留 Build108 原生与地图心跳诊断")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root

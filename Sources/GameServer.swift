@@ -495,6 +495,14 @@ final class GameServer {
         let response = isPartial ? "206 Partial Content" : "200 OK"
         traceRequest(headOnly ? "HEAD" : "GET", "/" + relative,
                      status: isPartial ? 206 : 200, size: byteCount)
+        // Continue tracing map loads even after the ordinary 300-request cap.
+        // HTTP completion is NOT proof that Flash applied or rendered the map.
+        let mapRelative = relative.lowercased()
+        let isMapAsset = mapRelative.hasPrefix("resource/map/") ||
+            mapRelative == "resource/worldmap.swf"
+        if isMapAsset && !headOnly {
+            LaunchDiagnostics.log("[地图资源] 请求开始：\(relative)；预期字节=\(byteCount)")
+        }
         let contentRange = isPartial ? "Content-Range: bytes \(first)-\(last)/\(total)\r\n" : ""
         let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)Cache-Control: no-store\r\nConnection: close\r\n\r\n"
         if !headOnly {
@@ -516,7 +524,9 @@ final class GameServer {
                 self.finishHTTPResponse(connection)
             } else {
                 let pvm = relative.lowercased() == "version.swf" && !isPartial
-                self.stream(handle, to: connection, remaining: byteCount, observeCompletion: pvm)
+                self.stream(handle, to: connection, remaining: byteCount,
+                            observeCompletion: pvm,
+                            mapTrace: isMapAsset ? relative : nil)
             }
         })
     }
@@ -546,10 +556,12 @@ final class GameServer {
     }
 
     private func stream(_ handle: FileHandle, to connection: NWConnection,
-                        remaining: UInt64, observeCompletion: Bool = false) {
+                        remaining: UInt64, observeCompletion: Bool = false,
+                        mapTrace: String? = nil) {
         guard remaining > 0 else {
             try? handle.close()
             if observeCompletion { LaunchDiagnostics.log("[PVM 传输] version.swf 数据已发完，准备 TCP FIN") }
+            if let mapTrace { LaunchDiagnostics.log("[地图资源] 全部字节交给网络层：\(mapTrace)；Flash 是否完成地图初始化仍未知") }
             finishHTTPResponse(connection, pvm: observeCompletion)
             return
         }
@@ -557,6 +569,7 @@ final class GameServer {
         guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else {
             try? handle.close()
             if observeCompletion { LaunchDiagnostics.log("[PVM 传输] 读取异常，剩余 \(remaining) 字节") }
+            if let mapTrace { LaunchDiagnostics.log("[地图资源] 读取失败：\(mapTrace)；剩余=\(remaining)") }
             connection.cancel()
             return
         }
@@ -564,9 +577,10 @@ final class GameServer {
             guard let self else { try? handle.close(); connection.cancel(); return }
             if error == nil {
                 self.stream(handle, to: connection, remaining: remaining - UInt64(chunk.count),
-                            observeCompletion: observeCompletion)
+                            observeCompletion: observeCompletion, mapTrace: mapTrace)
             } else {
                 if observeCompletion { LaunchDiagnostics.log("[PVM 传输] 写入失败：" + (error?.localizedDescription ?? "未知")) }
+                if let mapTrace { LaunchDiagnostics.log("[地图资源] 发送失败：\(mapTrace)；" + (error?.localizedDescription ?? "未知")) }
                 try? handle.close()
                 connection.cancel()
             }
@@ -657,6 +671,8 @@ final class GameServer {
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
             quality:configuredQuality,
+            // Build 109 A/B: no preferredRenderer override.
+            // Return to the Ruffle 0.7.1 default used by working Build 106.
             allowScriptAccess:true,publicPath:"/ruffle/",
             fontSources:["/ruffle/fonts/NotoSansCJKsc-Regular.otf"],
             defaultFonts:{
@@ -815,6 +831,28 @@ final class GameServer {
             placeInputDock();
             return input;
           }
+          // Diagnostics for graphics-pressure and WebGL context loss.
+          // Only inspect existing canvases; never create an extra GL context.
+          function reportExistingCanvas(label){
+            try{
+              var p=player||document.querySelector("ruffle-player");
+              var nodes=p&&p.shadowRoot&&p.shadowRoot.querySelectorAll("canvas");
+              if(!nodes||!nodes.length){report("渲染检查 "+label+"：尚无 Canvas");return;}
+              var values=Array.prototype.map.call(nodes,function(c){
+                var r=c.getBoundingClientRect();
+                return c.width+"×"+c.height+"像素 / 屏幕"+Math.round(r.width)+"×"+Math.round(r.height);
+              });
+              report("渲染检查 "+label+"："+values.slice(0,3).join("，"));
+            }catch(e){report("渲染检查失败："+String(e).slice(0,90));}
+          }
+          document.addEventListener("webglcontextlost",function(ev){
+            report("严重诊断：WebGL 上下文丢失；目标="+(ev.target&&ev.target.tagName||"未知"));
+          },true);
+          document.addEventListener("webglcontextrestored",function(){
+            report("渲染诊断：WebGL 上下文恢复");
+          },true);
+          setTimeout(function(){reportExistingCanvas("加载后10秒");},10000);
+          setTimeout(function(){reportExistingCanvas("加载后40秒");},40000);
           // Native three-dot menu sends fixed, allowlisted commands.
           // The mouse/map implementation lives in a separately syntax-checked
           // script, and creates its overlays only when explicitly enabled.
@@ -974,6 +1012,7 @@ final class GameServer {
               japaneseMincho:["Noto Sans CJK SC"]
             };
             options.quality=configuredQuality;
+            report("地图兼容回归对照：已移除 Build107/108 的 WebGL 强制偏好，恢复 Ruffle 自动渲染后端；保留 Build108 原生诊断");
             try{
               var chk=await fetch("/ruffle/fonts/NotoSansCJKsc-Regular.otf",{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC");
@@ -990,7 +1029,7 @@ final class GameServer {
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
             report("画质选择：quality="+configuredQuality+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
-              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择（Build106 配置）");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();

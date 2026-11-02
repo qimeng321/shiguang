@@ -1,3 +1,56 @@
+# iPhone 15 Pro · 地图 100% 卡住回归对照版（正式 1.02 · Build 109）
+
+**目标：** 客户报告 Build 107/108 在登录成功后始终停留在「加载地图 100%／快去探索」，而 Build 106 曾能进入游戏场景（但存在 WebKit WebContent 进程终止）。Build 108 诊断证据证明：`resource/map/1.swf` 的 915434 字节由本地 HTTP 完整交给网络层，`CMD1001` 登录/选服成功，JS 心跳和浏览器动画帧连续正常超过一分钟，用户之后手动点击刷新；这**不等于 Flash 地图脚本初始化完成**，也未证明 WebGL 是唯一根因。
+
+**只做一个关键回归改动：** 同时删除网页 Ruffle 全局配置和 load 选项中 Build 107 增加的 `preferredRenderer: "webgl"`。恢复 Build 106 的**自动 GPU 后端选择**。保留 Build 108 的进程重启状态文件、前后台生命周期、WebKit 内容进程终止回调、JS 心跳/Canvas 尺寸、原生停滞看门狗，以及地图 SWF 请求、流式传输结束日志。未替换 Ruffle 0.7.1，未改 `.srom` 美化包、Flash SWF/AVM2/PVM 兼容补丁、登录网络或触控/键盘/NoNo。
+
+- 显示的正式版号仍为 **1.02**，内部 `CFBundleShortVersionString=1.0.2` / `CFBundleVersion=109`；保留原 Bundle ID。未签名 IPA 需使用相同签名配置覆盖安装；**不要卸载旧版，否则已导入的美化包可能丢失**。
+- 仅在独立实验分支生成，**不合并公共 `main`**。Build 109 能否恢复地图仍须 iPhone 真机测试。若地图恢复而网页进程再次终止，需单独处理 WebKit 稳定性，不能认定问题完全修好。
+- 测试：先保持和 Build 108 相同的高清/不限制帧率及同一资源包进入游戏，查看地图是否在登录后正常进入；随后将画质/帧率分别调为均衡/60 比较。如卡在 100%，保持前台 60 秒再导出 `diagnostics.txt`；如能进入地图，测试原先 NoNo、背包、战斗等，并连续运行 20–30 分钟观察 WebContent 是否仍被终止。
+- 不使用无证据的「Flash 地图初始化已成功」诊断文字。HTTP 200、字节交给网络层和 JS 心跳均无法证明 Flash 代码实际执行到成功回调。
+
+---
+
+# iPhone 15 Pro · 地图加载 100% 卡住原生诊断专版（1.02，Build 108）
+
+根据用户截图，游戏内已显示「加载地图 100%／快去探索」，但没有完成场景进入。**100% 只代表游戏 SWF 自己绘制的进度条值，不代表 Flash 完成地图/人物初始化。** 诊断专版在前一份 Build 107 WebGL 试验基础上单独增加记录，**未改动地图 SWF / .srom 资源、登录、点击、字体、特效或帧率**，不会声称修复卡死。
+
+- App 原生启动标记：`Documents/run-state.json` 用原子写入保存最近一次进程、场景、心跳状态。下次启动时把前一次状态写到 `diagnostics.txt`，但**无法仅凭上一次状态判断是系统杀进程、用户强制关闭还是崩溃**。
+- SwiftUI scene 生命周期：前台、短暂 inactive、后台、游戏视图正常关闭、网页导航、WebContent 进程终止各有区分。
+- 网页 JS 心跳：每 5 秒汇报一次 JS 线程是否能运行、浏览器动画回调次数、Ruffle readyState/isPlaying、Canvas 像素；原生每约 15 秒保存一次。若前台超 16 秒没有网页心跳，原生定时器记录「suspected-web-freeze」，网页恢复后记录「js-heartbeat-recovered」。**心跳正常只说明浏览器事件循环仍工作，不代表 Flash 地图已经完成加载**。
+- HTTP 本地服务：地图 `/resource/map/*.swf` 与 `/resource/worldMap.swf` 单独记录开始请求、全部字节交给网络层、读取或写入错误；不受普通 HTTP 日志 300 条上限影响。**传输完成不等于 Flash 解码/绘制完成**。
+- 日志仅含诊断状态与资源路径，不记录账号、密码、网络负载或令牌。
+- `CFBundleShortVersionString=1.0.2` 不变、`CFBundleVersion=108`。同 Bundle ID。使用已有相同签名覆盖安装，不能卸载已导入数 GB 美化包的 App。
+- 这是供个别 iPhone 15 Pro 客户诊断的 **单独分支**，不会修改公共正式版 main。只有 Xcode 编译和有限脚本静态检查通过时才发布包；上机仍需验证。
+
+## 复现步骤
+1. 打开 App，从「文件」App 的分享菜单或启动器分享日志 `diagnostics.txt`；先确认 Build 108 标记。
+2. 进入游戏，重现地图 100% 卡住，**保持前台至少 25 秒**，不要立刻强制退出。
+3. 点击左上角叉返回启动器，点「反馈问题」分享 `diagnostics.txt`；如果 App 整体退出，重新打开再分享。可以额外分享 `run-state.json`。
+4. 查看是否出现「地图资源请求开始/全部字节交给网络层」「js-heartbeat-ok」「suspected-web-freeze」「WebContent 进程终止」。这些可定位网络层 / 浏览器事件循环异常，但不足以仅靠日志断定 Flash SWF 自身卡住的具体代码。
+
+---
+
+# iPhone 15 Pro · WebKit 终止稳定性专版 (正式版 1.02 / Build 107)
+
+仅针对此前在 iPhone 15 Pro / iOS 26.6.2 约半分钟到两分钟内频繁发生的 WebKit WebContent 进程终止问题，单独试验 Ruffle 渲染配置。**此分支只给对应用户测试，不合并正式 main。**
+
+## 唯一主要行为改动
+- Ruffle 0.7.1 `preferredRenderer: "webgl"`（全局配置和每次 load 的 options 两处同步指定），尝试绕过原来的自动 `wgpu-webgl` 路径。Ruffle 本身可按支持情况回退，不能保证实际使用的引擎后端永远固定。
+- 不改变 `quality`、SWF 帧率、地图尺寸、DPR、中文字体、NoNo 按钮、虚拟鼠标、直接触屏延迟和导入流程。
+- 增加渲染 Canvas 像素尺寸报告（游戏启动后第10、第40秒）及 WebGL contextlost/contextrestored 诊断，不主动调用 `getContext()`，避免新建 GPU 上下文。
+- Ruffle 文档指出 vanilla `webgl` 可能缺失高级混合模式、位图绘制等效果，因此**若出现画面/特效异常或更卡**，使用原正式版 1.02 Build 106，并反馈日志。
+
+## 版本与安装
+显示版本继续为 **正式版 1.02**；iOS `CFBundleShortVersionString=1.0.2`、`CFBundleVersion=107`，目的是和正式版 Build 106 区分并允许安全覆盖升级。Bundle ID `cn.shiguanghao.launcher` 保持不变。unsigned IPA 需使用和原版相同的签名配置覆盖安装；**不要卸载 App，防止丢失美化包**。
+
+## 对照测试
+- iPhone 15 Pro，同一个 .srom；先用均衡画质、最高帧率60并记录测试时间，再尝试高清/不限制；
+- 地图站立、NoNo、背包/刻印、战斗分别试用20–30分钟，重复做以前会复现的操作；
+- 若有黑屏，请导出 `diagnostics.txt`，关注 `[严重诊断]`、`WebGL 上下文丢失`、`渲染检查`；提供 iOS 的 JetsamEvent / WebKit.WebContent IPS 是确定内存 vs 渲染故障的必要佐证。
+
+---
+
 # 正式版 1.02 更新构建 Build 106 · 直接触屏延迟点按
 
 保留版本号 **1.0.2**，构建号由 105 更新至 **106**，可用原包名、原签名覆盖安装。本构建只改点击辅助逻辑，不替换游戏引擎、不删除资源、不增加大体积游戏包。
