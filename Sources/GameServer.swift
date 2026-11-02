@@ -746,8 +746,15 @@ final class GameServer {
             Object.keys(css).forEach(function(k){
               input.style.setProperty(k.replace(/[A-Z]/g,function(c){return "-"+c.toLowerCase()}),css[k],"important");
             });
+            // Preserve Ruffle's one real virtual keyboard for Flash text focus.
+            // iOS otherwise restores the previously selected Chinese IME.
+            // Email layout is a best-effort ASCII-first keyboard hint.
+            if(input.type!=="email")input.type="email";
+            input.setAttribute("inputmode","email");
+            input.setAttribute("lang","en-US");
+            input.setAttribute("enterkeyhint","done");
             input.setAttribute("aria-hidden","false");
-            input.setAttribute("placeholder","点账号或密码框后，在此输入");
+            input.setAttribute("placeholder","账号/密码：优先英文键盘输入");
             input.setAttribute("autocomplete","off");
             input.setAttribute("autocorrect","off");
             input.setAttribute("autocapitalize","none");
@@ -796,9 +803,13 @@ final class GameServer {
               input.addEventListener("input",function(ev){
                 flush();
               },true);
-              input.addEventListener("focus",function(){report("键盘：真实输入框获得焦点");},true);
-              input.addEventListener("blur",function(){report("键盘：输入框失去焦点");},true);
-              report("键盘：保留 Ruffle 内部输入组件，使用相对游戏宽度绝对居中");
+              input.addEventListener("focus",function(){
+                report("键盘：输入框获得焦点（优先英文布局）");scheduleFit();
+              },true);
+              input.addEventListener("blur",function(){
+                report("键盘：输入框失去焦点");scheduleFit();
+              },true);
+              report("键盘：保留 Ruffle 内部输入组件；已设置 email 键盘布局提示");
             }
             placeInputDock();
             return input;
@@ -868,13 +879,28 @@ final class GameServer {
             resetCursor:function(){if(touchControls)touchControls.resetCursor();},
             cycleSpeed:function(){if(touchControls)touchControls.cycleSpeed();}
           };
-          var stableViewport=null;
+          // The iOS software keyboard shrinks visualViewport but the Flash
+          // stage must not jump. Preserve its height until a true rotation.
+          // Always scale 960x560 proportionally; no canvas transform applied.
+          var stableViewport=null,fitTimer=null;
+          function inputHasFocus(){
+            var field=keyboardInput();
+            return !!(field&&field.getRootNode().activeElement===field);
+          }
           function fit(){
-            var v=window.visualViewport,w0=v?v.width:window.innerWidth,h0=v?v.height:window.innerHeight;
-            if(!stableViewport||Math.abs(w0-stableViewport.w)>85){
-              stableViewport={w:w0,h:Math.max(h0,window.innerHeight)};
-            }else if(h0>stableViewport.h){
-              stableViewport.h=h0;
+            var v=window.visualViewport;
+            var measuredW=Math.max(1,Math.round(v?v.width:window.innerWidth));
+            var measuredH=Math.max(1,Math.round(Math.max(v?v.height:0,window.innerHeight||0)));
+            var keyboardFocused=inputHasFocus();
+            if(!stableViewport){
+              stableViewport={w:measuredW,h:measuredH};
+            }else if(Math.abs(measuredW-stableViewport.w)>64 && !keyboardFocused){
+              // Orientation or actual split-view width change.
+              stableViewport={w:measuredW,h:measuredH};
+            }else if(!keyboardFocused){
+              stableViewport.w=measuredW;
+              // Avoid transient keyboard shrink and toolbar animations.
+              if(measuredH>=stableViewport.h-64)stableViewport.h=measuredH;
             }
             var w=stableViewport.w,h=stableViewport.h;
             var factor=Math.min(w/960,h/560);
@@ -882,16 +908,23 @@ final class GameServer {
             document.documentElement.style.setProperty("--game-w",pw+"px");
             document.documentElement.style.setProperty("--game-h",ph+"px");
             var game=document.getElementById("game");
-            game.style.height=Math.round(h)+"px";
-            game.style.width=Math.round(w)+"px";
+            game.style.height=h+"px";game.style.width=w+"px";
             if(player){player.style.width=pw+"px";player.style.height=ph+"px";}
-            var state=pw+"×"+ph+"；基准屏幕 "+Math.round(w)+"×"+Math.round(h);
-            if(state!==last){last=state;report("稳定屏幕适配："+state);}
+            var state=pw+"×"+ph+"；可用屏幕 "+w+"×"+h;
+            if(state!==last){last=state;report("等比例自适应："+state);}
             placeInputDock();
           }
-          window.addEventListener("resize",fit);
-          window.addEventListener("orientationchange",function(){stableViewport=null;dockLast="";fit();});
-          if(window.visualViewport)window.visualViewport.addEventListener("resize",fit);
+          function scheduleFit(){
+            if(fitTimer!==null)clearTimeout(fitTimer);
+            fitTimer=setTimeout(function(){fitTimer=null;fit();},65);
+          }
+          window.addEventListener("resize",scheduleFit);
+          window.addEventListener("orientationchange",function(){
+            stableViewport=null;scheduleFit();
+            // WebKit reports rotation geometry in several asynchronous steps.
+            setTimeout(function(){stableViewport=null;fit();},350);
+          });
+          if(window.visualViewport)window.visualViewport.addEventListener("resize",scheduleFit);
           fit();
           try{
             if(!window.RufflePlayer||!window.RufflePlayer.newest)throw Error("Ruffle JS 未加载");
