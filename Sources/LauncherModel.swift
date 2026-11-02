@@ -319,7 +319,7 @@ final class LauncherModel: ObservableObject {
     init() {
         LaunchDiagnostics.prepare()
         LaunchDiagnostics.beginRun()
-        LaunchDiagnostics.log("启动器 正式版 1.02（Build 109 · iPhone15Pro 自动渲染回归对照专版）启动；恢复 Build106 自动 GPU 后端并保留 Build108 原生与地图心跳诊断")
+        LaunchDiagnostics.log("启动器 正式版 1.02（Build 110 · 15Pro 背包资源负载专项）启动；Ruffle自动GPU + quality=low + 微型图标SWF短时缓存 + SWF峰值记录")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
