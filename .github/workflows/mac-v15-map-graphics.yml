@@ -114,7 +114,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/dmg-stage"
           ditto "$APP" "$RUNNER_TEMP/dmg-stage/拾光号 Mac 1.5.app"
           ln -s /Applications "$RUNNER_TEMP/dmg-stage/Applications"
-          hdiutil create -volname '拾光号 Mac 1.5 Intel' -srcfolder "$RUNNER_TEMP/dmg-stage" -ov -format UDZO dist/ShiguangMac-v1.5-Intel.dmg
+          # DiskImages helper intermittently returns EBUSY on macOS runners. Retry an isolated temp image.
+          DMG_TMP="$RUNNER_TEMP/shiguang-v15-${GITHUB_RUN_ATTEMPT}.dmg"
+          for attempt in 1 2 3 4; do
+            rm -f "$DMG_TMP"
+            if hdiutil create -volname '拾光号 Mac 1.5 Intel' -srcfolder "$RUNNER_TEMP/dmg-stage" -ov -format UDZO "$DMG_TMP"; then
+              mv "$DMG_TMP" dist/ShiguangMac-v1.5-Intel.dmg
+              break
+            fi
+            echo "hdiutil was busy (attempt $attempt); retrying..."
+            sleep $((attempt * 5))
+          done
+          test -s dist/ShiguangMac-v1.5-Intel.dmg
           hdiutil verify dist/ShiguangMac-v1.5-Intel.dmg
           ls -lh dist/ShiguangMac-v1.5-Intel.*
           shasum -a 256 dist/ShiguangMac-v1.5-Intel.dmg dist/ShiguangMac-v1.5-Intel-APP.zip
