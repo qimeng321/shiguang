@@ -283,6 +283,10 @@ final class LauncherModel: ObservableObject {
     @Published private(set) var isInstalledValidated = false
     @Published private(set) var lastImportFailed = false
     @Published var importFailureMessage: String?
+    @Published private(set) var patchSummary = MobilePatchManager.activeSummary
+    @Published private(set) var patchBusy = false
+    @Published var patchError: String?
+    @Published private(set) var patchStatus = "可导入专用手机补丁包，不修改原美化包。"
 
     var canStartGame: Bool {
         guard let gameRoot, !selectedEntry.isEmpty, isInstalledValidated else { return false }
@@ -314,7 +318,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.03（Build 112 · 导入进度修复）启动；解压阶段结束后显示安装收尾状态，保护原资源包")
+        LaunchDiagnostics.log("拾光号 测试版 1.1（Build 113 · 可撤销手机补丁覆盖层）启动；基于正式版 1.03 Build112")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -511,6 +515,59 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+
+    func importMobilePatch(_ url: URL) {
+        guard !patchBusy && !isImporting && !isClearing else { return }
+        guard isInstalledValidated, gameRoot != nil else {
+            patchError = "请先导入并验证完整的 .srom 游戏资源，再安装手机补丁。"
+            return
+        }
+        patchBusy = true
+        patchStatus = "正在检查补丁清单并校验 ZIP CRC32…"
+        patchError = nil
+        let revision = resourceRevision
+        let scoped = url.startAccessingSecurityScopedResource()
+        Task.detached(priority: .userInitiated) {
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let result = try MobilePatchManager.install(url, currentRevision: revision)
+                await MainActor.run {
+                    self.patchSummary = result
+                    self.patchStatus = "补丁已启用；退出并重新进入游戏后生效。"
+                    self.patchBusy = false
+                }
+            } catch {
+                LaunchDiagnostics.log("[手机补丁] 导入失败：\(error.localizedDescription)")
+                await MainActor.run {
+                    self.patchSummary = MobilePatchManager.activeSummary
+                    self.patchStatus = "补丁安装未完成，原游戏资源与原补丁保持不变。"
+                    self.patchError = error.localizedDescription
+                    self.patchBusy = false
+                }
+            }
+        }
+    }
+
+    func clearMobilePatch() {
+        guard !patchBusy && !isImporting && !isClearing else { return }
+        patchBusy = true
+        patchStatus = "正在撤销补丁…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                try MobilePatchManager.clear()
+                await MainActor.run {
+                    self.patchSummary = MobilePatchManager.activeSummary
+                    self.patchStatus = "补丁已撤销；重新进入游戏将使用原始资源。"
+                    self.patchBusy = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.patchError = "清除补丁失败：\(error.localizedDescription)"
+                    self.patchBusy = false
+                }
+            }
+        }
+    }
 
     func clearPackage() {
         guard !isImporting && !isClearing else { return }
