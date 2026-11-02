@@ -421,7 +421,7 @@ struct LauncherView: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(ink)
                 Spacer()
-                Text(current.title + "模式")
+                Text("15Pro 专项 · 低负载")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(blue)
             }
@@ -432,11 +432,13 @@ struct LauncherView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityLabel("游戏画质档位")
-            Text(current.detail)
+            .disabled(true) // This one-person test build forces Ruffle quality=low.
+            .opacity(0.50)
+            Text("本专版实际固定为省电抗锯齿（Ruffle quality=low），降低 GPU 负担。保存的原画质选择（\(current.title)）不会被覆盖。")
                 .font(.system(size: 12))
                 .foregroundStyle(subtleInk)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("进入游戏时生效 · 自动记住上次选择")
+            Text("只限 iPhone 15 Pro 诊断版；其他用户正式版画质不变")
                 .font(.system(size: 11))
                 .foregroundStyle(subtleInk.opacity(0.85))
         }
@@ -668,6 +670,14 @@ struct GameView: View {
                 errorText = "本地服务创建失败：\(error.localizedDescription)；请检查 Network 框架监听器参数。"
                 LaunchDiagnostics.log("本地服务创建失败：" + error.localizedDescription)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.didReceiveMemoryWarningNotification
+        )) { _ in
+            // A native memory warning does NOT measure the separate WebContent
+            // process. Only record it as a clue; do not clear caches mid-game.
+            LaunchDiagnostics.markState("native-memory-warning",
+                detail: "iOS 向 App 发送内存警告；不代表 WebKit 内容进程内存用量")
         }
         .onDisappear {
             LaunchDiagnostics.markState("game-view-closed", detail: "SwiftUI 游戏视图正常关闭")
