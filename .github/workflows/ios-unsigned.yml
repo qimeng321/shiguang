@@ -32,6 +32,9 @@ jobs:
           assert 'Math.min(w/960,h/560)' in source
           assert 'case unlimited, fps60, fps30' in swift
           assert 'case saving, balanced, ultra' in swift
+          assert 'Text("正式版 1.01")' in swift
+          assert 'webView.isOpaque = true' in swift
+          assert 'traceObserver.disconnect()' in swift
           print('1.02 keyboard, adaptive canvas and frame-cap invariants OK')
           PY_CHECK
   build:
@@ -95,10 +98,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Adjust test-only CJK font vertical placement
+      - name: Adjust release CJK fallback font vertical placement
         run: |
           python3 -m pip install "fonttools==4.60.1"
           python3 Patches/adjust-cjk-baseline.py Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          python3 - <<'PY_VERIFY_FONT'
+          from fontTools.ttLib import TTFont
+          font=TTFont('Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf')
+          matrix=list(font['CFF '].cff.topDictIndex[0].FontMatrix)
+          assert abs(float(matrix[5])-0.035)<0.000001, f'unexpected font vertical offset: {matrix}'
+          font.close()
+          print('Verified +35/1000 em fallback font baseline shift')
+          PY_VERIFY_FONT
       - name: Validate Canvas touch controls module
         shell: bash
         run: |
@@ -160,6 +171,7 @@ jobs:
           assert 'function scheduleFit()' in html
           assert 'Math.min(w/960,h/560)' in html
           assert 'inputHasFocus()' in html
+          assert 'if(state!==last)' in html
           assert 'dockLast=' not in html
           print("Verified persistent three-tier quality controls and game setting wiring")
           print("Verified separate Canvas-pointer module and HTML wiring")
@@ -206,22 +218,22 @@ jobs:
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
       - name: Check formal version and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.2'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '102'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.1'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '103'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.0 project source ZIP
+      - name: Package formal 1.01 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.0.2-test/             --output=/tmp/ShiguangLauncher-v1.0.2-test-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.0.2-test-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.0.2-test-source.zip | grep -Fx 'ShiguangLauncher-v1.0.2-test/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.01-formal/ --output=/tmp/ShiguangLauncher-v1.01-formal-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.01-formal-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.01-formal-source.zip | grep -Fx 'ShiguangLauncher-v1.01-formal/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0.2-test-unsigned-ipa
+          name: ShiguangLauncher-v1.01-formal-unsigned-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0.2-test-source
-          path: /tmp/ShiguangLauncher-v1.0.2-test-source.zip
+          name: ShiguangLauncher-v1.01-formal-source
+          path: /tmp/ShiguangLauncher-v1.01-formal-source.zip
           if-no-files-found: error
