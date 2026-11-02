@@ -59,6 +59,18 @@ jobs:
           assert 'options.preferredRenderer="webgl"' in source
           assert 'reportExistingCanvas("加载后10秒")' in source
           assert 'webglcontextlost' in source
+          assert '[地图资源] 请求开始' in source
+          assert 'mapTrace:' in source
+          assert '[地图资源] 全部字节交给网络层' in source
+          assert 'run-state.json' in model
+          assert 'static func beginRun()' in model
+          assert 'static func markState(' in model
+          assert 'LauncherModel' in swift
+          assert 'heartbeatWatchdog = Timer.scheduledTimer' in swift
+          assert 'lastJSHeartbeat' in swift
+          assert '心跳：JS线程响应' in swift
+          assert 'suspected-web-freeze' in swift
+          assert 'game-page-loaded' in swift
           assert 'GPU 后端自动选择' not in source
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'webView.isOpaque = true' in swift
@@ -256,21 +268,21 @@ jobs:
       - name: Check formal version and build metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.2'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '107'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '108'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.02 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.02-iPhone15Pro-WebGL-b107/ --output=/tmp/ShiguangLauncher-v1.02-iPhone15Pro-WebGL-b107-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.02-iPhone15Pro-WebGL-b107-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-iPhone15Pro-WebGL-b107-source.zip | grep -Fx 'ShiguangLauncher-v1.02-iPhone15Pro-WebGL-b107/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108/ --output=/tmp/ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source.zip | grep -Fx 'ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-iPhone15Pro-WebGL-b107-ipa
+          name: ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-iPhone15Pro-WebGL-b107-source
-          path: /tmp/ShiguangLauncher-v1.02-iPhone15Pro-WebGL-b107-source.zip
+          name: ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source
+          path: /tmp/ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source.zip
           if-no-files-found: error
