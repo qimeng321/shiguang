@@ -905,13 +905,19 @@ final class GameServer {
             var w=stableViewport.w,h=stableViewport.h;
             var factor=Math.min(w/960,h/560);
             var pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
-            document.documentElement.style.setProperty("--game-w",pw+"px");
-            document.documentElement.style.setProperty("--game-h",ph+"px");
-            var game=document.getElementById("game");
-            game.style.height=h+"px";game.style.width=w+"px";
-            if(player){player.style.width=pw+"px";player.style.height=ph+"px";}
             var state=pw+"×"+ph+"；可用屏幕 "+w+"×"+h;
-            if(state!==last){last=state;report("等比例自适应："+state);}
+            // iOS may dispatch resize events repeatedly during keyboard
+            // animation. Avoid redundant CSS writes and forced layout work.
+            if(state!==last){
+              document.documentElement.style.setProperty("--game-w",pw+"px");
+              document.documentElement.style.setProperty("--game-h",ph+"px");
+              var game=document.getElementById("game");
+              game.style.height=h+"px";game.style.width=w+"px";
+              last=state;report("等比例自适应："+state);
+            }
+            if(player && (player.style.width!==pw+"px" || player.style.height!==ph+"px")){
+              player.style.width=pw+"px";player.style.height=ph+"px";
+            }
             placeInputDock();
           }
           function scheduleFit(){
