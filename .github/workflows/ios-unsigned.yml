@@ -55,8 +55,11 @@ jobs:
           assert 'document.addEventListener("pointerup",directPointerUp,true)' in mouse
           assert 'Math.max(0,350-(performance.now()-t.pressedAt))' in mouse
           assert 'bridge?.resetGameEntryForNewPage()' in source
-          assert 'preferredRenderer:"webgl"' in source
-          assert 'options.preferredRenderer="webgl"' in source
+          # This A/B branch must NOT inherit the Build 107/108 forced WebGL choice.
+          assert 'preferredRenderer:"webgl"' not in source
+          assert 'options.preferredRenderer=' not in source
+          assert 'GPU 后端自动选择（Build106 配置）' in source
+          assert '地图兼容回归对照：已移除' in source
           assert 'reportExistingCanvas("加载后10秒")' in source
           assert 'webglcontextlost' in source
           assert '[地图资源] 请求开始' in source
@@ -71,7 +74,7 @@ jobs:
           assert '心跳：JS线程响应' in swift
           assert 'suspected-web-freeze' in swift
           assert 'game-page-loaded' in swift
-          assert 'GPU 后端自动选择' not in source
+          assert 'webglcontextlost' in source
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'webView.isOpaque = true' in swift
           assert 'traceObserver.disconnect()' in swift
@@ -172,8 +175,9 @@ jobs:
           assert 'Object.defineProperty(ev,"offsetY"' in js
           assert 'finishPendingClick' not in js
           assert 'if(!hover){' in js
-          assert 'preferredRenderer:"webgl"' in html
-          assert 'options.preferredRenderer="webgl"' in html
+          assert 'preferredRenderer:"webgl"' not in html
+          assert 'options.preferredRenderer=' not in html
+          assert 'GPU 后端自动选择（Build106 配置）' in html
           assert 'function directPointerDown(ev)' in js
           assert 'function directPointerUp(ev)' in js
           assert 'enableMapSwipe' not in js
@@ -268,21 +272,21 @@ jobs:
       - name: Check formal version and build metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.2'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '108'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '109'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.02 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108/ --output=/tmp/ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source.zip | grep -Fx 'ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109/ --output=/tmp/ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source.zip | grep -Fx 'ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-ipa
+          name: ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source
-          path: /tmp/ShiguangLauncher-v1.02-iPhone15Pro-MapDiag-b108-source.zip
+          name: ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source
+          path: /tmp/ShiguangLauncher-v1.02-iPhone15Pro-AutoGPU-b109-source.zip
           if-no-files-found: error
