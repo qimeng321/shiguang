@@ -1,0 +1,66 @@
+name: Build Shiguang Mac v1.1 Test
+on:
+  workflow_dispatch:
+  push:
+    branches: [mac-v1.1-test]
+    paths:
+      - 'Mac/v1.1/**'
+      - '.github/workflows/mac-v11-test.yml'
+jobs:
+  mac-build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore native Mac 1.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Mac/v1.1/build
+          base64 -D -i Mac/v1.1/source.tar.xz.b64 | xz -dc | tar -x -C Mac/v1.1/build
+          test -s Mac/v1.1/build/Sources/ShiguangMacApp.swift
+          test -s Mac/v1.1/build/Package.swift
+      - name: Prepare Ruffle 0.7.1 and compatibility patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Mac/v1.1/build
+          mkdir -p Assets/Ruffle Assets/Ruffle/fonts Assets
+          curl --fail --location --show-error --retry 3 'https://github.com/ruffle-rs/ruffle/releases/download/v0.7.1/ruffle-0.7.1-web-selfhosted.zip' -o "$RUNNER_TEMP/ruffle-web.zip"
+          mkdir -p "$RUNNER_TEMP/ruffle-extracted"
+          unzip -q "$RUNNER_TEMP/ruffle-web.zip" -d "$RUNNER_TEMP/ruffle-extracted"
+          RUFFLE_JS="$(find "$RUNNER_TEMP/ruffle-extracted" -name ruffle.js -type f -print -quit)"
+          test -s "$RUFFLE_JS"
+          ditto "$(dirname "$RUFFLE_JS")" Assets/Ruffle
+          printf 'Ruffle 0.7.1 macOS test\n' > Assets/Ruffle/engine-version.txt
+          cp ../../../Patches/pvm-compat.js Assets/Ruffle/pvm-compat.js
+          cp ../../../Patches/pvm-compat.b64 Assets/Ruffle/pvm-compat.b64
+          cp ../../../Patches/byte-loader-followup.b64 Assets/Ruffle/byte-loader-followup.b64
+          cp ../../../Patches/touch-controls.js Assets/Ruffle/touch-controls.js
+          curl --fail --location --show-error --retry 3 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' -o Assets/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          curl --fail --location --show-error --retry 3 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE' -o Assets/Ruffle/fonts/OFL-LICENSE.txt
+          mkdir -p "$RUNNER_TEMP/Shiguang.iconset"
+          for spec in '16:16x16' '32:16x16@2x' '32:32x32' '64:32x32@2x' '128:128x128' '256:128x128@2x' '256:256x256' '512:256x256@2x' '512:512x512' '1024:512x512@2x'; do
+            pixels="${spec%%:*}"; tag="${spec#*:}"
+            sips -s format png -z "$pixels" "$pixels" ../../../Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png --out "$RUNNER_TEMP/Shiguang.iconset/icon_${tag}.png" >/dev/null
+          done
+          iconutil -c icns "$RUNNER_TEMP/Shiguang.iconset" -o Assets/AppIcon.icns
+      - name: Compile, sign, package Mac app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Mac/v1.1/build
+          CI=1 bash './一键编译.command'
+          test -s dist/ShiguangMac-v1.1-native.zip
+          shasum -a 256 dist/ShiguangMac-v1.1-native.zip
+          hdiutil create -volname '拾光号 Mac 1.1' -srcfolder 'dist/拾光号 Mac 1.1.app' -ov -format UDZO 'dist/ShiguangMac-v1.1-Test.dmg'
+      - name: Upload ready-to-install Mac packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangMac-v1.1-Test-macOS
+          path: |
+            Mac/v1.1/build/dist/ShiguangMac-v1.1-native.zip
+            Mac/v1.1/build/dist/ShiguangMac-v1.1-Test.dmg
+          if-no-files-found: error
+          retention-days: 30
