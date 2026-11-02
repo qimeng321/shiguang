@@ -150,10 +150,31 @@ enum LaunchDiagnostics {
             require("config/dll.xml", minimum: 8)
             require("version.swf", minimum: 6)
             require("resource/main_resource.swf", minimum: 64)
+            // The 2026110201 update-reference ZIP contains only 16 core files.
+            // A real offline .srom must also include the actual map and UI.
+            require("resource/map/1.swf", minimum: 64)
+            require("resource/ui.swf", minimum: 64)
             require("dll/NieoCore.swf", minimum: 64)
             require("login/Login.swf", minimum: 64)
         }
         return failures
+    }
+
+    // Read the revision of the official core bundle without interpreting or
+    // changing arbitrary SWF content. This can label supported .srom packs.
+    static func coreRevision(root: URL, entry: String) -> String? {
+        guard !entry.isEmpty else { return nil }
+        let folder = (entry as NSString).deletingLastPathComponent
+        let base = folder.isEmpty ? root : root.appendingPathComponent(folder, isDirectory: true)
+        let config = base.appendingPathComponent("config/dll.xml")
+        guard let values = try? config.resourceValues(forKeys: [.fileSizeKey]),
+              (values.fileSize ?? 0) <= 128 * 1024,
+              let text = try? String(contentsOf: config, encoding: .utf8),
+              let item = text.components(separatedBy: "ver=\"").dropFirst().first else {
+            return nil
+        }
+        let revision = String(item.prefix(while: { $0.isNumber }))
+        return (revision.count >= 6 && revision.count <= 12) ? revision : nil
     }
 
     // This is a STATIC file-presence check, not an assertion that the game is
@@ -225,6 +246,7 @@ enum ImportError: LocalizedError {
     case noGameFiles
     case invalidPackage
     case invalidContents(String)
+    case referenceOnlyPackage
     case unsupportedFormat(String)
 
     var errorDescription: String? {
@@ -234,6 +256,7 @@ enum ImportError: LocalizedError {
         case .noGameFiles: return "资源包内没有找到 SWF。请确认这是完整的游戏资源包。"
         case .invalidPackage: return "找不到已导入的游戏资源。"
         case .invalidContents(let details): return "美化包关键文件不完整或异常：\(details)"
+        case .referenceOnlyPackage: return "这是开发用资源解析参考包（只含核心文件），不是完整游戏美化包。请导入原始完整 .srom，不能用本参考 ZIP 替代。"
         case .unsupportedFormat(let magic): return "文件不是标准 ZIP 压缩格式（文件头：\(magic)）。请提供实际 .srom 文件以确认它的封装格式。"
         }
     }
@@ -252,6 +275,7 @@ final class LauncherModel: ObservableObject {
     @Published var isClearing = false
     @Published var resourceCheckSummary = "尚未检测资源"
     @Published var resourceCheckDetails: [String] = []
+    @Published private(set) var resourceRevision: String?
     @Published private(set) var isInstalledValidated = false
     @Published private(set) var lastImportFailed = false
     @Published var importFailureMessage: String?
@@ -277,7 +301,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.02（Build 106）启动；启用关键文件内容校验、失败自动清理和弹窗重试")
+        LaunchDiagnostics.log("启动器 正式版 1.03（Build 111）启动；启用关键文件内容校验、失败自动清理和弹窗重试")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -323,8 +347,12 @@ final class LauncherModel: ObservableObject {
             isInstalledValidated = LaunchDiagnostics.validateInstalledPackage(
                 root: gameRoot, entry: selectedEntry
             ).isEmpty
+            resourceRevision = LaunchDiagnostics.coreRevision(
+                root: gameRoot, entry: selectedEntry
+            )
         } else {
             isInstalledValidated = false
+            resourceRevision = nil
         }
         let result = LaunchDiagnostics.checkResources(root: gameRoot, entry: selectedEntry)
         resourceCheckSummary = result.summary
@@ -594,7 +622,13 @@ final class LauncherModel: ObservableObject {
         let archive: Archive
         do { archive = try Archive(url: source, accessMode: .read) }
         catch { throw ImportError.invalidArchive }
+        var containsReferenceManifest = false
+        var containsPlayableMap = false
         for entry in archive {
+            if entry.path == "manifest.json" { containsReferenceManifest = true }
+            if entry.path.hasSuffix("/resource/map/1.swf") {
+                containsPlayableMap = true
+            }
             let components = entry.path.split(separator: "/", omittingEmptySubsequences: false)
             if entry.path.hasPrefix("/")
                 || entry.path.contains("\\")
@@ -602,6 +636,11 @@ final class LauncherModel: ObservableObject {
                 || entry.type == .symlink {
                 throw ImportError.unsafeEntry(entry.path)
             }
+        }
+        // Reject the small reference-only ZIP before expanding/replacing any
+        // installed multi-GB game package. Existing installation stays intact.
+        if containsReferenceManifest && !containsPlayableMap {
+            throw ImportError.referenceOnlyPackage
         }
 
         let support = savedGameRoot.deletingLastPathComponent()
@@ -623,7 +662,7 @@ final class LauncherModel: ObservableObject {
         // Only a complete CRC32-verified import with all critical files may
         // carry the ready receipt into the actual installed Game directory.
         let receipt = staging.appendingPathComponent(LaunchDiagnostics.receiptName)
-        try "full-unzip-crc32-ok; key-files-valid; v1.02\n".write(
+        try "full-unzip-crc32-ok; key-files-valid; v1.03\n".write(
             to: receipt, atomically: true, encoding: .utf8)
 
         if manager.fileExists(atPath: backup.path) {
