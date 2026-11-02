@@ -1,0 +1,116 @@
+name: Build Shiguang Mac v1.4 Cross Intel DMG
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - mac-v1.4-cross-intel
+    paths:
+      - 'Mac/v1.1/**'
+      - '.github/workflows/mac-v14-cross-intel.yml'
+jobs:
+  mac-intel:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore source and set version 1.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Mac/v1.1/build
+          base64 -D -i Mac/v1.1/source-v14.tar.xz.b64 | xz -dc | tar -x -C Mac/v1.1/build
+          cd Mac/v1.1/build
+          test -s Package.swift
+          test -s Sources/ShiguangMacApp.swift
+          test -s '一键编译.command'
+          grep -q 'installDesktopKeyboardDedup' Sources/GameServer.swift
+          grep -q 'preferredRenderer = macFast' Sources/GameServer.swift
+          grep -q 'shiguang.mac.perf' Sources/ShiguangMacApp.swift
+          sed -i '' 's/Mac 1\.1/Mac 1.4/g; s/Mac v1\.1/Mac v1.4/g; s/v1\.1/v1.4/g; s/<string>1\.1<\/string>/<string>1.4<\/string>/g; s/<string>110<\/string>/<string>140<\/string>/g' '一键编译.command' Sources/ShiguangMacApp.swift
+          sed -i '' 's/swift build -c release/swift build -c release --triple x86_64-apple-macosx12.0/g' '一键编译.command'
+          grep -- '--triple x86_64-apple-macosx12.0' '一键编译.command'
+          echo 'v1.4 performance + keyboard fix; target x86_64 via macOS cross-compile'
+          uname -m
+          swift --version
+      - name: Provide Ruffle and Windows-compatible network parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Mac/v1.1/build
+          mkdir -p Assets/Ruffle/fonts
+          curl --fail --location --retry 3 --show-error 'https://github.com/ruffle-rs/ruffle/releases/download/v0.7.1/ruffle-0.7.1-web-selfhosted.zip' -o "$RUNNER_TEMP/ruffle-web.zip"
+          mkdir -p "$RUNNER_TEMP/web"
+          unzip -q "$RUNNER_TEMP/ruffle-web.zip" -d "$RUNNER_TEMP/web"
+          RUFFLE_JS="$(find "$RUNNER_TEMP/web" -name ruffle.js -type f -print -quit)"
+          test -s "$RUFFLE_JS"
+          ditto "$(dirname "$RUFFLE_JS")" Assets/Ruffle
+          printf 'Ruffle web 0.7.1; Windows reference uses GameEngine.exe (desktop Ruffle)\n' > Assets/Ruffle/engine-version.txt
+          cp ../../../Patches/pvm-compat.js Assets/Ruffle/pvm-compat.js
+          cp ../../../Patches/pvm-compat.b64 Assets/Ruffle/pvm-compat.b64
+          cp ../../../Patches/byte-loader-followup.b64 Assets/Ruffle/byte-loader-followup.b64
+          cp ../../../Patches/touch-controls.js Assets/Ruffle/touch-controls.js
+          curl --fail --location --retry 3 --show-error 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako_inflate.min.js' -o Assets/Ruffle/pako_inflate.min.js
+          test -s Assets/Ruffle/pako_inflate.min.js
+          node --check Assets/Ruffle/pako_inflate.min.js
+          node --check Assets/Ruffle/pvm-compat.js
+          node - <<'JS'
+          const zlib = require('node:zlib');
+          const pako = require('./Assets/Ruffle/pako_inflate.min.js');
+          const input = Buffer.from('Shiguang-PVM-compatibility-test');
+          const out = pako.inflate(zlib.deflateSync(input));
+          if (Buffer.compare(Buffer.from(out), input) !== 0) throw Error('pako decompression failed');
+          console.log('Offline JS zlib inflater verified');
+          JS
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Sources/GameSocketBridge.swift')
+          s = p.read_text().replace('sessions.values.forEach { $0.stop("启动器返回首页") }', 'Array(sessions.values).forEach { $0.stop("启动器返回首页") }')
+          p.write_text(s)
+          assert 'Array(sessions.values).forEach' in s
+          page = Path('Sources/GameServer.swift').read_text()
+          assert '<script src="/ruffle/pako_inflate.min.js"></script>' in page
+          assert 'service?.shutdown()' in Path('Sources/ShiguangMacApp.swift').read_text()
+          PY
+          curl --fail --location --show-error --retry 3 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' -o Assets/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          curl --fail --location --show-error --retry 3 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE' -o Assets/Ruffle/fonts/OFL-LICENSE.txt
+          mkdir -p "$RUNNER_TEMP/Shiguang.iconset"
+          for spec in '16:16x16' '32:16x16@2x' '32:32x32' '64:32x32@2x' '128:128x128' '256:128x128@2x' '256:256x256' '512:256x256@2x' '512:512x512' '1024:512x512@2x'; do
+            size="${spec%%:*}"
+            tag="${spec#*:}"
+            sips -s format png -z "$size" "$size" ../../../Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png --out "$RUNNER_TEMP/Shiguang.iconset/icon_${tag}.png" >/dev/null
+          done
+          iconutil -c icns "$RUNNER_TEMP/Shiguang.iconset" -o Assets/AppIcon.icns
+      - name: Build native Intel x86_64 application
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd Mac/v1.1/build
+          export CI=1
+          bash './一键编译.command'
+          APP='dist/拾光号 Mac 1.4.app'
+          BIN="$APP/Contents/MacOS/ShiguangMac"
+          test -s "$BIN"
+          file "$BIN"
+          lipo -info "$BIN"
+          lipo "$BIN" -verify_arch x86_64
+          plutil -lint "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          cp dist/ShiguangMac-v1.4-native.zip dist/ShiguangMac-v1.4-Intel-APP.zip
+          mkdir -p "$RUNNER_TEMP/dmg-stage"
+          ditto "$APP" "$RUNNER_TEMP/dmg-stage/拾光号 Mac 1.4.app"
+          ln -s /Applications "$RUNNER_TEMP/dmg-stage/Applications"
+          hdiutil create -volname '拾光号 Mac 1.4 Intel' -srcfolder "$RUNNER_TEMP/dmg-stage" -ov -format UDZO dist/ShiguangMac-v1.4-Intel.dmg
+          hdiutil verify dist/ShiguangMac-v1.4-Intel.dmg
+          ls -lh dist/ShiguangMac-v1.4-Intel.*
+          shasum -a 256 dist/ShiguangMac-v1.4-Intel.dmg dist/ShiguangMac-v1.4-Intel-APP.zip
+      - name: Upload Intel DMG and zipped APP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangMac-v1.4-Intel-Installers
+          path: |
+            Mac/v1.1/build/dist/ShiguangMac-v1.4-Intel.dmg
+            Mac/v1.1/build/dist/ShiguangMac-v1.4-Intel-APP.zip
+          if-no-files-found: error
+          retention-days: 30
