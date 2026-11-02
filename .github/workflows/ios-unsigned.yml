@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - main
-      - test/iphone13pm-thermal-fps-1.0.1
+      - test/iphone13pm-fps-cap-1.0.2
 
 jobs:
   build:
@@ -37,7 +37,9 @@ jobs:
           cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
           cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
           cp Patches/touch-controls.js Resources/Ruffle/touch-controls.js
+          cp Patches/frame-cap.js Resources/Ruffle/frame-cap.js
           test -s Resources/Ruffle/touch-controls.js
+          test -s Resources/Ruffle/frame-cap.js
           test -s Resources/Ruffle/byte-loader-followup.b64
           test -s Resources/Ruffle/pvm-compat.js
           test -s Resources/Ruffle/pvm-compat.b64
@@ -79,6 +81,8 @@ jobs:
         run: |
           set -euo pipefail
           node --check Patches/touch-controls.js
+          node --check Patches/frame-cap.js
+          node Patches/test-frame-cap.js
           node --check Resources/Ruffle/touch-controls.js
           python3 - <<'PY_TOUCH'
           from pathlib import Path
@@ -87,6 +91,7 @@ jobs:
           assert 'c.dispatchEvent(ev)' in js, "Pointer events must target inner Canvas"
           assert 'window.ShiguangTouchControls' in js
           assert '/ruffle/touch-controls.js' in html
+          assert '/ruffle/frame-cap.js' in html
           assert 'touchControls=window.ShiguangTouchControls(player,report)' in html
           assert 'Object.defineProperty(ev,"offsetX"' in js
           assert 'Object.defineProperty(ev,"offsetY"' in js
@@ -111,6 +116,15 @@ jobs:
           assert 'quality:configuredQuality' in html
           assert 'shiguang-quality' in html
           assert 'case saving, balanced, ultra' in swift
+          assert '@AppStorage(GameFrameCapPreset.defaultsKey)' in swift
+          assert 'Picker("最高帧率", selection: $frameCapPreset)' in swift
+          assert 'GameFrameCapPreset.saved' in html
+          assert 'shiguang-max-fps' in html
+          assert 'window.ShiguangFrameCap' in html
+          assert 'options.frameRate' not in html
+          assert 'frameRate:configured' not in html
+          assert 'case unlimited, fps60, fps30' in swift
+          assert 'fpsRequest(fpsTick)' in html
           print("Verified persistent three-tier quality controls and game setting wiring")
           print("Verified separate Canvas-pointer module and HTML wiring")
           PY_TOUCH
@@ -156,22 +170,22 @@ jobs:
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
       - name: Check formal version and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.1'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '101'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.2'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '102'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.0 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.0.1-test/             --output=/tmp/ShiguangLauncher-v1.0.1-test-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.0.1-test-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.0.1-test-source.zip | grep -Fx 'ShiguangLauncher-v1.0.1-test/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.0.2-test/             --output=/tmp/ShiguangLauncher-v1.0.2-test-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.0.2-test-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.0.2-test-source.zip | grep -Fx 'ShiguangLauncher-v1.0.2-test/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0.1-test-unsigned-ipa
+          name: ShiguangLauncher-v1.0.2-test-unsigned-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.0.1-test-source
-          path: /tmp/ShiguangLauncher-v1.0.1-test-source.zip
+          name: ShiguangLauncher-v1.0.2-test-source
+          path: /tmp/ShiguangLauncher-v1.0.2-test-source.zip
           if-no-files-found: error
