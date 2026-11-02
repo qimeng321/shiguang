@@ -74,7 +74,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.0")
+                        Text("测试版 1.0.1")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -321,6 +321,7 @@ struct GameView: View {
     @State private var controlGeneration = 0
     @State private var controlAction = ""
     @State private var virtualMouseEnabled = false
+    @State private var fpsEnabled = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -387,6 +388,10 @@ struct GameView: View {
                                     gameTool("gauge", "切换鼠标速度") {
                                         sendControl("cycleSpeed")
                                     }
+                                }
+                                gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
+                                    fpsEnabled.toggle()
+                                    sendControl("toggleFPS")
                                 }
                                 Divider().padding(.vertical, 3)
                                 gameTool("arrow.clockwise", "刷新游戏") {
@@ -521,6 +526,7 @@ struct GameView: View {
         guard server != nil && !isClearingWebCache else { return }
         errorText = nil
         virtualMouseEnabled = false
+        fpsEnabled = false
         reloadGeneration += 1
         LaunchDiagnostics.log("[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
     }
@@ -693,7 +699,7 @@ struct GameWebView: UIViewRepresentable {
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
         let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
-                       "resetCursor", "cycleSpeed"]
+                       "resetCursor", "cycleSpeed", "toggleFPS"]
         guard allowed.contains(controlAction) else { return }
         let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"
         webView.evaluateJavaScript(js) { _, error in
