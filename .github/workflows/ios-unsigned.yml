@@ -47,7 +47,7 @@ jobs:
           assert 'Text("收尾处理中")' in swift
           assert 'ProgressView()' in swift
           assert 'CRC 校验已结束' in swift
-          assert 'Text("触控测试版 1.2")' in swift
+          assert 'Text("综合测试版 1.2 · Build 115")' in swift
           assert 'preferredRenderer:"webgl"' not in source
           assert 'input.type="email"' in source
           assert 'input.setAttribute("inputmode","email")' in source
@@ -58,7 +58,7 @@ jobs:
           assert 'Math.min(w/960,h/560)' in source
           assert 'case unlimited, fps60, fps30' in swift
           assert 'case saving, balanced, ultra' in swift
-          assert 'Text("触控测试版 1.2")' in swift
+          assert 'Text("综合测试版 1.2 · Build 115")' in swift
           assert 'Toggle(isOn: $compatibilityMode)' in swift
           assert 'shiguang.compatibilityMode103' in swift
           assert 'ShareLink(item: LaunchDiagnostics.logURL)' in swift
