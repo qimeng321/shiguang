@@ -20,6 +20,7 @@ jobs:
           node --check Patches/touch-controls.js
           node Patches/test-frame-cap.js
           node Patches/test-direct-touch.js
+          node Patches/test-smart-touch.js
           python3 - <<'PY_CHECK'
           from pathlib import Path
           source=Path('Sources/GameServer.swift').read_text()
@@ -43,7 +44,7 @@ jobs:
           assert 'Text("收尾处理中")' in swift
           assert 'ProgressView()' in swift
           assert 'CRC 校验已结束' in swift
-          assert 'Text("正式版 1.03")' in swift
+          assert 'Text("触控测试版 1.2")' in swift
           assert 'preferredRenderer:"webgl"' not in source
           assert 'input.type="email"' in source
           assert 'input.setAttribute("inputmode","email")' in source
@@ -54,7 +55,7 @@ jobs:
           assert 'Math.min(w/960,h/560)' in source
           assert 'case unlimited, fps60, fps30' in swift
           assert 'case saving, balanced, ultra' in swift
-          assert 'Text("正式版 1.03")' in swift
+          assert 'Text("触控测试版 1.2")' in swift
           assert 'Toggle(isOn: $compatibilityMode)' in swift
           assert 'shiguang.compatibilityMode103' in swift
           assert 'ShareLink(item: LaunchDiagnostics.logURL)' in swift
@@ -85,6 +86,19 @@ jobs:
           assert 'launcher.lastImportFailed ? "本次导入失败，请重新选择"' in swift
           assert 'webViewWebContentProcessDidTerminate' in swift
           assert 'delayedTapEnabled' in swift
+          assert 'smartHoverEnabled: smartHoverEnabled' in swift
+          assert 'shiguang.smartHover12' in swift
+          assert 'window.__shiguangSmartHoverChoice' in swift
+          assert 'lastSmartHoverEnabled' in swift
+          assert 'touchControls.setSmartHover(window.__shiguangSmartHoverChoice===true)' in source
+          assert 'setSmartHover:function(on)' in source
+          assert 'function smartPointerDown(ev)' in mouse
+          assert 'function smartPointerMove(ev)' in mouse
+          assert 'function smartPointerEnd(ev,cancelled)' in mouse
+          assert 'if(smartPointers.size>1){smartMultiTouch=true;cancelSmartTouch();return;}' in mouse
+          assert 'btn("sh-mouse-double",row,"双击",doubleClick)' in mouse
+          assert 'btn("sh-mouse-right",row,"右键",rightClick)' in mouse
+          assert '420' in mouse
           mouse=Path('Patches/touch-controls.js').read_text()
           assert 'if(!hover){' in mouse
           assert 'setDelayedTap:setDelayedTap' in mouse
@@ -288,24 +302,25 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check formal version and build metadata
+      - name: Check test-version metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.3'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '112'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.2.0'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '114'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.smartbeta'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.03 maintenance project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.03-progress-fix-b112/ --output=/tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip | grep -Fx 'ShiguangLauncher-v1.03-progress-fix-b112/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.2-smart-hover-source/ --output=/tmp/ShiguangLauncher-v1.2-smart-hover-source-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.2-smart-hover-source-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.2-smart-hover-source-source.zip | grep -Fx 'ShiguangLauncher-v1.2-smart-hover-source/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.03-progress-fix-b112-ipa
+          name: ShiguangLauncher-v1.2-smart-hover-source-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.03-progress-fix-b112-source
-          path: /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip
+          name: ShiguangLauncher-v1.2-smart-hover-source-source
+          path: /tmp/ShiguangLauncher-v1.2-smart-hover-source-source.zip
           if-no-files-found: error
