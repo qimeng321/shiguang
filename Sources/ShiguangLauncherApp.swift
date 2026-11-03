@@ -693,6 +693,9 @@ struct GameView: View {
                                     if delayedTapEnabled { smartHoverEnabled = false }
                                     LaunchDiagnostics.log("[触控辅助] 手指直接点按及精准鼠标延迟抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
                                 }
+                                gameTool("arrow.left.and.right", "地图箭头（手动测试）") {
+                                    sendControl("toggleMapControls")
+                                }
                                 gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
                                     fpsEnabled.toggle()
                                     sendControl("toggleFPS")
@@ -1051,7 +1054,7 @@ struct GameWebView: UIViewRepresentable {
         }
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
-        let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
+        let allowed = ["toggleKeyboard", "enableMouse", "disableMouse", "toggleMapControls",
                        "resetCursor", "cycleSpeed", "toggleFPS"]
         guard allowed.contains(controlAction) else { return }
         let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"
