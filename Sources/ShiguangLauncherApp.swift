@@ -139,7 +139,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.03")
+                        Text("触控测试版 1.2")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -525,6 +525,8 @@ struct GameView: View {
     @State private var fpsEnabled = false
     // Saved across WebView reloads; off by default for normal click speed.
     @AppStorage("shiguang.delayedTap103") private var delayedTapEnabled = false
+    // Test-only, explicitly off until the player selects it in the game menu.
+    @AppStorage("shiguang.smartHover12") private var smartHoverEnabled = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -538,6 +540,7 @@ struct GameView: View {
             } else if let server, let url = server.playURL(for: entry) {
                 GameWebView(url: url, controlGeneration: controlGeneration,
                             controlAction: controlAction, delayedTapEnabled: delayedTapEnabled,
+                            smartHoverEnabled: smartHoverEnabled,
                             onStatus: { message in
                     LaunchDiagnostics.log("网页状态：" + message)
                 }, onError: { message in
@@ -593,9 +596,16 @@ struct GameView: View {
                                         sendControl("cycleSpeed")
                                     }
                                 }
+                                gameTool(smartHoverEnabled ? "checkmark.circle.fill" : "hand.point.up.left",
+                                         smartHoverEnabled ? "智能悬停：开" : "智能悬停：关") {
+                                    smartHoverEnabled.toggle()
+                                    if smartHoverEnabled { delayedTapEnabled = false }
+                                    LaunchDiagnostics.log("[触控测试] 智能悬停：" + (smartHoverEnabled ? "开启" : "关闭") + "；短按保留点击，长按唤出 NoNo 圆环")
+                                }
                                 gameTool(delayedTapEnabled ? "checkmark.circle.fill" : "hand.tap",
                                          delayedTapEnabled ? "触屏延迟：开" : "触屏延迟：关") {
                                     delayedTapEnabled.toggle()
+                                    if delayedTapEnabled { smartHoverEnabled = false }
                                     LaunchDiagnostics.log("[触控辅助] 手指直接点按及精准鼠标延迟抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
                                 }
                                 gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
@@ -778,6 +788,7 @@ struct GameWebView: UIViewRepresentable {
     let controlGeneration: Int
     let controlAction: String
     let delayedTapEnabled: Bool
+    let smartHoverEnabled: Bool
     let onStatus: (String) -> Void
     let onError: (String) -> Void
 
@@ -916,11 +927,12 @@ struct GameWebView: UIViewRepresentable {
         )
         // Make the choice available before Ruffle's asynchronous startup.
         configuration.userContentController.addUserScript(WKUserScript(
-            source: "window.__shiguangDelayedTapChoice = \(delayedTapEnabled ? "true" : "false");",
+            source: "window.__shiguangDelayedTapChoice = \(delayedTapEnabled ? "true" : "false"); window.__shiguangSmartHoverChoice = \(smartHoverEnabled ? "true" : "false");",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let webView = WKWebView(frame: .zero, configuration: configuration)
         context.coordinator.lastControlGeneration = controlGeneration
         context.coordinator.lastDelayedTapEnabled = delayedTapEnabled
+        context.coordinator.lastSmartHoverEnabled = smartHoverEnabled
         webView.navigationDelegate = context.coordinator
         // Opaque backing matches the always-black Flash stage and avoids
         // an unnecessary transparent layer during long GPU-heavy sessions.
@@ -941,6 +953,15 @@ struct GameWebView: UIViewRepresentable {
                 "window.__shiguangDelayedTapChoice=\(value); window.ShiguangControls && window.ShiguangControls.setDelayedTap(\(value));"
             ) { _, error in
                 if let error { LaunchDiagnostics.log("[触控辅助] 延迟点按设置异常：" + error.localizedDescription) }
+            }
+        }
+        if context.coordinator.lastSmartHoverEnabled != smartHoverEnabled {
+            context.coordinator.lastSmartHoverEnabled = smartHoverEnabled
+            let value = smartHoverEnabled ? "true" : "false"
+            webView.evaluateJavaScript(
+                "window.__shiguangSmartHoverChoice=\(value); window.ShiguangControls && window.ShiguangControls.setSmartHover(\(value));"
+            ) { _, error in
+                if let error { LaunchDiagnostics.log("[触控测试] 智能悬停设置异常：" + error.localizedDescription) }
             }
         }
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
@@ -965,6 +986,7 @@ struct GameWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var lastControlGeneration = 0
         var lastDelayedTapEnabled = false
+        var lastSmartHoverEnabled = false
         private var navigationCount = 0
         let onStatus: (String) -> Void
         let onError: (String) -> Void
@@ -998,7 +1020,8 @@ struct GameWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             let value = lastDelayedTapEnabled ? "true" : "false"
-            webView.evaluateJavaScript("window.__shiguangDelayedTapChoice=\(value); window.ShiguangControls && window.ShiguangControls.setDelayedTap(\(value));") { _, _ in }
+            let smart = lastSmartHoverEnabled ? "true" : "false"
+            webView.evaluateJavaScript("window.__shiguangDelayedTapChoice=\(value); window.ShiguangControls && window.ShiguangControls.setDelayedTap(\(value)); window.__shiguangSmartHoverChoice=\(smart); window.ShiguangControls && window.ShiguangControls.setSmartHover(\(smart));") { _, _ in }
             LaunchDiagnostics.log("[页面生命周期] 主框架完成第\(navigationCount)次导航：\(webView.url?.path ?? "未知")")
             onStatus("网页主文档已打开，检查启动脚本与服务响应…")
             webView.evaluateJavaScript("({title:document.title,body:(document.body?.innerText||'').slice(0,180), scripts:[...document.scripts].map(s=>s.getAttribute('src')).filter(Boolean).slice(0,8), ruffle:!!window.RufflePlayer})") { [weak self] result, error in
