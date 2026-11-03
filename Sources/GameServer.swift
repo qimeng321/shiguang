@@ -198,6 +198,8 @@ final class GameServer {
     private func respond(to request: String, connection: NWConnection) {
         let lines = request.components(separatedBy: "\r\n")
         let line = lines.first ?? ""
+        let ifNoneMatch = lines.first(where: { $0.lowercased().hasPrefix("if-none-match:") })
+            .map { String($0.dropFirst(14)).trimmingCharacters(in: .whitespaces) }
         let rangeHeader = lines.first(where: { $0.lowercased().hasPrefix("range:") })
             .map { String($0.dropFirst(6)).trimmingCharacters(in: .whitespaces) }
         let parts = line.split(separator: " ")
@@ -266,7 +268,7 @@ final class GameServer {
                    FileManager.default.fileExists(atPath: original.path) {
                     LaunchDiagnostics.log("[登录地址] 使用美化包自带 ip.txt（保持原文件内容）")
                     serve(relative: relative, below: root, headOnly: headOnly,
-                          rangeHeader: rangeHeader, connection: connection)
+                          rangeHeader: rangeHeader, ifNoneMatch: ifNoneMatch, connection: connection)
                 } else {
                     let endpoint = GameSocketBridge.serverHost + ":" + String(GameSocketBridge.serverPort)
                     LaunchDiagnostics.log("[登录地址] 美化包没有 ip.txt；依据 Windows 微端线上配置返回 "
@@ -288,7 +290,7 @@ final class GameServer {
                    safeFile(relative, below: patch) != nil {
                     LaunchDiagnostics.log("[手机补丁] 覆盖游戏资源：\(relative)")
                     serve(relative: relative, below: patch, headOnly: headOnly,
-                          rangeHeader: rangeHeader, connection: connection)
+                          rangeHeader: rangeHeader, ifNoneMatch: ifNoneMatch, connection: connection)
                 } else {
                     serve(relative: relative, below: root, headOnly: headOnly,
                           rangeHeader: rangeHeader, connection: connection)
@@ -456,7 +458,8 @@ final class GameServer {
     /// Serve files with a real byte-range implementation. iOS media playback
     /// requires 206 responses for HTTP Range requests (including video.mp4).
     private func serve(relative: String, below base: URL, headOnly: Bool,
-                       rangeHeader: String?, connection: NWConnection) {
+                       rangeHeader: String?, ifNoneMatch: String? = nil, connection: NWConnection) {
+        let setupStart = DispatchTime.now().uptimeNanoseconds
         guard let file = safeFile(relative, below: base),
               let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
               let size = attributes[.size] as? NSNumber,
@@ -532,7 +535,26 @@ final class GameServer {
              low.hasPrefix("resource/item/petitem/icon/") ||
              low.hasPrefix("resource/item/doodle/icon/"))
         let cacheHeader = tinyIcon ? "Cache-Control: private, max-age=45" : "Cache-Control: no-store"
-        let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)\(cacheHeader)\r\nConnection: close\r\n\r\n"
+        // ETag is opt-in ONLY for small immutable icons in compatibility mode.
+        // Do not cache PVM, maps, login SWF or game core files.
+        let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let etag = "\"\(total)-\(Int64(modified * 1000))\""
+        let etagHeader = tinyIcon ? "ETag: \(etag)\r\n" : ""
+        if tinyIcon && !headOnly && ifNoneMatch == etag {
+            try? handle.close()
+            traceRequest("GET", "/" + relative, status: 304)
+            let notModified = "HTTP/1.1 304 Not Modified\r\nETag: \(etag)\r\nCache-Control: private, max-age=45\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            connection.send(content: Data(notModified.utf8), completion: .contentProcessed { [weak self] error in
+                if error == nil { self?.finishHTTPResponse(connection) }
+                else { connection.cancel() }
+            })
+            return
+        }
+        let setupMs = Double(DispatchTime.now().uptimeNanoseconds - setupStart) / 1_000_000
+        if setupMs > 150 {
+            LaunchDiagnostics.log(String(format: "[HTTP慢资源准备] %.1fms %@", setupMs, relative))
+        }
+        let header = "HTTP/1.1 \(response)\r\nContent-Type: \(mime(for: file))\r\nContent-Length: \(byteCount)\r\nAccept-Ranges: bytes\r\n\(contentRange)\(etagHeader)\(cacheHeader)\r\nConnection: close\r\n\r\n"
         if !headOnly {
             do { try handle.seek(toOffset: first) }
             catch {

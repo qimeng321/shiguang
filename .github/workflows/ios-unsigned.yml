@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - main
+      - "test/1.2-unified-map-performance-b115"
 
 jobs:
   static-check:
@@ -21,6 +22,8 @@ jobs:
           node Patches/test-frame-cap.js
           node Patches/test-direct-touch.js
           node Patches/test-smart-touch.js
+          node --check Patches/galaxy-navigation.js
+          node Patches/test-galaxy-navigation.js
           python3 - <<'PY_CHECK'
           from pathlib import Path
           source=Path('Sources/GameServer.swift').read_text()
@@ -111,7 +114,14 @@ jobs:
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'webView.isOpaque = true' in swift
           assert 'traceObserver.disconnect()' in swift
-          print('1.03 resource compatibility, keyboard, adaptive canvas and frame-cap invariants OK')
+          assert 'MobilePatchManager' in model
+          assert 'func importMobilePatch(_ url: URL)' in model
+          assert 'mobilePatchRoot' in source
+          assert 'let ifNoneMatch =' in source
+          assert 'ETag:' in source and '304 Not Modified' in source
+          assert 'ShiguangMapBridge' in source
+          assert 'toggleMapControls' in swift and 'mobilePatchPanel' in swift
+          print('Build115: patch overlay, map bridge and resource cache invariants OK')
           PY_CHECK
   build:
     runs-on: macos-15-intel
@@ -139,8 +149,10 @@ jobs:
           cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
           cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
           cp Patches/touch-controls.js Resources/Ruffle/touch-controls.js
+          cp Patches/galaxy-navigation.js Resources/Ruffle/galaxy-navigation.js
           cp Patches/frame-cap.js Resources/Ruffle/frame-cap.js
           test -s Resources/Ruffle/touch-controls.js
+          test -s Resources/Ruffle/galaxy-navigation.js
           test -s Resources/Ruffle/frame-cap.js
           test -s Resources/Ruffle/byte-loader-followup.b64
           test -s Resources/Ruffle/pvm-compat.js
@@ -195,6 +207,7 @@ jobs:
           node Patches/test-frame-cap.js
           node Patches/test-direct-touch.js
           node --check Resources/Ruffle/touch-controls.js
+          node --check Resources/Ruffle/galaxy-navigation.js
           python3 - <<'PY_TOUCH'
           from pathlib import Path
           js=Path("Resources/Ruffle/touch-controls.js").read_text()
@@ -211,7 +224,7 @@ jobs:
           assert 'function directPointerDown(ev)' in js
           assert 'function directPointerUp(ev)' in js
           assert 'enableMapSwipe' not in js
-          assert 'galaxy-navigation' not in html
+          assert '/ruffle/galaxy-navigation.js' in html
           swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
           assert 'ProgressView(value: launcher.importProgress, total: 1.0)' in swift
           model=Path("Sources/LauncherModel.swift").read_text()
@@ -305,22 +318,22 @@ jobs:
       - name: Check test-version metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.2.0'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '114'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '115'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.smartbeta'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
-          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -ge 1
       - name: Package formal 1.03 maintenance project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.2-smart-hover-source/ --output=/tmp/ShiguangLauncher-v1.2-smart-hover-source-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.2-smart-hover-source-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.2-smart-hover-source-source.zip | grep -Fx 'ShiguangLauncher-v1.2-smart-hover-source/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.2-unified-map-b115/ --output=/tmp/ShiguangLauncher-v1.2-unified-map-b115-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.2-unified-map-b115-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.2-unified-map-b115-source.zip | grep -Fx 'ShiguangLauncher-v1.2-unified-map-b115/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.2-smart-hover-source-ipa
+          name: ShiguangLauncher-v1.2-unified-map-b115-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.2-smart-hover-source-source
-          path: /tmp/ShiguangLauncher-v1.2-smart-hover-source-source.zip
+          name: ShiguangLauncher-v1.2-unified-map-b115-source
+          path: /tmp/ShiguangLauncher-v1.2-unified-map-b115-source.zip
           if-no-files-found: error
