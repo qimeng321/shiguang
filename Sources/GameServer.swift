@@ -897,6 +897,10 @@ final class GameServer {
             setDelayedTap:function(on){
               window.__shiguangDelayedTapChoice=!!on;
               if(touchControls)touchControls.setDelayedTap(!!on);
+            },
+            setSmartHover:function(on){
+              window.__shiguangSmartHoverChoice=!!on;
+              if(touchControls)touchControls.setSmartHover(!!on);
             }
           };
           // The iOS software keyboard shrinks visualViewport but the Flash
@@ -960,6 +964,7 @@ final class GameServer {
               if(window.ShiguangTouchControls){
                 touchControls=window.ShiguangTouchControls(player,report);
                 touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true);
+                touchControls.setSmartHover(window.__shiguangSmartHoverChoice===true);
               }else{
                 report("触控辅助：脚本缺失，触控增强暂不可用（不影响游戏启动）");
               }
