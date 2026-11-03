@@ -12,7 +12,8 @@ window.ShiguangTouchControls=function(player,report){
   // Keep it independent from the old delayed release path for safe rollback.
   var smartHover=false,smartTouch=null,smartHoldTimer=null,smartTapTimer=null;
   var smartTapPending=null,smartPointers=new Set(),smartMultiTouch=false;
-  var smartLongCount=0;
+  var smartLongCount=0,smartHoverPulse=null,smartPulseIndex=0;
+  var lastSmartPointerAt=-1e6,smartFallbackId=null;
   var count=0,recoveries=0,lastMissing=false,speedIndex=1;
   var speeds=[0.85,1.45,2.2],tipTimer=null;
   try{
@@ -202,6 +203,7 @@ window.ShiguangTouchControls=function(player,report){
   }
   function clearSmartHold(){
     if(smartHoldTimer!==null){clearTimeout(smartHoldTimer);smartHoldTimer=null;}
+    if(smartHoverPulse!==null){clearTimeout(smartHoverPulse);smartHoverPulse=null;}
   }
   function cancelSmartTouch(){
     clearSmartHold();
@@ -210,6 +212,13 @@ window.ShiguangTouchControls=function(player,report){
   }
   function smartPointerDown(ev){
     if(!smartHover||!ev.isTrusted||ev.pointerType!=="touch"||!gameTarget(ev))return;
+    // True PointerEvent wins over the fallback TouchEvent path.
+    if(ev.pointerId>=0){
+      lastSmartPointerAt=performance.now();
+      if(smartFallbackId!==null){
+        cancelSmartTouch();smartPointers.delete(smartFallbackId);smartFallbackId=null;
+      }
+    }
     blockNative(ev);lastDirectTouchAt=performance.now();
     releaseSmartTap();smartPointers.add(ev.pointerId);
     if(smartPointers.size>1){smartMultiTouch=true;cancelSmartTouch();return;}
@@ -223,9 +232,18 @@ window.ShiguangTouchControls=function(player,report){
     smartHoldTimer=setTimeout(function(){
       smartHoldTimer=null;
       if(smartHover&&smartTouch===t&&!t.dragging&&!t.pressed){
-        t.long=true;emit("pointermove",t.point,0);
+        t.long=true;
+        // Flash hover may need pointer re-entry plus repeated movement.
+        hover=false;emit("pointermove",t.point,0);
+        smartPulseIndex=0;
+        smartHoverPulse=setTimeout(function pulse(){
+          if(!smartHover||smartTouch!==t||!t.long){clearSmartHold();return;}
+          var drift=(++smartPulseIndex%2)?1:0;
+          emit("pointermove",{x:t.point.x+drift,y:t.point.y},0);
+          smartHoverPulse=setTimeout(pulse,105);
+        },105);
         smartLongCount++;
-        if(smartLongCount<=3)tip("已触发悬停 · 松手后点圆环功能");
+        if(smartLongCount<=3)tip("已发送悬停事件 · 如果没有圆环请提供日志");
         if(smartLongCount<=5||smartLongCount%20===0)report("智能悬停：长按已识别 "+smartLongCount+" 次");
       }
     },420);
@@ -264,11 +282,36 @@ window.ShiguangTouchControls=function(player,report){
   document.addEventListener("pointermove",smartPointerMove,true);
   document.addEventListener("pointerup",function(ev){smartPointerEnd(ev,false);},true);
   document.addEventListener("pointercancel",function(ev){smartPointerEnd(ev,true);},true);
+  // WKWebView TouchEvent-only fallback, without ghost double taps when
+  // a trusted PointerEvent is already handling the same touch.
+  function smartTouchFallback(ev,type){
+    if(!smartHover||!ev.isTrusted||!gameTarget(ev))return;
+    var changed=ev.changedTouches,point=changed&&changed[0];
+    if(!point)return;
+    if(type==="touchstart"){
+      if(smartTouch||smartPointers.size>0||performance.now()-lastSmartPointerAt<650)return;
+      if(ev.touches&&ev.touches.length>1){smartMultiTouch=true;return;}
+      smartFallbackId=-1000-(point.identifier||0);
+    }
+    if(smartFallbackId===null)return;
+    if(point.identifier!==undefined&&smartFallbackId!==-1000-point.identifier)return;
+    var fake={isTrusted:true,pointerType:"touch",pointerId:smartFallbackId,
+      clientX:point.clientX,clientY:point.clientY,cancelable:ev.cancelable,
+      preventDefault:function(){if(ev.cancelable)ev.preventDefault();},
+      stopImmediatePropagation:function(){ev.stopImmediatePropagation();},
+      composedPath:function(){return ev.composedPath();}};
+    if(type==="touchstart")smartPointerDown(fake);
+    else if(type==="touchmove")smartPointerMove(fake);
+    else{smartPointerEnd(fake,type==="touchcancel");smartFallbackId=null;}
+  }
+  ["touchstart","touchmove","touchend","touchcancel"].forEach(function(type){
+    document.addEventListener(type,function(ev){smartTouchFallback(ev,type);},true);
+  });
   function setSmartHover(on){
     endClick();finishDirect(true);cancelSmartTouch();releaseSmartTap();
-    smartPointers.clear();smartMultiTouch=false;
+    smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;
     smartHover=!!on;
-    if(smartHover)delayedTap=false;
+    if(smartHover){delayedTap=false;tip("智能悬停已开启 · 长按 NoNo 约0.4秒");}
     report("智能悬停："+(smartHover?"开启（短按点击/长按420ms仅悬停/滑动拖动）":"关闭（恢复原生触控）"));
   }
   // Optional direct-screen touch-to-mouse bridge. This is separate from the
@@ -392,7 +435,7 @@ window.ShiguangTouchControls=function(player,report){
     endClick();
     finishDirect(true);
     delayedTap=!!on;
-    if(delayedTap){smartHover=false;cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;}
+    if(delayedTap){smartHover=false;cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;}
     report("触屏延迟：自动抬起"+(delayedTap?
       "已开启（手指直点及精准鼠标，悬停120ms + 保持按下350ms）":
       "已关闭（触屏恢复原生，精准鼠标保持125ms）"));
@@ -458,12 +501,12 @@ window.ShiguangTouchControls=function(player,report){
     else{endClick();endDrag();padGesture=null;hover=false;}
     report("鼠标："+(enabled?"开启":"关闭")+"；真实触摸后的状态自动恢复");
   }
-  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;}});
-  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;});
+  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;}});
+  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;});
   try{new ResizeObserver(function(){
     if(enabled&&pos){var p=clamp(pos);if(p){pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";}}
   }).observe(player);}catch(e){}
-  report("鼠标 v6.0 测试：智能悬停默认关闭；长按仅移动鼠标触发 NoNo 圆环，虚拟鼠标支持双击/右键");
+  report("鼠标 v6.1 Build116：智能悬停TouchEvent兼容及持续悬停反馈；NoNo真实圆环仍需真机验证");
   return {enableMouse:function(){setMode(true);},disableMouse:function(){setMode(false);},
     hideAll:function(){setMode(false);},resetCursor:center,
     cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap,setSmartHover:setSmartHover};

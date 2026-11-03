@@ -33,6 +33,8 @@ function harness(){
   const controls=window.ShiguangTouchControls(player,s=>reports.push(s));
   function trusted(type,x=300,y=140,id=1){
     const ev={type,pointerId:id,pointerType:"touch",isTrusted:true,clientX:x,clientY:y,
+      changedTouches:[{identifier:id,clientX:x,clientY:y}],
+      touches:type==="touchend"||type==="touchcancel"?[]:[{identifier:id,clientX:x,clientY:y}],
       cancelable:true,preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;},
       composedPath(){return[canvas,player,doc];}};
     for(const fn of doc.listeners.get(type)||[]) {fn(ev);if(ev.stopped)break;}
@@ -99,4 +101,19 @@ const count=(h,type)=>h.events.filter(x=>x.type===type).length;
   assert(h.events.some(x=>x.type==="pointerdown"&&x.button===2),"right-click should use mouse button 2");
   assert(h.events.some(x=>x.type==="pointerup"&&x.button===2),"right-click should release mouse button 2");
 }
-console.log("PASS smart hover opt-in: short tap, 420ms hover without click, drag, cancel, two-finger guard, toggle cleanup, double/right mouse");
+{
+  const h=harness();h.controls.setSmartHover(true);
+  assert(h.trusted("touchstart",280,170,7).stopped,"TouchEvent-only start must be intercepted");
+  h.advance(125);h.trusted("touchend",280,170,7);h.advance(70);
+  assert.equal(count(h,"pointerdown"),1,"TouchEvent-only tap must produce one click");
+  assert.equal(count(h,"pointerup"),1,"TouchEvent-only tap must release");
+}
+{
+  const h=harness();h.controls.setSmartHover(true);
+  h.trusted("touchstart",280,170,8);h.advance(880);
+  assert.equal(count(h,"pointerdown"),0,"TouchEvent-only long hold must not click");
+  assert(count(h,"pointermove")>=4,"TouchEvent-only long hold must send hover pulse");
+  h.trusted("touchend",280,170,8);h.advance(1000);
+  assert.equal(count(h,"pointerdown"),0,"TouchEvent-only long hold release must not click");
+}
+console.log("PASS Build116 smart hover TouchEvent fallback, click, drag, cancel, multitouch and hover");
