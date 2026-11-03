@@ -1,4 +1,4 @@
-/* Shiguang v5.1: NoNo-safe precision mouse + opt-in direct-screen delayed release.
+/* Shiguang v6.0 test-only smart long-press hover + opt-in direct-screen delayed release.
    Ruffle 0.7.1 reads PointerEvent.offsetX/Y from its inner canvas. */
 (function(){
 "use strict";
@@ -8,6 +8,11 @@ window.ShiguangTouchControls=function(player,report){
   var pressDelayTimer=null,delayedTap=false;
   var directTouch=null,directPressTimer=null,directReleaseTimer=null;
   var lastDirectTouchAt=0,directTapCount=0;
+  // Opt-in test gesture: short touch -> click, hold -> hover only, swipe -> drag.
+  // Keep it independent from the old delayed release path for safe rollback.
+  var smartHover=false,smartTouch=null,smartHoldTimer=null,smartTapTimer=null;
+  var smartTapPending=null,smartPointers=new Set(),smartMultiTouch=false;
+  var smartLongCount=0;
   var count=0,recoveries=0,lastMissing=false,speedIndex=1;
   var speeds=[0.85,1.45,2.2],tipTimer=null;
   try{
@@ -60,6 +65,8 @@ window.ShiguangTouchControls=function(player,report){
   var track=el("div","sh-mouse-track",box,"滑动移动准星，轻点点击");
   var row=el("div","sh-mouse-row",box);
   btn("sh-mouse-click",row,"点击",click);
+  btn("sh-mouse-double",row,"双击",doubleClick);
+  btn("sh-mouse-right",row,"右键",rightClick);
   var dragBtn=btn("sh-mouse-drag",row,"按住拖动",function(){setDrag(!drag);});
   btn("sh-mouse-center",row,"准星居中",center);
   var speedBtn=btn("sh-mouse-speed",row,"速度 "+speeds[speedIndex]+"×",function(){
@@ -167,6 +174,103 @@ window.ShiguangTouchControls=function(player,report){
     count++;
     if(count<=5||count%15===0)report("鼠标：已点击 "+count+" 次"+(delayedTap?"（延迟抬起）":"")+"；手指交替可继续使用");
   }
+  function releaseSmartTap(){
+    if(smartTapTimer!==null){clearTimeout(smartTapTimer);smartTapTimer=null;}
+    if(smartTapPending){emit("pointerup",smartTapPending,0,0);smartTapPending=null;}
+  }
+  function smartClick(point){
+    releaseSmartTap();
+    if(!emit("pointermove",point,0)||!emit("pointerdown",point,1,0))return;
+    smartTapPending=point;
+    smartTapTimer=setTimeout(releaseSmartTap,65);
+  }
+  function doubleClick(){
+    if(!enabled||drag||!pos)return;
+    endClick();releaseSmartTap();
+    var p={x:pos.x,y:pos.y};
+    smartClick(p);
+    setTimeout(function(){if(enabled&&!drag){releaseSmartTap();smartClick(p);}},160);
+  }
+  function rightClick(){
+    if(!enabled||drag||!pos)return;
+    endClick();releaseSmartTap();
+    var p={x:pos.x,y:pos.y};
+    emit("pointermove",p,0);
+    if(emit("pointerdown",p,2,2)){
+      setTimeout(function(){emit("pointerup",p,0,2);},75);
+    }
+  }
+  function clearSmartHold(){
+    if(smartHoldTimer!==null){clearTimeout(smartHoldTimer);smartHoldTimer=null;}
+  }
+  function cancelSmartTouch(){
+    clearSmartHold();
+    if(smartTouch&&smartTouch.pressed)emit("pointerup",smartTouch.point,0,0);
+    smartTouch=null;
+  }
+  function smartPointerDown(ev){
+    if(!smartHover||!ev.isTrusted||ev.pointerType!=="touch"||!gameTarget(ev))return;
+    blockNative(ev);lastDirectTouchAt=performance.now();
+    releaseSmartTap();smartPointers.add(ev.pointerId);
+    if(smartPointers.size>1){smartMultiTouch=true;cancelSmartTouch();return;}
+    if(smartMultiTouch)return;
+    var p={x:ev.clientX,y:ev.clientY};
+    var t={id:ev.pointerId,start:p,point:p,dragging:false,pressed:false,long:false};
+    smartTouch=t;
+    // Establish mouse hover without down so the original NoNo ring can appear.
+    emit("pointermove",p,0);
+    clearSmartHold();
+    smartHoldTimer=setTimeout(function(){
+      smartHoldTimer=null;
+      if(smartHover&&smartTouch===t&&!t.dragging&&!t.pressed){
+        t.long=true;emit("pointermove",t.point,0);
+        smartLongCount++;
+        if(smartLongCount<=3)tip("已触发悬停 · 松手后点圆环功能");
+        if(smartLongCount<=5||smartLongCount%20===0)report("智能悬停：长按已识别 "+smartLongCount+" 次");
+      }
+    },420);
+  }
+  function smartPointerMove(ev){
+    if(!smartHover||!ev.isTrusted||ev.pointerType!=="touch"||!smartPointers.has(ev.pointerId))return;
+    blockNative(ev);lastDirectTouchAt=performance.now();
+    var t=smartTouch;
+    if(!t||t.id!==ev.pointerId||smartMultiTouch)return;
+    t.point={x:ev.clientX,y:ev.clientY};
+    if(t.long){emit("pointermove",t.point,0);return;}
+    if(Math.hypot(t.point.x-t.start.x,t.point.y-t.start.y)>12){
+      if(!t.dragging){
+        clearSmartHold();t.dragging=true;
+        t.pressed=emit("pointerdown",t.start,1,0);
+      }
+      if(t.pressed)emit("pointermove",t.point,1,0);
+    }
+  }
+  function smartPointerEnd(ev,cancelled){
+    if(!smartHover||!ev.isTrusted||ev.pointerType!=="touch"||!smartPointers.has(ev.pointerId))return;
+    blockNative(ev);lastDirectTouchAt=performance.now();
+    smartPointers.delete(ev.pointerId);
+    var t=smartTouch;
+    if(t&&t.id===ev.pointerId){
+      clearSmartHold();smartTouch=null;
+      if(t.pressed){emit("pointerup",t.point,0,0);}
+      else if(!cancelled&&!smartMultiTouch){
+        if(t.long){emit("pointermove",t.point,0);}
+        else{smartClick({x:ev.clientX,y:ev.clientY});}
+      }
+    }
+    if(smartPointers.size===0)smartMultiTouch=false;
+  }
+  document.addEventListener("pointerdown",smartPointerDown,true);
+  document.addEventListener("pointermove",smartPointerMove,true);
+  document.addEventListener("pointerup",function(ev){smartPointerEnd(ev,false);},true);
+  document.addEventListener("pointercancel",function(ev){smartPointerEnd(ev,true);},true);
+  function setSmartHover(on){
+    endClick();finishDirect(true);cancelSmartTouch();releaseSmartTap();
+    smartPointers.clear();smartMultiTouch=false;
+    smartHover=!!on;
+    if(smartHover)delayedTap=false;
+    report("智能悬停："+(smartHover?"开启（短按点击/长按420ms仅悬停/滑动拖动）":"关闭（恢复原生触控）"));
+  }
   // Optional direct-screen touch-to-mouse bridge. This is separate from the
   // on-screen trackpad; it runs only when the user turns delayed tap ON.
   // Capture before Ruffle processes trusted touches to avoid double clicks.
@@ -272,7 +376,7 @@ window.ShiguangTouchControls=function(player,report){
   // events. Consume only those belonging to the Flash surface while active.
   ["touchstart","touchmove","touchend","touchcancel"].forEach(function(type){
     document.addEventListener(type,function(ev){
-      if(delayedTap&&ev.isTrusted&&(directTouch||gameTarget(ev))){
+      if((delayedTap||smartHover)&&ev.isTrusted&&(directTouch||smartPointers.size>0||gameTarget(ev))){
         lastDirectTouchAt=performance.now();
         blockNative(ev);
       }
@@ -280,7 +384,7 @@ window.ShiguangTouchControls=function(player,report){
   });
   ["mousedown","mouseup","click"].forEach(function(type){
     document.addEventListener(type,function(ev){
-      if(delayedTap&&ev.isTrusted&&performance.now()-lastDirectTouchAt<700&&gameTarget(ev))
+      if((delayedTap||smartHover)&&ev.isTrusted&&performance.now()-lastDirectTouchAt<700&&gameTarget(ev))
         blockNative(ev);
     },true);
   });
@@ -288,6 +392,7 @@ window.ShiguangTouchControls=function(player,report){
     endClick();
     finishDirect(true);
     delayedTap=!!on;
+    if(delayedTap){smartHover=false;cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;}
     report("触屏延迟：自动抬起"+(delayedTap?
       "已开启（手指直点及精准鼠标，悬停120ms + 保持按下350ms）":
       "已关闭（触屏恢复原生，精准鼠标保持125ms）"));
@@ -353,14 +458,14 @@ window.ShiguangTouchControls=function(player,report){
     else{endClick();endDrag();padGesture=null;hover=false;}
     report("鼠标："+(enabled?"开启":"关闭")+"；真实触摸后的状态自动恢复");
   }
-  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);}});
-  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);});
+  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;}});
+  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;});
   try{new ResizeObserver(function(){
     if(enabled&&pos){var p=clamp(pos);if(p){pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";}}
   }).observe(player);}catch(e){}
-  report("鼠标 v5.1：NoNo 悬浮菜单点击保护；可选手指直接点按延迟350ms，触控板禁止选中");
+  report("鼠标 v6.0 测试：智能悬停默认关闭；长按仅移动鼠标触发 NoNo 圆环，虚拟鼠标支持双击/右键");
   return {enableMouse:function(){setMode(true);},disableMouse:function(){setMode(false);},
     hideAll:function(){setMode(false);},resetCursor:center,
-    cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap};
+    cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap,setSmartHover:setSmartHover};
 };
 })();
