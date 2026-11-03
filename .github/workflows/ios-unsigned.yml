@@ -92,6 +92,7 @@ jobs:
           assert 'lastSmartHoverEnabled' in swift
           assert 'touchControls.setSmartHover(window.__shiguangSmartHoverChoice===true)' in source
           assert 'setSmartHover:function(on)' in source
+          mouse=Path('Patches/touch-controls.js').read_text()
           assert 'function smartPointerDown(ev)' in mouse
           assert 'function smartPointerMove(ev)' in mouse
           assert 'function smartPointerEnd(ev,cancelled)' in mouse
@@ -99,7 +100,6 @@ jobs:
           assert 'btn("sh-mouse-double",row,"双击",doubleClick)' in mouse
           assert 'btn("sh-mouse-right",row,"右键",rightClick)' in mouse
           assert '420' in mouse
-          mouse=Path('Patches/touch-controls.js').read_text()
           assert 'if(!hover){' in mouse
           assert 'setDelayedTap:setDelayedTap' in mouse
           assert '-webkit-touch-callout:none' in mouse
