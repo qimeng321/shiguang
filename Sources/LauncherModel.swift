@@ -283,6 +283,10 @@ final class LauncherModel: ObservableObject {
     @Published private(set) var isInstalledValidated = false
     @Published private(set) var lastImportFailed = false
     @Published var importFailureMessage: String?
+    @Published private(set) var patchSummary = MobilePatchManager.activeSummary
+    @Published private(set) var patchBusy = false
+    @Published var patchError: String?
+    @Published private(set) var patchStatus = "可导入或撤销手机适配补丁，不修改原美化包。"
 
     var canStartGame: Bool {
         guard let gameRoot, !selectedEntry.isEmpty, isInstalledValidated else { return false }
@@ -511,6 +515,59 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+
+    func importMobilePatch(_ url: URL) {
+        guard !patchBusy && !isImporting && !isClearing else { return }
+        guard isInstalledValidated, gameRoot != nil else {
+            patchError = "请先导入并验证完整的 .srom 游戏资源，再安装手机补丁。"
+            return
+        }
+        patchBusy = true
+        patchStatus = "正在检查补丁清单并校验 ZIP CRC32…"
+        patchError = nil
+        let revision = resourceRevision
+        let scoped = url.startAccessingSecurityScopedResource()
+        Task.detached(priority: .userInitiated) {
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let result = try MobilePatchManager.install(url, currentRevision: revision)
+                await MainActor.run {
+                    self.patchSummary = result
+                    self.patchStatus = "补丁已启用；退出并重新进入游戏后生效。"
+                    self.patchBusy = false
+                }
+            } catch {
+                LaunchDiagnostics.log("[手机补丁] 导入失败：\(error.localizedDescription)")
+                await MainActor.run {
+                    self.patchSummary = MobilePatchManager.activeSummary
+                    self.patchStatus = "补丁安装未完成，原游戏资源与原补丁保持不变。"
+                    self.patchError = error.localizedDescription
+                    self.patchBusy = false
+                }
+            }
+        }
+    }
+
+    func clearMobilePatch() {
+        guard !patchBusy && !isImporting && !isClearing else { return }
+        patchBusy = true
+        patchStatus = "正在撤销补丁…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                try MobilePatchManager.clear()
+                await MainActor.run {
+                    self.patchSummary = MobilePatchManager.activeSummary
+                    self.patchStatus = "补丁已撤销；重新进入游戏将使用原始资源。"
+                    self.patchBusy = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.patchError = "清除补丁失败：\(error.localizedDescription)"
+                    self.patchBusy = false
+                }
+            }
+        }
+    }
 
     func clearPackage() {
         guard !isImporting && !isClearing else { return }
@@ -789,4 +846,183 @@ final class LauncherModel: ObservableObject {
 
 private extension String {
     var lastPathComponent: String { (self as NSString).lastPathComponent }
+}
+
+
+// TEST 1.2 BUILD 115. Mobile patches form a read-only HTTP shadow tree.
+// The original multi-gigabyte Application Support/Game tree is NEVER
+// overwritten, copied, extracted again, or deleted by patch operations.
+struct MobilePatchManifest: Codable {
+    let format: String
+    let name: String
+    let version: String
+    let targetRevision: String?
+    let files: [String]
+}
+
+enum MobilePatchError: LocalizedError {
+    case invalidFormat, invalidManifest, invalidArchive, incompatible(String)
+    case unsafePath(String), invalidFile(String), oversized, noAssets
+    var errorDescription: String? {
+        switch self {
+        case .invalidFormat: return "补丁文件必须是 ZIP 格式（扩展名 .sgpatch 或 .zip）。"
+        case .invalidManifest: return "缺少有效的 mobile-patch.json，或文件清单与 ZIP 内容不一致。"
+        case .invalidArchive: return "补丁压缩包无法读取或校验失败。"
+        case .incompatible(let version): return "此补丁仅适用于核心资源修订号 \(version)，与当前美化包不匹配。"
+        case .unsafePath(let path): return "补丁包含不安全或不支持的资源路径：\(String(path.prefix(120)))"
+        case .invalidFile(let path): return "补丁资源缺失或不是普通文件：\(path)"
+        case .oversized: return "补丁过大：单包最多 512 MB、2048 个资源文件。"
+        case .noAssets: return "补丁清单没有包含可覆盖的 resource/ 游戏资源。"
+        }
+    }
+}
+
+enum MobilePatchManager {
+    private static var folder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MobilePatch", isDirectory: true)
+    }
+    private static var active: URL { folder.appendingPathComponent("active", isDirectory: true) }
+    private static var backup: URL { folder.appendingPathComponent("previous", isDirectory: true) }
+
+    private static func manifest(in root: URL) -> MobilePatchManifest? {
+        let url = root.appendingPathComponent("mobile-patch.json")
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true, (values.fileSize ?? 0) <= 32_768,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(MobilePatchManifest.self, from: data)
+    }
+
+    static var activeSummary: String {
+        guard let m = manifest(in: active), m.format == "shiguang-mobile-patch-v1" else {
+            return "未安装手机适配补丁"
+        }
+        return "\(m.name) · v\(m.version) · 覆盖 \(m.files.count) 个资源"
+    }
+
+    /// Keep core revision gating at play time, not just import time.
+    /// After replacing the .srom, a patch targeted at another game version is ignored.
+    static func activeRoot(currentRevision: String?) -> URL? {
+        guard let m = manifest(in: active), m.format == "shiguang-mobile-patch-v1",
+              !m.files.isEmpty else { return nil }
+        if let expected = m.targetRevision, !expected.isEmpty,
+           expected != currentRevision { return nil }
+        return active.resolvingSymlinksInPath()
+    }
+
+    // Limit all overlays to game resource assets. Never override Client.swf,
+    // login, dll, config, Javascript, Ruffle runtime, local proxy or app files.
+    static func permitted(_ path: String) -> Bool {
+        guard path.count <= 240, path.hasPrefix("resource/"),
+              !path.hasPrefix("/"), !path.contains("\\"), !path.contains("%"),
+              !path.unicodeScalars.contains(where: { $0.value < 32 }) else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count >= 2,
+              !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return false }
+        let ext = (path as NSString).pathExtension.lowercased()
+        return ["swf", "png", "jpg", "jpeg", "gif", "webp", "xml", "json", "mp3"].contains(ext)
+    }
+
+    static func install(_ source: URL, currentRevision: String?) throws -> String {
+        let fm = FileManager.default
+        guard ["sgpatch", "zip"].contains(source.pathExtension.lowercased()) else {
+            throw MobilePatchError.invalidFormat
+        }
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let temp = folder.appendingPathComponent("incoming-\(UUID().uuidString).zip")
+        let staged = folder.appendingPathComponent("stage-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? fm.removeItem(at: temp)
+            try? fm.removeItem(at: staged)
+        }
+        try fm.copyItem(at: source, to: temp)
+        let handle = try FileHandle(forReadingFrom: temp)
+        let signature = try handle.read(upToCount: 4) ?? Data()
+        try handle.close()
+        guard signature.starts(with: [0x50, 0x4B, 0x03, 0x04]) else {
+            throw MobilePatchError.invalidFormat
+        }
+        guard let archive = try? Archive(url: temp, accessMode: .read) else {
+            throw MobilePatchError.invalidArchive
+        }
+        var filePaths = Set<String>()
+        var caseInsensitivePaths = Set<String>()
+        var totalBytes: UInt64 = 0
+        for entry in archive {
+            let name = entry.path
+            // Directories are checked too: never skip ZIP path traversal checks.
+            let bare = name.hasSuffix("/") ? String(name.dropLast()) : name
+            guard !bare.hasPrefix("/"), !bare.contains("\\"), !bare.contains("%"),
+                  !bare.unicodeScalars.contains(where: { $0.value < 32 }),
+                  bare.split(separator: "/", omittingEmptySubsequences: false)
+                      .allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+                throw MobilePatchError.unsafePath(name)
+            }
+            if entry.type == .directory {
+                guard bare == "resource" || bare.hasPrefix("resource/") else {
+                    throw MobilePatchError.unsafePath(name)
+                }
+                continue
+            }
+            guard entry.type == .file else { throw MobilePatchError.unsafePath(name) }
+            guard name == "mobile-patch.json" || permitted(name) else {
+                throw MobilePatchError.unsafePath(name)
+            }
+            guard filePaths.insert(name).inserted,
+                  caseInsensitivePaths.insert(name.lowercased()).inserted else {
+                throw MobilePatchError.unsafePath(name)
+            }
+            totalBytes += UInt64(entry.uncompressedSize)
+            if filePaths.count > 2049 || totalBytes > 512 * 1024 * 1024 {
+                throw MobilePatchError.oversized
+            }
+        }
+        guard filePaths.contains("mobile-patch.json") else {
+            throw MobilePatchError.invalidManifest
+        }
+        try fm.createDirectory(at: staged, withIntermediateDirectories: true)
+        // ZIPFoundation checks CRC32 for every extracted member by default.
+        try fm.unzipItem(at: temp, to: staged, skipCRC32: false)
+        guard let m = manifest(in: staged),
+              m.format == "shiguang-mobile-patch-v1",
+              !m.name.isEmpty, m.name.count <= 80,
+              !m.version.isEmpty, m.version.count <= 32 else {
+            throw MobilePatchError.invalidManifest
+        }
+        if let target = m.targetRevision, !target.isEmpty, target != currentRevision {
+            throw MobilePatchError.incompatible(target)
+        }
+        guard !m.files.isEmpty else { throw MobilePatchError.noAssets }
+        let listed = Set(m.files)
+        guard listed.count == m.files.count, listed == filePaths.subtracting(["mobile-patch.json"]),
+              m.files.allSatisfy({ permitted($0) }) else {
+            throw MobilePatchError.invalidManifest
+        }
+        for path in m.files {
+            let file = staged.appendingPathComponent(path).resolvingSymlinksInPath()
+            guard file.path.hasPrefix(staged.resolvingSymlinksInPath().path + "/"),
+                  let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw MobilePatchError.invalidFile(path)
+            }
+        }
+        if fm.fileExists(atPath: backup.path) { try fm.removeItem(at: backup) }
+        let hasOld = fm.fileExists(atPath: active.path)
+        if hasOld { try fm.moveItem(at: active, to: backup) }
+        do {
+            try fm.moveItem(at: staged, to: active)
+        } catch {
+            if hasOld { try? fm.moveItem(at: backup, to: active) }
+            throw error
+        }
+        if hasOld { try? fm.removeItem(at: backup) }
+        LaunchDiagnostics.log("[手机补丁] 已原子启用 \(m.name) v\(m.version)，\(m.files.count) 个资源；原 Game 文件未修改")
+        return activeSummary
+    }
+
+    static func clear() throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: active.path) { try fm.removeItem(at: active) }
+        LaunchDiagnostics.log("[手机补丁] 已撤销覆盖层，原 Game 资源未修改")
+    }
 }

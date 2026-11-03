@@ -87,11 +87,23 @@ final class GameServer {
         let sizeInfo = size.map { "; 字节=\($0)" } ?? ""
         LaunchDiagnostics.log("HTTP 资源请求：\(method) \(path) → \(status)\(sizeInfo)")
     }
+    private let mobilePatchRoot: URL?
     private let bridge: GameSocketBridge?
 
     init(root: URL, packagedWebApp: Bool = false) throws {
         self.root = root.resolvingSymlinksInPath()
         self.packagedWebApp = packagedWebApp
+        // 1.2 beta: snapshot patch overlay for this game session only.
+        // Do NOT alter the original Application Support/Game files.
+        let installedRevision = LaunchDiagnostics.coreRevision(root: self.root, entry: "Client.swf")
+        self.mobilePatchRoot = packagedWebApp
+            ? MobilePatchManager.activeRoot(currentRevision: installedRevision)
+            : nil
+        if let patch = self.mobilePatchRoot {
+            LaunchDiagnostics.log("[手机补丁] 启动游戏时启用覆盖层：\(patch.lastPathComponent)；核心版本=\(installedRevision ?? "未知")")
+        } else {
+            LaunchDiagnostics.log("[手机补丁] 无启用覆盖层或补丁版本与当前游戏不一致")
+        }
         self.compatibilityModeEnabled = UserDefaults.standard.bool(
             forKey: "shiguang.compatibilityMode103"
         )
@@ -271,7 +283,16 @@ final class GameServer {
                     }
                 }
             } else {
-                serve(relative: relative, below: root, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
+                if relative.hasPrefix("resource/"),
+                   let patch = mobilePatchRoot,
+                   safeFile(relative, below: patch) != nil {
+                    LaunchDiagnostics.log("[手机补丁] 覆盖游戏资源：\(relative)")
+                    serve(relative: relative, below: patch, headOnly: headOnly,
+                          rangeHeader: rangeHeader, connection: connection)
+                } else {
+                    serve(relative: relative, below: root, headOnly: headOnly,
+                          rangeHeader: rangeHeader, connection: connection)
+                }
             }
             return
         }
