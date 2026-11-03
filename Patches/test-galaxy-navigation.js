@@ -12,7 +12,7 @@ function advance(ms){const end=time+ms;for(let step=0;step<1000;step++){
 function elem(){return {children:[],style:{},isConnected:true,offsetWidth:600,offsetHeight:350,
   handlers:{},appendChild(el){this.children.push(el);return el;},setAttribute(){},setPointerCapture(){},
   addEventListener(t,f){(this.handlers[t]??=[]).push(f);},dispatchEvent(e){
-    events.push(e.type);for(const f of this.handlers[e.type]||[])f(e);return true;},
+    if(this===canvas)events.push(e.type);for(const f of this.handlers[e.type]||[])f(e);return true;},
   getBoundingClientRect(){return{left:0,top:0,width:600,height:350,right:600,bottom:350};}};}
 const document={body:elem(),hidden:false,createElement:elem,
  addEventListener(t,f){(listeners[t]??=[]).push(f);}};
