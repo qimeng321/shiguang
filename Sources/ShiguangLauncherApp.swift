@@ -719,7 +719,8 @@ struct GameView: View {
                             }
                               .padding(8)
                             }
-                            .frame(width: 168, maxHeight: max(145, lockedGeometry.size.height - 92))
+                            .frame(width: 168)
+                            .frame(maxHeight: max(145, lockedGeometry.size.height - 92))
                             .background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 15))
                             .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
                         }
