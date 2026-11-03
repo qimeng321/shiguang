@@ -814,7 +814,7 @@ final class GameServer {
             input.setAttribute("lang","en-US");
             input.setAttribute("enterkeyhint","done");
             input.setAttribute("aria-hidden","false");
-            input.setAttribute("placeholder","账号/密码：优先英文键盘输入");
+            input.setAttribute("placeholder","先点游戏中的账号或密码框，再点这里输入");
             input.setAttribute("autocomplete","off");
             input.setAttribute("autocorrect","off");
             input.setAttribute("autocapitalize","none");
@@ -932,6 +932,9 @@ final class GameServer {
           window.ShiguangControls={toggleFPS:function(){setFps(!fpsActive);},
             toggleKeyboard:toggleKeyboard,
             toggleMapControls:function(){if(galaxyNavigation)galaxyNavigation.toggleManual();},
+            showMapControls:function(){if(galaxyNavigation)galaxyNavigation.setMapVisible(true,"测试菜单开启");},
+            hideMapControls:function(){if(galaxyNavigation)galaxyNavigation.hide("测试菜单关闭");},
+            cycleMapMode:function(){if(galaxyNavigation)galaxyNavigation.cycleMode();},
             enableMouse:function(){
               if(inputShown)setDockVisible(false,"启用虚拟鼠标");
               if(touchControls)touchControls.enableMouse();
@@ -956,48 +959,39 @@ final class GameServer {
             var field=keyboardInput();
             return !!(field&&field.getRootNode().activeElement===field);
           }
-          function fit(){
-            var v=window.visualViewport;
-            var measuredW=Math.max(1,Math.round(v?v.width:window.innerWidth));
-            var measuredH=Math.max(1,Math.round(Math.max(v?v.height:0,window.innerHeight||0)));
-            var keyboardFocused=inputHasFocus();
-            if(!stableViewport){
-              stableViewport={w:measuredW,h:measuredH};
-            }else if(Math.abs(measuredW-stableViewport.w)>64 && !keyboardFocused){
-              // Orientation or actual split-view width change.
-              stableViewport={w:measuredW,h:measuredH};
-            }else if(!keyboardFocused){
-              stableViewport.w=measuredW;
-              // Avoid transient keyboard shrink and toolbar animations.
-              if(measuredH>=stableViewport.h-64)stableViewport.h=measuredH;
+          // Lock the original stage size. Keyboard/menu/SwiftUI overlay changes
+          // must not resize Flash; only a genuine device rotation may refit.
+          function fit(force){
+            var measuredW=Math.max(1,Math.round(window.innerWidth||document.documentElement.clientWidth));
+            var measuredH=Math.max(1,Math.round(window.innerHeight||document.documentElement.clientHeight));
+            if(!stableViewport||force){
+              stableViewport={w:measuredW,h:measuredH,
+                orientation:measuredW>=measuredH?"landscape":"portrait"};
             }
             var w=stableViewport.w,h=stableViewport.h;
             var factor=Math.min(w/960,h/560);
             var pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
-            var state=pw+"×"+ph+"；可用屏幕 "+w+"×"+h;
-            // iOS may dispatch resize events repeatedly during keyboard
-            // animation. Avoid redundant CSS writes and forced layout work.
+            var state=pw+"×"+ph+"；锁定视口 "+w+"×"+h;
             if(state!==last){
               document.documentElement.style.setProperty("--game-w",pw+"px");
               document.documentElement.style.setProperty("--game-h",ph+"px");
               var game=document.getElementById("game");
               game.style.height=h+"px";game.style.width=w+"px";
-              last=state;report("等比例自适应："+state);
+              last=state;report("游戏画面固定尺寸："+state);
             }
-            if(player && (player.style.width!==pw+"px" || player.style.height!==ph+"px")){
+            if(player&&(player.style.width!==pw+"px"||player.style.height!==ph+"px")){
               player.style.width=pw+"px";player.style.height=ph+"px";
             }
             placeInputDock();
           }
           function scheduleFit(){
             if(fitTimer!==null)clearTimeout(fitTimer);
-            fitTimer=setTimeout(function(){fitTimer=null;fit();},65);
+            fitTimer=setTimeout(function(){fitTimer=null;fit(false);},110);
           }
           window.addEventListener("resize",scheduleFit);
           window.addEventListener("orientationchange",function(){
-            stableViewport=null;scheduleFit();
-            // WebKit reports rotation geometry in several asynchronous steps.
-            setTimeout(function(){stableViewport=null;fit();},350);
+            if(fitTimer!==null)clearTimeout(fitTimer);
+            fitTimer=setTimeout(function(){fitTimer=null;fit(true);},430);
           });
           if(window.visualViewport)window.visualViewport.addEventListener("resize",scheduleFit);
           fit();

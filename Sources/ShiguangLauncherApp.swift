@@ -144,7 +144,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("综合测试版 1.2 · Build 115")
+                        Text("综合测试版 1.2 · Build 116")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -608,6 +608,7 @@ struct GameView: View {
     @State private var controlAction = ""
     @State private var virtualMouseEnabled = false
     @State private var fpsEnabled = false
+    @State private var mapArrowsEnabled = false
     // Saved across WebView reloads; off by default for normal click speed.
     @AppStorage("shiguang.delayedTap103") private var delayedTapEnabled = false
     // Test-only, explicitly off until the player selects it in the game menu.
@@ -616,7 +617,8 @@ struct GameView: View {
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
     var body: some View {
-        ZStack {
+        GeometryReader { lockedGeometry in
+            ZStack {
             Color.black.ignoresSafeArea()
             if isClearingWebCache {
                 ProgressView("正在清理网页缓存…")
@@ -633,7 +635,7 @@ struct GameView: View {
                     LaunchDiagnostics.log("网页错误：" + message)
                 })
                 .id(reloadGeneration) // recreate WKWebView and Flash, leave HTTP service/resources intact
-                .ignoresSafeArea()
+                .frame(width: lockedGeometry.size.width, height: lockedGeometry.size.height)
             } else if let errorText {
                 Text(errorText).foregroundStyle(.white).padding(24)
             } else {
@@ -693,8 +695,14 @@ struct GameView: View {
                                     if delayedTapEnabled { smartHoverEnabled = false }
                                     LaunchDiagnostics.log("[触控辅助] 手指直接点按及精准鼠标延迟抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
                                 }
-                                gameTool("arrow.left.and.right", "地图箭头（手动测试）") {
-                                    sendControl("toggleMapControls")
+                                gameTool("arrow.left.and.right", mapArrowsEnabled ? "地图箭头：关" : "地图箭头：开（测试）") {
+                                    mapArrowsEnabled.toggle()
+                                    sendControl(mapArrowsEnabled ? "showMapControls" : "hideMapControls")
+                                }
+                                if mapArrowsEnabled {
+                                    gameTool("arrow.left.arrow.right", "地图滑动方式：切换") {
+                                        sendControl("cycleMapMode")
+                                    }
                                 }
                                 gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
                                     fpsEnabled.toggle()
@@ -718,7 +726,7 @@ struct GameView: View {
                             .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
                         }
                     }
-                    .animation(.easeInOut(duration: 0.18), value: toolsExpanded)
+                    // Avoid animating the WebView layout when opening tools.
                 }
                 .padding(.top, 14)
                 Spacer(minLength: 12)
@@ -754,7 +762,11 @@ struct GameView: View {
                         .padding(.bottom, 57)
                 }
             }
+            }
+            .frame(width: lockedGeometry.size.width, height: lockedGeometry.size.height)
+            .clipped()
         }
+        .ignoresSafeArea()
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .confirmationDialog("清理游戏网页缓存？", isPresented: $showingCacheConfirmation,
@@ -830,7 +842,7 @@ struct GameView: View {
 
     private func toggleToolMenu() {
         toolMenuGeneration += 1
-        withAnimation(.easeInOut(duration: 0.18)) { toolsExpanded.toggle() }
+        toolsExpanded.toggle()
         guard toolsExpanded else { return }
         let generation = toolMenuGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
@@ -845,6 +857,7 @@ struct GameView: View {
     }
 
     private func reloadGame() {
+        mapArrowsEnabled = false
         guard server != nil && !isClearingWebCache else { return }
         errorText = nil
         virtualMouseEnabled = false
@@ -1055,6 +1068,7 @@ struct GameWebView: UIViewRepresentable {
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
         let allowed = ["toggleKeyboard", "enableMouse", "disableMouse", "toggleMapControls",
+                       "showMapControls", "hideMapControls", "cycleMapMode",
                        "resetCursor", "cycleSpeed", "toggleFPS"]
         guard allowed.contains(controlAction) else { return }
         let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"
