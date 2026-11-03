@@ -608,7 +608,6 @@ struct GameView: View {
     @State private var controlAction = ""
     @State private var virtualMouseEnabled = false
     @State private var fpsEnabled = false
-    @State private var mapArrowsEnabled = false
     // Saved across WebView reloads; off by default for normal click speed.
     @AppStorage("shiguang.delayedTap103") private var delayedTapEnabled = false
     // Test-only, explicitly off until the player selects it in the game menu.
@@ -667,7 +666,8 @@ struct GameView: View {
                         }
                         .accessibilityLabel(toolsExpanded ? "收起游戏工具" : "展开游戏工具")
                         if toolsExpanded {
-                            VStack(alignment: .leading, spacing: 3) {
+                            ScrollView(.vertical) {
+                              VStack(alignment: .leading, spacing: 3) {
                                 gameTool("keyboard", "输入键盘") {
                                     sendControl("toggleKeyboard")
                                 }
@@ -695,14 +695,11 @@ struct GameView: View {
                                     if delayedTapEnabled { smartHoverEnabled = false }
                                     LaunchDiagnostics.log("[触控辅助] 手指直接点按及精准鼠标延迟抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
                                 }
-                                gameTool("arrow.left.and.right", mapArrowsEnabled ? "地图箭头：关" : "地图箭头：开（测试）") {
-                                    mapArrowsEnabled.toggle()
-                                    sendControl(mapArrowsEnabled ? "showMapControls" : "hideMapControls")
+                                gameTool("arrow.left.and.right", "地图箭头：显示 / 隐藏") {
+                                    sendControl("toggleMapControls")
                                 }
-                                if mapArrowsEnabled {
-                                    gameTool("arrow.left.arrow.right", "地图滑动方式：切换") {
-                                        sendControl("cycleMapMode")
-                                    }
+                                gameTool("arrow.left.arrow.right", "地图流动模式：切换") {
+                                    sendControl("cycleMapMode")
                                 }
                                 gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
                                     fpsEnabled.toggle()
@@ -720,8 +717,9 @@ struct GameView: View {
                                 }
                                 .disabled(isClearingWebCache)
                             }
-                            .padding(8)
-                            .frame(width: 168)
+                              .padding(8)
+                            }
+                            .frame(width: 168, maxHeight: max(145, lockedGeometry.size.height - 92))
                             .background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 15))
                             .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
                         }
@@ -857,7 +855,6 @@ struct GameView: View {
     }
 
     private func reloadGame() {
-        mapArrowsEnabled = false
         guard server != nil && !isClearingWebCache else { return }
         errorText = nil
         virtualMouseEnabled = false
