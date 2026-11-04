@@ -116,6 +116,11 @@ jobs:
           assert 'func importMobilePatch(_ url: URL)' in model
           assert 'mobilePatchRoot' in source
           assert 'let ifNoneMatch =' in source
+          assert 'private var verifiedPathCache:' in source
+          assert 'private let maxPathEntries = 40_000' in source
+          assert 'private let pathCacheTTL: TimeInterval = 45' in source
+          assert 'verifiedPathCache[key] = VerifiedPath(' in source
+          assert 'verifiedPathCache.removeValue(forKey: key)' in source
           assert 'ETag:' in source and '304 Not Modified' in source
           assert 'ShiguangMapBridge' not in source
           assert 'mobilePatchPanel' in swift

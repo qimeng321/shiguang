@@ -19,6 +19,18 @@ final class GameServer {
     private var versionGetCount = 0
     private var proceededBeyondVersion = false
     private var inspectedVersionHeader = false
+    // Windows microclient-inspired positive path cache. HTTP requests are
+    // serialized by 'queue', and installed game assets are immutable while a
+    // session runs. Never cache a missing/unvalidated or untrusted path.
+    private struct VerifiedPath {
+        let url: URL
+        let checkedAt: TimeInterval
+    }
+    private var verifiedPathCache: [String: VerifiedPath] = [:]
+    private var pathCacheHits = 0
+    private var pathCacheMisses = 0
+    private let pathCacheTTL: TimeInterval = 45
+    private let maxPathEntries = 40_000
 
     // Diagnose the PVM header directly in the saved file; never modify it.
     private func inspectPVMHeader(_ file: URL) {
@@ -449,9 +461,32 @@ final class GameServer {
         let parts = decoded.split(separator: "/", omittingEmptySubsequences: false)
         guard !decoded.hasPrefix("/"), !decoded.contains("\\"),
               !parts.contains(where: { $0 == ".." || $0 == "." || $0.isEmpty }) else { return nil }
+        // Path validation ALWAYS precedes lookup; a cached URL was originally
+        // resolved, verified to stay inside 'base', and checked as regular file.
+        let key = base.path + "/" + decoded
+        let now = ProcessInfo.processInfo.systemUptime
+        if let cached = verifiedPathCache[key], now - cached.checkedAt < pathCacheTTL {
+            pathCacheHits += 1
+            if pathCacheHits == 1000 || pathCacheHits % 5000 == 0 {
+                LaunchDiagnostics.log("[路径缓存] 命中=\(pathCacheHits)；重新验证=\(pathCacheMisses)；条目=\(verifiedPathCache.count)")
+            }
+            return cached.url
+        }
+        pathCacheMisses += 1
         let resolved = base.appendingPathComponent(decoded).resolvingSymlinksInPath()
         guard resolved.path.hasPrefix(base.path + "/"),
-              (try? resolved.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return nil }
+              (try? resolved.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
+            // Do not cache absent files: imported assets can change between game sessions.
+            verifiedPathCache.removeValue(forKey: key)
+            return nil
+        }
+        // Bounded memory: preserve expensive image/texture allocations for Ruffle
+        // rather than allowing a file index to grow without limit.
+        if verifiedPathCache.count >= maxPathEntries {
+            verifiedPathCache.removeAll(keepingCapacity: true)
+            LaunchDiagnostics.log("[路径缓存] 达到40000条上限，已安全清空索引")
+        }
+        verifiedPathCache[key] = VerifiedPath(url: resolved, checkedAt: now)
         return resolved
     }
 
