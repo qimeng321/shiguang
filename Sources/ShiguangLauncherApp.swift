@@ -213,9 +213,9 @@ struct LauncherView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                         if let revision = launcher.resourceRevision {
-                            Text("识别到核心资源修订号：\(revision)\(revision == "2026110201" ? " · 已适配" : " · 兼容性待验证")")
+                            Text("识别到核心资源修订号：\(revision)\(revision == "2026110304" ? " · 新版 0.18.0" : (revision == "2026110201" ? " · 旧版资源" : " · 兼容性待验证"))")
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(revision == "2026110201" ? green : subtleInk)
+                                .foregroundStyle(revision == "2026110304" || revision == "2026110201" ? green : subtleInk)
                         }
                         Divider().opacity(0.35)
                         HStack(alignment: .top, spacing: 7) {

@@ -1,0 +1,17 @@
+{
+  "source_archive": "拾光号-美化整合包-2026110304.zip",
+  "resource_version": "0.18.0",
+  "core_revision": "2026110304",
+  "file_count": 41671,
+  "swf_count": 36802,
+  "client_sha256": "d64a9e3af813324f6e1f9844e74eee16dee5d76a4c8a26c417585467a3c3e59f",
+  "original_archive_sha256": "d4046a162c412e6f0a95ede999e6b8a46ecd4e92c7866a249705a11349c57290",
+  "source_analysis_only": true,
+  "game_assets_embedded": false,
+  "full_ios_runtime_tested": false,
+  "old_archive_comparison_available": false,
+  "based_on_test_branch": "test/1.2-nono-precision-safe-start-b118",
+  "release_version": "1.0.4",
+  "build_number": 120,
+  "runtime_verification": "not tested on iOS hardware"
+}
