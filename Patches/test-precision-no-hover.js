@@ -1,4 +1,5 @@
-// Formal 1.04 precise mouse regression tests; no smart-hover code present.\nconst fs=require("fs"),vm=require("vm"),assert=require("node:assert/strict");
+// Formal 1.04 precise mouse regression tests; no smart-hover code present.
+const fs=require("fs"),vm=require("vm"),assert=require("node:assert/strict");
 const source=fs.readFileSync(__dirname+"/touch-controls.js","utf8");
 function harness(){
   let time=0,next=0;const timers=new Map(),events=[],reports=[];
