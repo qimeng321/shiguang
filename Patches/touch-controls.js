@@ -1,4 +1,4 @@
-/* Shiguang v6.2 Build117: NoNo ring button click after smart hover + existing direct tap.
+/* Shiguang v6.3 Build118: reuse proven precise mouse press for NoNo ring + game-entry guard.
    Ruffle 0.7.1 reads PointerEvent.offsetX/Y from its inner canvas. */
 (function(){
 "use strict";
@@ -10,7 +10,7 @@ window.ShiguangTouchControls=function(player,report){
   var lastDirectTouchAt=0,directTapCount=0;
   // Opt-in test gesture: short touch -> click, hold -> hover only, swipe -> drag.
   // Keep it independent from the old delayed release path for safe rollback.
-  var smartHover=false,smartTouch=null,smartHoldTimer=null,smartTapTimer=null,smartPressTimer=null;
+  var smartHover=false,smartTouch=null,smartHoldTimer=null,smartTapTimer=null;
   var ringAnchor=null,ringSelectCount=0;
   var smartTapPending=null,smartPointers=new Set(),smartMultiTouch=false;
   var smartLongCount=0,smartHoverPulse=null,smartPulseIndex=0;
@@ -154,12 +154,17 @@ window.ShiguangTouchControls=function(player,report){
     var p=clickPending;clickPending=null;
     emit("pointerup",p,0,0);
   }
-  function pressAt(p){
-    if(!enabled||drag||!emit("pointerdown",p,1,0))return;
+  // Shared with the known-working precise mouse: the same pointer ID, down
+  // event and 125ms release, even while the virtual mouse panel is hidden.
+  function precisePress(p,duration){
+    if(drag||!emit("pointerdown",p,1,0))return false;
     clickPending=p;
-    // Default 125ms retains existing behavior. Optional longer hold can
-    // expose Flash hover-menu click targets without forcing the whole UI slow.
-    clickTimer=setTimeout(endClick,delayedTap?350:125);
+    clickTimer=setTimeout(endClick,duration||125);
+    return true;
+  }
+  function pressAt(p){
+    if(!enabled||drag)return;
+    precisePress(p,delayedTap?350:125);
   }
   function click(){
     if(!enabled||drag||!pos)return;
@@ -177,7 +182,6 @@ window.ShiguangTouchControls=function(player,report){
     if(count<=5||count%15===0)report("鼠标：已点击 "+count+" 次"+(delayedTap?"（延迟抬起）":"")+"；手指交替可继续使用");
   }
   function releaseSmartTap(){
-    if(smartPressTimer!==null){clearTimeout(smartPressTimer);smartPressTimer=null;}
     if(smartTapTimer!==null){clearTimeout(smartTapTimer);smartTapTimer=null;}
     if(smartTapPending){emit("pointerup",smartTapPending,0,0);smartTapPending=null;}
   }
@@ -186,21 +190,19 @@ window.ShiguangTouchControls=function(player,report){
       Math.hypot(point.x-ringAnchor.x,point.y-ringAnchor.y)<=165);
   }
   function smartClick(point,ringMode){
-    // Ruffle must process mouseover before Flash hit tests a ring icon.
-    // Preserve 65ms tap for ordinary game UI and the virtual double-click.
     releaseSmartTap();
-    if(!emit("pointermove",point,0))return;
     if(ringMode){
-      ringSelectCount++;
-      if(ringSelectCount<=5)report("NoNo圆环：按钮点选第"+ringSelectCount+"次，先悬停后按下");
-      smartPressTimer=setTimeout(function(){
-        smartPressTimer=null;
-        if(!smartHover||!emit("pointerdown",point,1,0))return;
-        smartTapPending=point;
-        smartTapTimer=setTimeout(releaseSmartTap,190);
-      },110);
+      // Do NOT move on the initial physical touch: it prematurely sends
+      // MOUSE_OUT while the Flash shortcut ring is still open.
+      // Reuse the precise mouse's immediate move/down/125ms up sequence.
+      endClick();
+      if(!emit("pointermove",point,0))return;
+      if(precisePress(point,125)){
+        ringSelectCount++;
+        if(ringSelectCount<=8)report("NoNo圆环：复用精准鼠标点击第"+ringSelectCount+"次（立即按下/125ms抬起）");
+      }
     }else{
-      if(!emit("pointerdown",point,1,0))return;
+      if(!emit("pointermove",point,0)||!emit("pointerdown",point,1,0))return;
       smartTapPending=point;
       smartTapTimer=setTimeout(releaseSmartTap,65);
     }
@@ -244,11 +246,14 @@ window.ShiguangTouchControls=function(player,report){
     if(smartPointers.size>1){smartMultiTouch=true;cancelSmartTouch();return;}
     if(smartMultiTouch)return;
     var p={x:ev.clientX,y:ev.clientY};
-    var t={id:ev.pointerId,start:p,point:p,dragging:false,pressed:false,long:false};
+    var choosingRing=ringNear(p);
+    var t={id:ev.pointerId,start:p,point:p,dragging:false,pressed:false,long:false,ringSelect:choosingRing};
     smartTouch=t;
-    // Establish mouse hover without down so the original NoNo ring can appear.
-    emit("pointermove",p,0);
+    // A second touch on an already-open ring must not move the game mouse
+    // until its physical release; early move alone can close the menu.
+    if(!choosingRing)emit("pointermove",p,0);
     clearSmartHold();
+    if(choosingRing)return;
     smartHoldTimer=setTimeout(function(){
       smartHoldTimer=null;
       if(smartHover&&smartTouch===t&&!t.dragging&&!t.pressed){
@@ -278,6 +283,11 @@ window.ShiguangTouchControls=function(player,report){
     if(!t||t.id!==ev.pointerId||smartMultiTouch)return;
     t.point={x:ev.clientX,y:ev.clientY};
     if(t.long){emit("pointermove",t.point,0);return;}
+    if(t.ringSelect){
+      // A small physical finger drift during ring selection should not
+      // trigger Flash MOUSE_OUT or start a synthetic drag.
+      return;
+    }
     if(Math.hypot(t.point.x-t.start.x,t.point.y-t.start.y)>12){
       if(!t.dragging){
         clearSmartHold();t.dragging=true;
@@ -295,7 +305,10 @@ window.ShiguangTouchControls=function(player,report){
       clearSmartHold();smartTouch=null;
       if(t.pressed){emit("pointerup",t.point,0,0);}
       else if(!cancelled&&!smartMultiTouch){
-        if(t.long){
+        if(t.ringSelect){
+          smartClick({x:ev.clientX,y:ev.clientY},true);
+          ringAnchor=null;
+        }else if(t.long){
           // Alternate mobile gesture: hold NoNo, slide onto a ring icon,
           // then release. No second finger-tap is needed.
           var moved=Math.hypot(t.point.x-t.start.x,t.point.y-t.start.y);
@@ -541,7 +554,7 @@ window.ShiguangTouchControls=function(player,report){
   try{new ResizeObserver(function(){
     if(enabled&&pos){var p=clamp(pos);if(p){pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";}}
   }).observe(player);}catch(e){}
-  report("鼠标 v6.2 Build117：圆环按钮选择加入110ms悬停准备、190ms按住与长按滑动释放；需真机验证");
+  report("鼠标 v6.3 Build118：NoNo圆环复用精准鼠标点击时序，启动前暂停智能悬停，按游戏进度激活");
   return {enableMouse:function(){setMode(true);},disableMouse:function(){setMode(false);},
     hideAll:function(){setMode(false);},resetCursor:center,
     cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap,setSmartHover:setSmartHover};

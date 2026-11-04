@@ -117,31 +117,36 @@ const count=(h,type)=>h.events.filter(x=>x.type===type).length;
   assert.equal(count(h,"pointerdown"),0,"TouchEvent-only long hold release must not click");
 }
 {
-  // A nearby ring icon short tap must not press too soon and accidentally
-  // collapse the hover ring before Flash processes the mouseover.
+  // The already-visible NoNo ring must not be dismissed by the second
+  // physical touch DOWN. Its touch UP uses the same 125ms precision press.
   const h=harness();h.controls.setSmartHover(true);
   h.trusted("pointerdown",300,170);h.advance(480);
-  h.trusted("pointerup",300,170);h.advance(60);
-  h.trusted("pointerdown",350,185);h.advance(55);h.trusted("pointerup",350,185);
-  const before=count(h,"pointerdown");h.advance(100);
-  assert.equal(count(h,"pointerdown"),before,"ring press needs a mouseover lead-in");
-  h.advance(20);assert.equal(count(h,"pointerdown"),before+1,"ring press after 110ms");
-  h.advance(195);assert.equal(count(h,"pointerup"),1,"ring press must release after hold");
+  h.trusted("pointerup",300,170);h.advance(40);
+  const movesBefore=count(h,"pointermove");
+  h.trusted("pointerdown",350,185);
+  assert.equal(count(h,"pointermove"),movesBefore,"ring selector must NOT move before user release");
+  h.advance(45);h.trusted("pointerup",350,185);
+  assert.equal(count(h,"pointerdown"),1,"ring click press happens immediately at touch release");
+  assert.equal(count(h,"pointerup"),0,"precision press holds the button 125ms");
+  h.advance(126);assert.equal(count(h,"pointerup"),1,"precision ring click releases after 125ms");
+  assert(h.reports.some(s=>s.includes("复用精准鼠标点击")));
 }
 {
   // Long-press NoNo, slide onto the icon and release without lifting in between.
   const h=harness();h.controls.setSmartHover(true);
   h.trusted("pointerdown",300,170);h.advance(460);
   h.trusted("pointermove",350,185);h.trusted("pointerup",350,185);
-  h.advance(120);assert.equal(count(h,"pointerdown"),1,"hold-slide-release selects ring icon");
-  h.advance(200);assert.equal(count(h,"pointerup"),1,"hold-slide-release releases click");
+  assert.equal(count(h,"pointerdown"),1,"hold-slide-release uses immediate precise click");
+  h.advance(126);assert.equal(count(h,"pointerup"),1,"hold-slide-release uses 125ms release");
 }
 {
   // Switching off must cancel a pending ring click: no ghost presses.
   const h=harness();h.controls.setSmartHover(true);
   h.trusted("pointerdown",300,170);h.advance(450);h.trusted("pointerup",300,170);
   h.trusted("pointerdown",325,170);h.advance(45);h.trusted("pointerup",325,170);
+  // A simulated completed tap has already pressed: turning off must release.
   h.controls.setSmartHover(false);h.advance(600);
-  assert.equal(count(h,"pointerdown"),0,"disabling ring mode cancels deferred tap");
+  assert.equal(count(h,"pointerdown"),1,"ring tap presses once on physical release");
+  assert.equal(count(h,"pointerup"),1,"disabling ring mode releases in-progress click");
 }
-console.log("PASS Build117 NoNo ring click timing, hold-slide-release, cancellation, smart hover and fallback");
+console.log("PASS Build118: precise mouse NoNo ring click, hold-slide-release, startup-off touch fallback and cancellation");

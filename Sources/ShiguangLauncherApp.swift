@@ -144,7 +144,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("综合测试版 1.2 · Build 117")
+                        Text("综合测试版 1.2 · Build 118")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -632,6 +632,13 @@ struct GameView: View {
                 }, onError: { message in
                     errorText = message
                     LaunchDiagnostics.log("网页错误：" + message)
+                }, onWebContentTerminated: {
+                    // Recover safely: a saved ON setting must not cause an endless
+                    // WKWebView crash/reload loop. User can re-enable in-game.
+                    if smartHoverEnabled {
+                        smartHoverEnabled = false
+                        LaunchDiagnostics.log("[智能悬停安全回退] WebKit内容进程终止；已关闭智能悬停并保存设置，下次以普通触控进入游戏")
+                    }
                 })
                 .id(reloadGeneration) // recreate WKWebView and Flash, leave HTTP service/resources intact
                 .frame(width: lockedGeometry.size.width, height: lockedGeometry.size.height)
@@ -884,6 +891,7 @@ struct GameWebView: UIViewRepresentable {
     let smartHoverEnabled: Bool
     let onStatus: (String) -> Void
     let onError: (String) -> Void
+    let onWebContentTerminated: () -> Void
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -1074,7 +1082,9 @@ struct GameWebView: UIViewRepresentable {
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "gameDiagnostics")
     }
-    func makeCoordinator() -> Coordinator { Coordinator(onStatus: onStatus, onError: onError) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onStatus: onStatus, onError: onError, onWebContentTerminated: onWebContentTerminated)
+    }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var lastControlGeneration = 0
@@ -1083,9 +1093,12 @@ struct GameWebView: UIViewRepresentable {
         private var navigationCount = 0
         let onStatus: (String) -> Void
         let onError: (String) -> Void
-        init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+        let onWebContentTerminated: () -> Void
+        init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void,
+             onWebContentTerminated: @escaping () -> Void) {
             self.onStatus = onStatus
             self.onError = onError
+            self.onWebContentTerminated = onWebContentTerminated
         }
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
@@ -1108,8 +1121,9 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            LaunchDiagnostics.log("[严重诊断] WebKit WebContent 进程终止；可能是内存压力/渲染进程崩溃。保持现场，等待用户点击重新加载。")
-            onError("游戏网页进程已终止，可能存在内存压力或渲染异常。点击「重新加载游戏」继续；可导出 diagnostics.txt 排查。")
+            LaunchDiagnostics.log("[严重诊断] WebKit WebContent 进程终止；保存现场并对智能悬停执行安全回退")
+            onWebContentTerminated()
+            onError("游戏网页进程已终止。已自动停用智能悬停以避免反复崩溃；点击「重新加载游戏」，可导出 diagnostics.txt 排查。")
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             let value = lastDelayedTapEnabled ? "true" : "false"

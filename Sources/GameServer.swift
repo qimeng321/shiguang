@@ -816,6 +816,7 @@ final class GameServer {
                 if(data&&data.enteredGame&&!enteredGame){
                   enteredGame=true;
                   if(inputShown)setDockVisible(false,"进入游戏后自动关闭登录输入栏");
+                  setSmartHoverWanted(window.__shiguangSmartHoverChoice===true,"收到选服成功状态");
                 }
               }).catch(function(){});
           }
@@ -962,6 +963,39 @@ final class GameServer {
             if(fpsHandle){fpsCancel(fpsHandle);fpsHandle=0;}
             if(!document.hidden&&fpsActive){fpsCount=0;fpsStart=0;fpsHandle=fpsRequest(fpsTick);}
           });
+          var smartEnableTimer=null,smartHoverRequested=false;
+          function setSmartHoverWanted(on,reason){
+            smartHoverRequested=!!on;
+            window.__shiguangSmartHoverChoice=!!on;
+            if(smartEnableTimer!==null){clearTimeout(smartEnableTimer);smartEnableTimer=null;}
+            if(!smartHoverRequested){
+              if(touchControls)touchControls.setSmartHover(false);
+              report("智能悬停：已关闭；恢复普通触摸");
+              return;
+            }
+            if(!enteredGame||document.hidden){
+              // Never intercept login, server selection, initial SWF loading.
+              if(touchControls)touchControls.setSmartHover(false);
+              report("智能悬停：已选择开启，等待进入游戏和加载稳定后启用");
+              return;
+            }
+            report("智能悬停：已进入游戏，启动保护倒计时 3.5 秒");
+            smartEnableTimer=setTimeout(function(){
+              smartEnableTimer=null;
+              if(smartHoverRequested&&enteredGame&&!document.hidden&&touchControls){
+                touchControls.setSmartHover(true);
+                report("智能悬停：游戏稳定后启用（安全启动保护）");
+              }
+            },3500);
+          }
+          document.addEventListener("visibilitychange",function(){
+            if(document.hidden){
+              if(smartEnableTimer!==null){clearTimeout(smartEnableTimer);smartEnableTimer=null;}
+              if(touchControls)touchControls.setSmartHover(false);
+            }else if(enteredGame&&smartHoverRequested){
+              setSmartHoverWanted(true,"返回游戏");
+            }
+          });
           window.ShiguangControls={toggleFPS:function(){setFps(!fpsActive);},
             toggleKeyboard:toggleKeyboard,
             enableMouse:function(){
@@ -976,8 +1010,7 @@ final class GameServer {
               if(touchControls)touchControls.setDelayedTap(!!on);
             },
             setSmartHover:function(on){
-              window.__shiguangSmartHoverChoice=!!on;
-              if(touchControls)touchControls.setSmartHover(!!on);
+              setSmartHoverWanted(!!on,"SwiftUI用户设置");
             }
           };
           // The iOS software keyboard shrinks visualViewport but the Flash
@@ -1032,7 +1065,8 @@ final class GameServer {
               if(window.ShiguangTouchControls){
                 touchControls=window.ShiguangTouchControls(player,report);
                 touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true);
-                touchControls.setSmartHover(window.__shiguangSmartHoverChoice===true);
+                touchControls.setSmartHover(false);
+                setSmartHoverWanted(window.__shiguangSmartHoverChoice===true,"游戏启动时安全暂停");
               }else{
                 report("触控辅助：脚本缺失，触控增强暂不可用（不影响游戏启动）");
               }
