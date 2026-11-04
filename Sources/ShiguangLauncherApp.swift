@@ -144,7 +144,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("综合测试版 1.2 · Build 118")
+                        Text("正式版 1.04")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -355,7 +355,7 @@ struct LauncherView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("只删除测试版的手机补丁覆盖层，不修改已安装的 .srom 美化包。重新进入游戏后恢复原资源。")
+            Text("只删除手机补丁覆盖层，不修改已安装的 .srom 游戏资源。重新进入游戏后恢复原资源。")
         }
         .sheet(isPresented: $showingLocalFiles) {
             NavigationStack {
@@ -610,8 +610,6 @@ struct GameView: View {
     @State private var fpsEnabled = false
     // Saved across WebView reloads; off by default for normal click speed.
     @AppStorage("shiguang.delayedTap103") private var delayedTapEnabled = false
-    // Test-only, explicitly off until the player selects it in the game menu.
-    @AppStorage("shiguang.smartHover12") private var smartHoverEnabled = false
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -626,19 +624,11 @@ struct GameView: View {
             } else if let server, let url = server.playURL(for: entry) {
                 GameWebView(url: url, controlGeneration: controlGeneration,
                             controlAction: controlAction, delayedTapEnabled: delayedTapEnabled,
-                            smartHoverEnabled: smartHoverEnabled,
                             onStatus: { message in
                     LaunchDiagnostics.log("网页状态：" + message)
                 }, onError: { message in
                     errorText = message
                     LaunchDiagnostics.log("网页错误：" + message)
-                }, onWebContentTerminated: {
-                    // Recover safely: a saved ON setting must not cause an endless
-                    // WKWebView crash/reload loop. User can re-enable in-game.
-                    if smartHoverEnabled {
-                        smartHoverEnabled = false
-                        LaunchDiagnostics.log("[智能悬停安全回退] WebKit内容进程终止；已关闭智能悬停并保存设置，下次以普通触控进入游戏")
-                    }
                 })
                 .id(reloadGeneration) // recreate WKWebView and Flash, leave HTTP service/resources intact
                 .frame(width: lockedGeometry.size.width, height: lockedGeometry.size.height)
@@ -690,16 +680,9 @@ struct GameView: View {
                                         sendControl("cycleSpeed")
                                     }
                                 }
-                                gameTool(smartHoverEnabled ? "checkmark.circle.fill" : "hand.point.up.left",
-                                         smartHoverEnabled ? "智能悬停：开" : "智能悬停：关") {
-                                    smartHoverEnabled.toggle()
-                                    if smartHoverEnabled { delayedTapEnabled = false }
-                                    LaunchDiagnostics.log("[触控测试] 智能悬停：" + (smartHoverEnabled ? "开启" : "关闭") + "；短按保留点击，长按唤出 NoNo 圆环")
-                                }
                                 gameTool(delayedTapEnabled ? "checkmark.circle.fill" : "hand.tap",
                                          delayedTapEnabled ? "触屏延迟：开" : "触屏延迟：关") {
                                     delayedTapEnabled.toggle()
-                                    if delayedTapEnabled { smartHoverEnabled = false }
                                     LaunchDiagnostics.log("[触控辅助] 手指直接点按及精准鼠标延迟抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
                                 }
                                 gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
@@ -888,10 +871,8 @@ struct GameWebView: UIViewRepresentable {
     let controlGeneration: Int
     let controlAction: String
     let delayedTapEnabled: Bool
-    let smartHoverEnabled: Bool
     let onStatus: (String) -> Void
     let onError: (String) -> Void
-    let onWebContentTerminated: () -> Void
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -1028,12 +1009,11 @@ struct GameWebView: UIViewRepresentable {
         )
         // Make the choice available before Ruffle's asynchronous startup.
         configuration.userContentController.addUserScript(WKUserScript(
-            source: "window.__shiguangDelayedTapChoice = \(delayedTapEnabled ? "true" : "false"); window.__shiguangSmartHoverChoice = \(smartHoverEnabled ? "true" : "false");",
+            source: "window.__shiguangDelayedTapChoice = \(delayedTapEnabled ? "true" : "false");",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let webView = WKWebView(frame: .zero, configuration: configuration)
         context.coordinator.lastControlGeneration = controlGeneration
         context.coordinator.lastDelayedTapEnabled = delayedTapEnabled
-        context.coordinator.lastSmartHoverEnabled = smartHoverEnabled
         webView.navigationDelegate = context.coordinator
         // Opaque backing matches the always-black Flash stage and avoids
         // an unnecessary transparent layer during long GPU-heavy sessions.
@@ -1056,15 +1036,6 @@ struct GameWebView: UIViewRepresentable {
                 if let error { LaunchDiagnostics.log("[触控辅助] 延迟点按设置异常：" + error.localizedDescription) }
             }
         }
-        if context.coordinator.lastSmartHoverEnabled != smartHoverEnabled {
-            context.coordinator.lastSmartHoverEnabled = smartHoverEnabled
-            let value = smartHoverEnabled ? "true" : "false"
-            webView.evaluateJavaScript(
-                "window.__shiguangSmartHoverChoice=\(value); window.ShiguangControls && window.ShiguangControls.setSmartHover(\(value));"
-            ) { _, error in
-                if let error { LaunchDiagnostics.log("[触控测试] 智能悬停设置异常：" + error.localizedDescription) }
-            }
-        }
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
         let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
@@ -1083,22 +1054,18 @@ struct GameWebView: UIViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "gameDiagnostics")
     }
     func makeCoordinator() -> Coordinator {
-        Coordinator(onStatus: onStatus, onError: onError, onWebContentTerminated: onWebContentTerminated)
+        Coordinator(onStatus: onStatus, onError: onError)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var lastControlGeneration = 0
         var lastDelayedTapEnabled = false
-        var lastSmartHoverEnabled = false
         private var navigationCount = 0
         let onStatus: (String) -> Void
         let onError: (String) -> Void
-        let onWebContentTerminated: () -> Void
-        init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void,
-             onWebContentTerminated: @escaping () -> Void) {
+        init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
             self.onStatus = onStatus
             self.onError = onError
-            self.onWebContentTerminated = onWebContentTerminated
         }
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
@@ -1121,14 +1088,12 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            LaunchDiagnostics.log("[严重诊断] WebKit WebContent 进程终止；保存现场并对智能悬停执行安全回退")
-            onWebContentTerminated()
-            onError("游戏网页进程已终止。已自动停用智能悬停以避免反复崩溃；点击「重新加载游戏」，可导出 diagnostics.txt 排查。")
+            LaunchDiagnostics.log("[严重诊断] WebKit 内容进程终止，已保留资源与诊断日志；需要手动刷新")
+            onError("游戏网页进程已终止，可能存在内存压力或渲染异常。请点「重新加载游戏」重试，并导出 diagnostics.txt 排查。")
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             let value = lastDelayedTapEnabled ? "true" : "false"
-            let smart = lastSmartHoverEnabled ? "true" : "false"
-            webView.evaluateJavaScript("window.__shiguangDelayedTapChoice=\(value); window.ShiguangControls && window.ShiguangControls.setDelayedTap(\(value)); window.__shiguangSmartHoverChoice=\(smart); window.ShiguangControls && window.ShiguangControls.setSmartHover(\(smart));") { _, _ in }
+            webView.evaluateJavaScript("window.__shiguangDelayedTapChoice=\(value); window.ShiguangControls && window.ShiguangControls.setDelayedTap(\(value));") { _, _ in }
             LaunchDiagnostics.log("[页面生命周期] 主框架完成第\(navigationCount)次导航：\(webView.url?.path ?? "未知")")
             onStatus("网页主文档已打开，检查启动脚本与服务响应…")
             webView.evaluateJavaScript("({title:document.title,body:(document.body?.innerText||'').slice(0,180), scripts:[...document.scripts].map(s=>s.getAttribute('src')).filter(Boolean).slice(0,8), ruffle:!!window.RufflePlayer})") { [weak self] result, error in
