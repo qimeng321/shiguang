@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - main
+      - 'release/shiguang-1.0.4-resource-0.18.0-b119'
 
 jobs:
   static-check:
@@ -43,7 +44,7 @@ jobs:
           assert 'Text("收尾处理中")' in swift
           assert 'ProgressView()' in swift
           assert 'CRC 校验已结束' in swift
-          assert 'Text("正式版 1.03")' in swift
+          assert 'Text("正式版 1.04")' in swift
           assert 'preferredRenderer:"webgl"' not in source
           assert 'input.type="email"' in source
           assert 'input.setAttribute("inputmode","email")' in source
@@ -54,7 +55,7 @@ jobs:
           assert 'Math.min(w/960,h/560)' in source
           assert 'case unlimited, fps60, fps30' in swift
           assert 'case saving, balanced, ultra' in swift
-          assert 'Text("正式版 1.03")' in swift
+          assert 'Text("正式版 1.04")' in swift
           assert 'Toggle(isOn: $compatibilityMode)' in swift
           assert 'shiguang.compatibilityMode103' in swift
           assert 'ShareLink(item: LaunchDiagnostics.logURL)' in swift
@@ -84,6 +85,27 @@ jobs:
           assert 'Button("重新选择美化包")' in swift
           assert 'launcher.lastImportFailed ? "本次导入失败，请重新选择"' in swift
           assert 'webViewWebContentProcessDidTerminate' in swift
+          assert 'GeometryReader { lockedGeometry in' in swift
+          assert 'ScrollView(.vertical)' in swift
+          assert 'smartHoverEnabled' not in swift
+          assert 'setSmartHover' not in source
+          assert 'smartPointerDown' not in Path('Patches/touch-controls.js').read_text()
+          assert 'setSmartHover' not in Path('Patches/touch-controls.js').read_text()
+          assert 'galaxy-navigation.js' not in source
+          assert 'pathCacheTTL: TimeInterval = 45' in source
+          assert 'pathCacheLimit = 40_000' in source
+          assert 'verifiedLocalPaths' in source
+          assert 'import CryptoKit' in model
+          assert 'shiguang.smartHover12' in model
+          assert '2026110304' in model
+          assert '0.18.0 分析样本匹配' in model
+          assert Path('Docs/resource-0.18.0-compatibility.json').exists()
+          import json
+          report=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
+          assert report['resource_version']=='0.18.0'
+          assert report['client_sha256'] in Path('Patches/pvm-compat.js').read_text()
+          assert report['game_assets_embedded'] is False
+          assert report['full_ios_runtime_tested'] is False
           assert 'delayedTapEnabled' in swift
           mouse=Path('Patches/touch-controls.js').read_text()
           assert 'if(!hover){' in mouse
@@ -97,7 +119,7 @@ jobs:
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'webView.isOpaque = true' in swift
           assert 'traceObserver.disconnect()' in swift
-          print('1.03 resource compatibility, keyboard, adaptive canvas and frame-cap invariants OK')
+          print('1.04 resource compatibility, keyboard, adaptive canvas and frame-cap invariants OK')
           PY_CHECK
   build:
     runs-on: macos-15-intel
@@ -290,22 +312,22 @@ jobs:
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
       - name: Check formal version and build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.3'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '112'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.4'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '119'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.03 maintenance project source ZIP
+      - name: Package formal 1.04 maintenance project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.03-progress-fix-b112/ --output=/tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip | grep -Fx 'ShiguangLauncher-v1.03-progress-fix-b112/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.04-new-resource-b119/ --output=/tmp/ShiguangLauncher-v1.04-new-resource-b119-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.04-new-resource-b119-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.04-new-resource-b119-source.zip | grep -Fx 'ShiguangLauncher-v1.04-new-resource-b119/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.03-progress-fix-b112-ipa
+          name: ShiguangLauncher-v1.04-new-resource-b119-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.03-progress-fix-b112-source
-          path: /tmp/ShiguangLauncher-v1.03-progress-fix-b112-source.zip
+          name: ShiguangLauncher-v1.04-new-resource-b119-source
+          path: /tmp/ShiguangLauncher-v1.04-new-resource-b119-source.zip
           if-no-files-found: error
