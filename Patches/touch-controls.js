@@ -1,4 +1,4 @@
-/* Shiguang v6.3 Build118: reuse proven precise mouse press for NoNo ring + game-entry guard.
+/* Shiguang v6.4 Formal 1.04 Build120: precise mouse + double/right-click without smart-hover.
    Ruffle 0.7.1 reads PointerEvent.offsetX/Y from its inner canvas. */
 (function(){
 "use strict";
@@ -8,13 +8,6 @@ window.ShiguangTouchControls=function(player,report){
   var pressDelayTimer=null,delayedTap=false;
   var directTouch=null,directPressTimer=null,directReleaseTimer=null;
   var lastDirectTouchAt=0,directTapCount=0;
-  // Opt-in test gesture: short touch -> click, hold -> hover only, swipe -> drag.
-  // Keep it independent from the old delayed release path for safe rollback.
-  var smartHover=false,smartTouch=null,smartHoldTimer=null,smartTapTimer=null;
-  var ringAnchor=null,ringSelectCount=0;
-  var smartTapPending=null,smartPointers=new Set(),smartMultiTouch=false;
-  var smartLongCount=0,smartHoverPulse=null,smartPulseIndex=0;
-  var lastSmartPointerAt=-1e6,smartFallbackId=null;
   var count=0,recoveries=0,lastMissing=false,speedIndex=1;
   var speeds=[0.85,1.45,2.2],tipTimer=null;
   try{
@@ -181,186 +174,27 @@ window.ShiguangTouchControls=function(player,report){
     count++;
     if(count<=5||count%15===0)report("鼠标：已点击 "+count+" 次"+(delayedTap?"（延迟抬起）":"")+"；手指交替可继续使用");
   }
-  function releaseSmartTap(){
-    if(smartTapTimer!==null){clearTimeout(smartTapTimer);smartTapTimer=null;}
-    if(smartTapPending){emit("pointerup",smartTapPending,0,0);smartTapPending=null;}
-  }
-  function ringNear(point){
-    return !!(ringAnchor&&performance.now()<ringAnchor.until&&
-      Math.hypot(point.x-ringAnchor.x,point.y-ringAnchor.y)<=165);
-  }
-  function smartClick(point,ringMode){
-    releaseSmartTap();
-    if(ringMode){
-      // Do NOT move on the initial physical touch: it prematurely sends
-      // MOUSE_OUT while the Flash shortcut ring is still open.
-      // Reuse the precise mouse's immediate move/down/125ms up sequence.
-      endClick();
-      if(!emit("pointermove",point,0))return;
-      if(precisePress(point,125)){
-        ringSelectCount++;
-        if(ringSelectCount<=8)report("NoNo圆环：复用精准鼠标点击第"+ringSelectCount+"次（立即按下/125ms抬起）");
-      }
-    }else{
-      if(!emit("pointermove",point,0)||!emit("pointerdown",point,1,0))return;
-      smartTapPending=point;
-      smartTapTimer=setTimeout(releaseSmartTap,65);
-    }
-  }
   function doubleClick(){
     if(!enabled||drag||!pos)return;
-    endClick();releaseSmartTap();
+    endClick();
     var p={x:pos.x,y:pos.y};
-    smartClick(p);
-    setTimeout(function(){if(enabled&&!drag){releaseSmartTap();smartClick(p);}},160);
+    if(!emit("pointermove",p,0))return;
+    if(!precisePress(p,75))return;
+    setTimeout(function(){
+      if(enabled&&!drag){
+        endClick();
+        if(emit("pointermove",p,0))precisePress(p,125);
+      }
+    },160);
   }
   function rightClick(){
     if(!enabled||drag||!pos)return;
-    endClick();releaseSmartTap();
+    endClick();
     var p={x:pos.x,y:pos.y};
     emit("pointermove",p,0);
     if(emit("pointerdown",p,2,2)){
       setTimeout(function(){emit("pointerup",p,0,2);},75);
     }
-  }
-  function clearSmartHold(){
-    if(smartHoldTimer!==null){clearTimeout(smartHoldTimer);smartHoldTimer=null;}
-    if(smartHoverPulse!==null){clearTimeout(smartHoverPulse);smartHoverPulse=null;}
-  }
-  function cancelSmartTouch(){
-    clearSmartHold();
-    if(smartTouch&&smartTouch.pressed)emit("pointerup",smartTouch.point,0,0);
-    smartTouch=null;
-  }
-  function smartPointerDown(ev){
-    if(!smartHover||!ev.isTrusted||ev.pointerType!=="touch"||!gameTarget(ev))return;
-    // True PointerEvent wins over the fallback TouchEvent path.
-    if(ev.pointerId>=0){
-      lastSmartPointerAt=performance.now();
-      if(smartFallbackId!==null){
-        cancelSmartTouch();smartPointers.delete(smartFallbackId);smartFallbackId=null;
-      }
-    }
-    blockNative(ev);lastDirectTouchAt=performance.now();
-    releaseSmartTap();smartPointers.add(ev.pointerId);
-    if(smartPointers.size>1){smartMultiTouch=true;cancelSmartTouch();return;}
-    if(smartMultiTouch)return;
-    var p={x:ev.clientX,y:ev.clientY};
-    var choosingRing=ringNear(p);
-    var t={id:ev.pointerId,start:p,point:p,dragging:false,pressed:false,long:false,ringSelect:choosingRing};
-    smartTouch=t;
-    // A second touch on an already-open ring must not move the game mouse
-    // until its physical release; early move alone can close the menu.
-    if(!choosingRing)emit("pointermove",p,0);
-    clearSmartHold();
-    if(choosingRing)return;
-    smartHoldTimer=setTimeout(function(){
-      smartHoldTimer=null;
-      if(smartHover&&smartTouch===t&&!t.dragging&&!t.pressed){
-        t.long=true;
-        // Remember the NoNo center: a subsequent nearby short tap is likely
-        // on one of the hover-ring buttons, not an ordinary Flash object.
-        ringAnchor={x:t.start.x,y:t.start.y,until:performance.now()+8000};
-        // Flash hover may need pointer re-entry plus repeated movement.
-        hover=false;emit("pointermove",t.point,0);
-        smartPulseIndex=0;
-        smartHoverPulse=setTimeout(function pulse(){
-          if(!smartHover||smartTouch!==t||!t.long){clearSmartHold();return;}
-          var drift=(++smartPulseIndex%2)?1:0;
-          emit("pointermove",{x:t.point.x+drift,y:t.point.y},0);
-          smartHoverPulse=setTimeout(pulse,105);
-        },105);
-        smartLongCount++;
-        if(smartLongCount<=3)tip("圆环已唤出？可点圆环图标，或按住滑到图标再松手");
-        if(smartLongCount<=5||smartLongCount%20===0)report("智能悬停：长按已识别 "+smartLongCount+" 次");
-      }
-    },420);
-  }
-  function smartPointerMove(ev){
-    if(!smartHover||!ev.isTrusted||ev.pointerType!=="touch"||!smartPointers.has(ev.pointerId))return;
-    blockNative(ev);lastDirectTouchAt=performance.now();
-    var t=smartTouch;
-    if(!t||t.id!==ev.pointerId||smartMultiTouch)return;
-    t.point={x:ev.clientX,y:ev.clientY};
-    if(t.long){emit("pointermove",t.point,0);return;}
-    if(t.ringSelect){
-      // A small physical finger drift during ring selection should not
-      // trigger Flash MOUSE_OUT or start a synthetic drag.
-      return;
-    }
-    if(Math.hypot(t.point.x-t.start.x,t.point.y-t.start.y)>12){
-      if(!t.dragging){
-        clearSmartHold();t.dragging=true;
-        t.pressed=emit("pointerdown",t.start,1,0);
-      }
-      if(t.pressed)emit("pointermove",t.point,1,0);
-    }
-  }
-  function smartPointerEnd(ev,cancelled){
-    if(!smartHover||!ev.isTrusted||ev.pointerType!=="touch"||!smartPointers.has(ev.pointerId))return;
-    blockNative(ev);lastDirectTouchAt=performance.now();
-    smartPointers.delete(ev.pointerId);
-    var t=smartTouch;
-    if(t&&t.id===ev.pointerId){
-      clearSmartHold();smartTouch=null;
-      if(t.pressed){emit("pointerup",t.point,0,0);}
-      else if(!cancelled&&!smartMultiTouch){
-        if(t.ringSelect){
-          smartClick({x:ev.clientX,y:ev.clientY},true);
-          ringAnchor=null;
-        }else if(t.long){
-          // Alternate mobile gesture: hold NoNo, slide onto a ring icon,
-          // then release. No second finger-tap is needed.
-          var moved=Math.hypot(t.point.x-t.start.x,t.point.y-t.start.y);
-          if(moved>14){
-            smartClick(t.point,true);
-            ringAnchor=null;
-          }else{emit("pointermove",t.point,0);}
-        }else{
-          var choice={x:ev.clientX,y:ev.clientY},ringMode=ringNear(choice);
-          smartClick(choice,ringMode);
-          if(ringMode)ringAnchor=null;
-        }
-      }else if(cancelled){ringAnchor=null;}
-    }
-    if(smartPointers.size===0)smartMultiTouch=false;
-  }
-  document.addEventListener("pointerdown",smartPointerDown,true);
-  document.addEventListener("pointermove",smartPointerMove,true);
-  document.addEventListener("pointerup",function(ev){smartPointerEnd(ev,false);},true);
-  document.addEventListener("pointercancel",function(ev){smartPointerEnd(ev,true);},true);
-  // WKWebView TouchEvent-only fallback, without ghost double taps when
-  // a trusted PointerEvent is already handling the same touch.
-  function smartTouchFallback(ev,type){
-    if(!smartHover||!ev.isTrusted||!gameTarget(ev))return;
-    var changed=ev.changedTouches,point=changed&&changed[0];
-    if(!point)return;
-    if(type==="touchstart"){
-      if(smartTouch||smartPointers.size>0||performance.now()-lastSmartPointerAt<650)return;
-      if(ev.touches&&ev.touches.length>1){smartMultiTouch=true;return;}
-      smartFallbackId=-1000-(point.identifier||0);
-    }
-    if(smartFallbackId===null)return;
-    if(point.identifier!==undefined&&smartFallbackId!==-1000-point.identifier)return;
-    var fake={isTrusted:true,pointerType:"touch",pointerId:smartFallbackId,
-      clientX:point.clientX,clientY:point.clientY,cancelable:ev.cancelable,
-      preventDefault:function(){if(ev.cancelable)ev.preventDefault();},
-      stopImmediatePropagation:function(){ev.stopImmediatePropagation();},
-      composedPath:function(){return ev.composedPath();}};
-    if(type==="touchstart")smartPointerDown(fake);
-    else if(type==="touchmove")smartPointerMove(fake);
-    else{smartPointerEnd(fake,type==="touchcancel");smartFallbackId=null;}
-  }
-  ["touchstart","touchmove","touchend","touchcancel"].forEach(function(type){
-    document.addEventListener(type,function(ev){smartTouchFallback(ev,type);},true);
-  });
-  function setSmartHover(on){
-    endClick();finishDirect(true);cancelSmartTouch();releaseSmartTap();
-    ringAnchor=null;
-    smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;
-    smartHover=!!on;
-    if(smartHover){delayedTap=false;tip("智能悬停已开启 · 长按 NoNo 约0.4秒");}
-    report("智能悬停："+(smartHover?"开启（短按点击/长按420ms仅悬停/滑动拖动）":"关闭（恢复原生触控）"));
   }
   // Optional direct-screen touch-to-mouse bridge. This is separate from the
   // on-screen trackpad; it runs only when the user turns delayed tap ON.
@@ -467,7 +301,7 @@ window.ShiguangTouchControls=function(player,report){
   // events. Consume only those belonging to the Flash surface while active.
   ["touchstart","touchmove","touchend","touchcancel"].forEach(function(type){
     document.addEventListener(type,function(ev){
-      if((delayedTap||smartHover)&&ev.isTrusted&&(directTouch||smartPointers.size>0||gameTarget(ev))){
+      if(delayedTap&&ev.isTrusted&&(directTouch||gameTarget(ev))){
         lastDirectTouchAt=performance.now();
         blockNative(ev);
       }
@@ -475,7 +309,7 @@ window.ShiguangTouchControls=function(player,report){
   });
   ["mousedown","mouseup","click"].forEach(function(type){
     document.addEventListener(type,function(ev){
-      if((delayedTap||smartHover)&&ev.isTrusted&&performance.now()-lastDirectTouchAt<700&&gameTarget(ev))
+      if(delayedTap&&ev.isTrusted&&performance.now()-lastDirectTouchAt<700&&gameTarget(ev))
         blockNative(ev);
     },true);
   });
@@ -483,7 +317,7 @@ window.ShiguangTouchControls=function(player,report){
     endClick();
     finishDirect(true);
     delayedTap=!!on;
-    if(delayedTap){smartHover=false;cancelSmartTouch();releaseSmartTap();ringAnchor=null;smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;}
+    // No smart-hover state or fallback pointer interceptors exist in formal 1.04.
     report("触屏延迟：自动抬起"+(delayedTap?
       "已开启（手指直点及精准鼠标，悬停120ms + 保持按下350ms）":
       "已关闭（触屏恢复原生，精准鼠标保持125ms）"));
@@ -549,14 +383,14 @@ window.ShiguangTouchControls=function(player,report){
     else{endClick();endDrag();padGesture=null;hover=false;}
     report("鼠标："+(enabled?"开启":"关闭")+"；真实触摸后的状态自动恢复");
   }
-  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();ringAnchor=null;smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;}});
-  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();ringAnchor=null;smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;});
+  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);}});
+  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);});
   try{new ResizeObserver(function(){
     if(enabled&&pos){var p=clamp(pos);if(p){pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";}}
   }).observe(player);}catch(e){}
-  report("鼠标 v6.3 Build118：NoNo圆环复用精准鼠标点击时序，启动前暂停智能悬停，按游戏进度激活");
+  report("正式版 1.04 Build120：精准鼠标、双击、右键、拖动正常加载；实验智能悬停已移除");
   return {enableMouse:function(){setMode(true);},disableMouse:function(){setMode(false);},
     hideAll:function(){setMode(false);},resetCursor:center,
-    cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap,setSmartHover:setSmartHover};
+    cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap};
 };
 })();
