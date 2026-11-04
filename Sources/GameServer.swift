@@ -704,7 +704,7 @@ final class GameServer {
           ruffle-player{display:block;flex:none;width:var(--game-w)!important;height:var(--game-h)!important}
           #message{position:fixed;inset:0;display:flex;justify-content:center;align-items:center;
                    background:#000;color:#b9c1d0;font:14px -apple-system,sans-serif;pointer-events:none}
-          /* Mouse and map controls are lazily mounted by touch-controls.js,
+          /* Mouse controls are lazily mounted by touch-controls.js,
              so the normal game viewport has no transparent intercepting overlay. */
         </style>
         <script src="/ruffle/frame-cap.js"></script>
@@ -731,8 +731,7 @@ final class GameServer {
           };
         </script><script src="/ruffle/ruffle.js"></script>
         <script src="/ruffle/pvm-compat.js"></script>
-        <script src="/ruffle/touch-controls.js"></script>
-        <script src="/ruffle/galaxy-navigation.js"></script></head>
+        <script src="/ruffle/touch-controls.js"></script></head>
         <body><div id="game"></div><div id="message">正在载入游戏资源…</div>
         <script>
         (async function(){
@@ -875,9 +874,8 @@ final class GameServer {
             return input;
           }
           // Native three-dot menu sends fixed, allowlisted commands.
-          // The mouse/map implementation lives in a separately syntax-checked
-          // script, and creates its overlays only when explicitly enabled.
-          var touchControls=null,galaxyNavigation=null;
+          // Mouse gestures run in a separate script; no map overlay is injected.
+          var touchControls=null;
           function toggleKeyboard(){
             if(!prepareKeyboard()){report("输入栏：Ruffle 输入组件未就绪");return;}
             if(touchControls)touchControls.hideAll();
@@ -931,10 +929,6 @@ final class GameServer {
           });
           window.ShiguangControls={toggleFPS:function(){setFps(!fpsActive);},
             toggleKeyboard:toggleKeyboard,
-            toggleMapControls:function(){if(galaxyNavigation)galaxyNavigation.toggleManual();},
-            showMapControls:function(){if(galaxyNavigation)galaxyNavigation.setMapVisible(true,"测试菜单开启");},
-            hideMapControls:function(){if(galaxyNavigation)galaxyNavigation.hide("测试菜单关闭");},
-            cycleMapMode:function(){if(galaxyNavigation)galaxyNavigation.cycleMode();},
             enableMouse:function(){
               if(inputShown)setDockVisible(false,"启用虚拟鼠标");
               if(touchControls)touchControls.enableMouse();
@@ -1010,16 +1004,6 @@ final class GameServer {
             }catch(controlError){
               report("触控辅助：初始化错误 "+String(controlError).slice(0,160));
             }
-            try {
-              if(window.ShiguangGalaxyNavigation){
-                galaxyNavigation=window.ShiguangGalaxyNavigation(player,report);
-                window.ShiguangMapBridge={
-                  show:function(){galaxyNavigation.setMapVisible(true,"SWF地图打开");},
-                  hide:function(){galaxyNavigation.setMapVisible(false,"SWF地图关闭");},
-                  setVisible:function(v){galaxyNavigation.setMapVisible(!!v,"SWF地图状态");}
-                };
-              }
-            } catch(mapError) {report("地图辅助初始化失败："+String(mapError).slice(0,140));}
             report("微端式直启：Client.swf（不加载 React 网页）");
             var prepared=null;
             try {

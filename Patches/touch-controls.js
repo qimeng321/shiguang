@@ -1,4 +1,4 @@
-/* Shiguang v6.0 test-only smart long-press hover + opt-in direct-screen delayed release.
+/* Shiguang v6.2 Build117: NoNo ring button click after smart hover + existing direct tap.
    Ruffle 0.7.1 reads PointerEvent.offsetX/Y from its inner canvas. */
 (function(){
 "use strict";
@@ -10,7 +10,8 @@ window.ShiguangTouchControls=function(player,report){
   var lastDirectTouchAt=0,directTapCount=0;
   // Opt-in test gesture: short touch -> click, hold -> hover only, swipe -> drag.
   // Keep it independent from the old delayed release path for safe rollback.
-  var smartHover=false,smartTouch=null,smartHoldTimer=null,smartTapTimer=null;
+  var smartHover=false,smartTouch=null,smartHoldTimer=null,smartTapTimer=null,smartPressTimer=null;
+  var ringAnchor=null,ringSelectCount=0;
   var smartTapPending=null,smartPointers=new Set(),smartMultiTouch=false;
   var smartLongCount=0,smartHoverPulse=null,smartPulseIndex=0;
   var lastSmartPointerAt=-1e6,smartFallbackId=null;
@@ -176,14 +177,33 @@ window.ShiguangTouchControls=function(player,report){
     if(count<=5||count%15===0)report("鼠标：已点击 "+count+" 次"+(delayedTap?"（延迟抬起）":"")+"；手指交替可继续使用");
   }
   function releaseSmartTap(){
+    if(smartPressTimer!==null){clearTimeout(smartPressTimer);smartPressTimer=null;}
     if(smartTapTimer!==null){clearTimeout(smartTapTimer);smartTapTimer=null;}
     if(smartTapPending){emit("pointerup",smartTapPending,0,0);smartTapPending=null;}
   }
-  function smartClick(point){
+  function ringNear(point){
+    return !!(ringAnchor&&performance.now()<ringAnchor.until&&
+      Math.hypot(point.x-ringAnchor.x,point.y-ringAnchor.y)<=165);
+  }
+  function smartClick(point,ringMode){
+    // Ruffle must process mouseover before Flash hit tests a ring icon.
+    // Preserve 65ms tap for ordinary game UI and the virtual double-click.
     releaseSmartTap();
-    if(!emit("pointermove",point,0)||!emit("pointerdown",point,1,0))return;
-    smartTapPending=point;
-    smartTapTimer=setTimeout(releaseSmartTap,65);
+    if(!emit("pointermove",point,0))return;
+    if(ringMode){
+      ringSelectCount++;
+      if(ringSelectCount<=5)report("NoNo圆环：按钮点选第"+ringSelectCount+"次，先悬停后按下");
+      smartPressTimer=setTimeout(function(){
+        smartPressTimer=null;
+        if(!smartHover||!emit("pointerdown",point,1,0))return;
+        smartTapPending=point;
+        smartTapTimer=setTimeout(releaseSmartTap,190);
+      },110);
+    }else{
+      if(!emit("pointerdown",point,1,0))return;
+      smartTapPending=point;
+      smartTapTimer=setTimeout(releaseSmartTap,65);
+    }
   }
   function doubleClick(){
     if(!enabled||drag||!pos)return;
@@ -233,6 +253,9 @@ window.ShiguangTouchControls=function(player,report){
       smartHoldTimer=null;
       if(smartHover&&smartTouch===t&&!t.dragging&&!t.pressed){
         t.long=true;
+        // Remember the NoNo center: a subsequent nearby short tap is likely
+        // on one of the hover-ring buttons, not an ordinary Flash object.
+        ringAnchor={x:t.start.x,y:t.start.y,until:performance.now()+8000};
         // Flash hover may need pointer re-entry plus repeated movement.
         hover=false;emit("pointermove",t.point,0);
         smartPulseIndex=0;
@@ -243,7 +266,7 @@ window.ShiguangTouchControls=function(player,report){
           smartHoverPulse=setTimeout(pulse,105);
         },105);
         smartLongCount++;
-        if(smartLongCount<=3)tip("已发送悬停事件 · 如果没有圆环请提供日志");
+        if(smartLongCount<=3)tip("圆环已唤出？可点圆环图标，或按住滑到图标再松手");
         if(smartLongCount<=5||smartLongCount%20===0)report("智能悬停：长按已识别 "+smartLongCount+" 次");
       }
     },420);
@@ -272,9 +295,20 @@ window.ShiguangTouchControls=function(player,report){
       clearSmartHold();smartTouch=null;
       if(t.pressed){emit("pointerup",t.point,0,0);}
       else if(!cancelled&&!smartMultiTouch){
-        if(t.long){emit("pointermove",t.point,0);}
-        else{smartClick({x:ev.clientX,y:ev.clientY});}
-      }
+        if(t.long){
+          // Alternate mobile gesture: hold NoNo, slide onto a ring icon,
+          // then release. No second finger-tap is needed.
+          var moved=Math.hypot(t.point.x-t.start.x,t.point.y-t.start.y);
+          if(moved>14){
+            smartClick(t.point,true);
+            ringAnchor=null;
+          }else{emit("pointermove",t.point,0);}
+        }else{
+          var choice={x:ev.clientX,y:ev.clientY},ringMode=ringNear(choice);
+          smartClick(choice,ringMode);
+          if(ringMode)ringAnchor=null;
+        }
+      }else if(cancelled){ringAnchor=null;}
     }
     if(smartPointers.size===0)smartMultiTouch=false;
   }
@@ -309,6 +343,7 @@ window.ShiguangTouchControls=function(player,report){
   });
   function setSmartHover(on){
     endClick();finishDirect(true);cancelSmartTouch();releaseSmartTap();
+    ringAnchor=null;
     smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;
     smartHover=!!on;
     if(smartHover){delayedTap=false;tip("智能悬停已开启 · 长按 NoNo 约0.4秒");}
@@ -435,7 +470,7 @@ window.ShiguangTouchControls=function(player,report){
     endClick();
     finishDirect(true);
     delayedTap=!!on;
-    if(delayedTap){smartHover=false;cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;}
+    if(delayedTap){smartHover=false;cancelSmartTouch();releaseSmartTap();ringAnchor=null;smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;}
     report("触屏延迟：自动抬起"+(delayedTap?
       "已开启（手指直点及精准鼠标，悬停120ms + 保持按下350ms）":
       "已关闭（触屏恢复原生，精准鼠标保持125ms）"));
@@ -501,12 +536,12 @@ window.ShiguangTouchControls=function(player,report){
     else{endClick();endDrag();padGesture=null;hover=false;}
     report("鼠标："+(enabled?"开启":"关闭")+"；真实触摸后的状态自动恢复");
   }
-  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;}});
-  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;});
+  document.addEventListener("visibilitychange",function(){if(document.hidden){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();ringAnchor=null;smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;}});
+  window.addEventListener("pagehide",function(){endClick();endDrag();finishDirect(true);cancelSmartTouch();releaseSmartTap();ringAnchor=null;smartPointers.clear();smartMultiTouch=false;smartFallbackId=null;});
   try{new ResizeObserver(function(){
     if(enabled&&pos){var p=clamp(pos);if(p){pos=p;cursor.style.left=p.x+"px";cursor.style.top=p.y+"px";}}
   }).observe(player);}catch(e){}
-  report("鼠标 v6.1 Build116：智能悬停TouchEvent兼容及持续悬停反馈；NoNo真实圆环仍需真机验证");
+  report("鼠标 v6.2 Build117：圆环按钮选择加入110ms悬停准备、190ms按住与长按滑动释放；需真机验证");
   return {enableMouse:function(){setMode(true);},disableMouse:function(){setMode(false);},
     hideAll:function(){setMode(false);},resetCursor:center,
     cycleSpeed:function(){speedBtn.click();},setDelayedTap:setDelayedTap,setSmartHover:setSmartHover};

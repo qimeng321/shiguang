@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - main
-      - "test/1.2-touch-map-layout-b116"
+      - "test/1.2-nono-ring-click-win-optimization-b117"
 
 jobs:
   static-check:
@@ -22,8 +22,6 @@ jobs:
           node Patches/test-frame-cap.js
           node Patches/test-direct-touch.js
           node Patches/test-smart-touch.js
-          node --check Patches/galaxy-navigation.js
-          node Patches/test-galaxy-navigation.js
           python3 - <<'PY_CHECK'
           from pathlib import Path
           source=Path('Sources/GameServer.swift').read_text()
@@ -47,7 +45,7 @@ jobs:
           assert 'Text("收尾处理中")' in swift
           assert 'ProgressView()' in swift
           assert 'CRC 校验已结束' in swift
-          assert 'Text("综合测试版 1.2 · Build 116")' in swift
+          assert 'Text("综合测试版 1.2 · Build 117")' in swift
           assert 'preferredRenderer:"webgl"' not in source
           assert 'input.type="email"' in source
           assert 'input.setAttribute("inputmode","email")' in source
@@ -58,7 +56,7 @@ jobs:
           assert 'Math.min(w/960,h/560)' in source
           assert 'case unlimited, fps60, fps30' in swift
           assert 'case saving, balanced, ultra' in swift
-          assert 'Text("综合测试版 1.2 · Build 116")' in swift
+          assert 'Text("综合测试版 1.2 · Build 117")' in swift
           assert 'Toggle(isOn: $compatibilityMode)' in swift
           assert 'shiguang.compatibilityMode103' in swift
           assert 'ShareLink(item: LaunchDiagnostics.logURL)' in swift
@@ -119,14 +117,13 @@ jobs:
           assert 'mobilePatchRoot' in source
           assert 'let ifNoneMatch =' in source
           assert 'ETag:' in source and '304 Not Modified' in source
-          assert 'ShiguangMapBridge' in source
-          assert 'toggleMapControls' in swift and 'mobilePatchPanel' in swift
-          assert 'showMapControls' in swift and 'cycleMapMode' in swift
+          assert 'ShiguangMapBridge' not in source
+          assert 'mobilePatchPanel' in swift
+          assert 'toggleMapControls' not in swift
+          assert 'galaxy-navigation.js' not in source
           assert 'GeometryReader { lockedGeometry in' in swift
           assert '先点游戏中的账号或密码框，再点这里输入' in source
-          nav=Path('Patches/galaxy-navigation.js').read_text()
-          assert 'function hoverEdge(' in nav and 'function swipe(' in nav
-          print('Build116: patch overlay, map bridge and resource cache invariants OK')
+          print('Build117: patch overlay, map bridge and resource cache invariants OK')
           PY_CHECK
   build:
     needs: static-check
@@ -155,10 +152,8 @@ jobs:
           cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
           cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
           cp Patches/touch-controls.js Resources/Ruffle/touch-controls.js
-          cp Patches/galaxy-navigation.js Resources/Ruffle/galaxy-navigation.js
           cp Patches/frame-cap.js Resources/Ruffle/frame-cap.js
           test -s Resources/Ruffle/touch-controls.js
-          test -s Resources/Ruffle/galaxy-navigation.js
           test -s Resources/Ruffle/frame-cap.js
           test -s Resources/Ruffle/byte-loader-followup.b64
           test -s Resources/Ruffle/pvm-compat.js
@@ -213,7 +208,6 @@ jobs:
           node Patches/test-frame-cap.js
           node Patches/test-direct-touch.js
           node --check Resources/Ruffle/touch-controls.js
-          node --check Resources/Ruffle/galaxy-navigation.js
           python3 - <<'PY_TOUCH'
           from pathlib import Path
           js=Path("Resources/Ruffle/touch-controls.js").read_text()
@@ -230,7 +224,7 @@ jobs:
           assert 'function directPointerDown(ev)' in js
           assert 'function directPointerUp(ev)' in js
           assert 'enableMapSwipe' not in js
-          assert '/ruffle/galaxy-navigation.js' in html
+          assert '/ruffle/galaxy-navigation.js' not in html
           swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
           assert 'ProgressView(value: launcher.importProgress, total: 1.0)' in swift
           model=Path("Sources/LauncherModel.swift").read_text()
@@ -324,22 +318,22 @@ jobs:
       - name: Check test-version metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.2.0'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '116'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '117'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.smartbeta'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
-          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -ge 1
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.03 maintenance project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.2-touch-map-b116/ --output=/tmp/ShiguangLauncher-v1.2-touch-map-b116-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.2-touch-map-b116-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.2-touch-map-b116-source.zip | grep -Fx 'ShiguangLauncher-v1.2-touch-map-b116/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.2-nono-b117/ --output=/tmp/ShiguangLauncher-v1.2-nono-b117-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.2-nono-b117-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.2-nono-b117-source.zip | grep -Fx 'ShiguangLauncher-v1.2-nono-b117/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.2-touch-map-b116-ipa
+          name: ShiguangLauncher-v1.2-nono-b117-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.2-touch-map-b116-source
-          path: /tmp/ShiguangLauncher-v1.2-touch-map-b116-source.zip
+          name: ShiguangLauncher-v1.2-nono-b117-source
+          path: /tmp/ShiguangLauncher-v1.2-nono-b117-source.zip
           if-no-files-found: error

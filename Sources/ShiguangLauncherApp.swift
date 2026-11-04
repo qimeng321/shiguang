@@ -144,7 +144,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("综合测试版 1.2 · Build 116")
+                        Text("综合测试版 1.2 · Build 117")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -695,12 +695,6 @@ struct GameView: View {
                                     if delayedTapEnabled { smartHoverEnabled = false }
                                     LaunchDiagnostics.log("[触控辅助] 手指直接点按及精准鼠标延迟抬起：" + (delayedTapEnabled ? "开启" : "关闭"))
                                 }
-                                gameTool("arrow.left.and.right", "地图箭头：显示 / 隐藏") {
-                                    sendControl("toggleMapControls")
-                                }
-                                gameTool("arrow.left.arrow.right", "地图流动模式：切换") {
-                                    sendControl("cycleMapMode")
-                                }
                                 gameTool("speedometer", fpsEnabled ? "隐藏刷新率" : "显示刷新率") {
                                     fpsEnabled.toggle()
                                     sendControl("toggleFPS")
@@ -1065,8 +1059,7 @@ struct GameWebView: UIViewRepresentable {
         }
         guard context.coordinator.lastControlGeneration != controlGeneration else { return }
         context.coordinator.lastControlGeneration = controlGeneration
-        let allowed = ["toggleKeyboard", "enableMouse", "disableMouse", "toggleMapControls",
-                       "showMapControls", "hideMapControls", "cycleMapMode",
+        let allowed = ["toggleKeyboard", "enableMouse", "disableMouse",
                        "resetCursor", "cycleSpeed", "toggleFPS"]
         guard allowed.contains(controlAction) else { return }
         let js = "window.ShiguangControls && window.ShiguangControls." + controlAction + "()"

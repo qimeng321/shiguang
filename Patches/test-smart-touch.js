@@ -10,7 +10,7 @@ function harness(){
     constructor(tag,id=""){this.tagName=tag.toUpperCase();this.id=id;this.listeners=new Map();this.style={};this.children=[];this.offsetWidth=673;this.offsetHeight=393;this.isConnected=true;this.classList={add(){},remove(){}};if(id)ids.set(id,this);}
     addEventListener(type,fn){on(this,type,fn);}
     appendChild(node){this.children.push(node);return node;}
-    dispatchEvent(ev){events.push({type:ev.type,button:ev.button,buttons:ev.buttons});for(const fn of this.listeners.get(ev.type)||[])fn(ev);return true;}
+    dispatchEvent(ev){events.push({type:ev.type,button:ev.button,buttons:ev.buttons,at:time,x:ev.clientX,y:ev.clientY});for(const fn of this.listeners.get(ev.type)||[])fn(ev);return true;}
     setPointerCapture(){}
     getBoundingClientRect(){return this.id==="sh-mouse"?{left:17,top:120,width:239,height:160,right:256,bottom:280}:
       {left:0,top:0,width:673,height:393,right:673,bottom:393};}
@@ -116,4 +116,32 @@ const count=(h,type)=>h.events.filter(x=>x.type===type).length;
   h.trusted("touchend",280,170,8);h.advance(1000);
   assert.equal(count(h,"pointerdown"),0,"TouchEvent-only long hold release must not click");
 }
-console.log("PASS Build116 smart hover TouchEvent fallback, click, drag, cancel, multitouch and hover");
+{
+  // A nearby ring icon short tap must not press too soon and accidentally
+  // collapse the hover ring before Flash processes the mouseover.
+  const h=harness();h.controls.setSmartHover(true);
+  h.trusted("pointerdown",300,170);h.advance(480);
+  h.trusted("pointerup",300,170);h.advance(60);
+  h.trusted("pointerdown",350,185);h.advance(55);h.trusted("pointerup",350,185);
+  const before=count(h,"pointerdown");h.advance(100);
+  assert.equal(count(h,"pointerdown"),before,"ring press needs a mouseover lead-in");
+  h.advance(20);assert.equal(count(h,"pointerdown"),before+1,"ring press after 110ms");
+  h.advance(195);assert.equal(count(h,"pointerup"),1,"ring press must release after hold");
+}
+{
+  // Long-press NoNo, slide onto the icon and release without lifting in between.
+  const h=harness();h.controls.setSmartHover(true);
+  h.trusted("pointerdown",300,170);h.advance(460);
+  h.trusted("pointermove",350,185);h.trusted("pointerup",350,185);
+  h.advance(120);assert.equal(count(h,"pointerdown"),1,"hold-slide-release selects ring icon");
+  h.advance(200);assert.equal(count(h,"pointerup"),1,"hold-slide-release releases click");
+}
+{
+  // Switching off must cancel a pending ring click: no ghost presses.
+  const h=harness();h.controls.setSmartHover(true);
+  h.trusted("pointerdown",300,170);h.advance(450);h.trusted("pointerup",300,170);
+  h.trusted("pointerdown",325,170);h.advance(45);h.trusted("pointerup",325,170);
+  h.controls.setSmartHover(false);h.advance(600);
+  assert.equal(count(h,"pointerdown"),0,"disabling ring mode cancels deferred tap");
+}
+console.log("PASS Build117 NoNo ring click timing, hold-slide-release, cancellation, smart hover and fallback");
