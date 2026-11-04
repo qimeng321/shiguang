@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - main
-      - "test/1.2-nono-precision-safe-start-b118"
+      - "release/shiguang-1.0.4-from-build118-b120"
 
 jobs:
   static-check:
@@ -21,108 +21,32 @@ jobs:
           node --check Patches/touch-controls.js
           node Patches/test-frame-cap.js
           node Patches/test-direct-touch.js
-          node Patches/test-smart-touch.js
+          node Patches/test-precision-no-hover.js
           python3 - <<'PY_CHECK'
           from pathlib import Path
+          import json,plistlib
           source=Path('Sources/GameServer.swift').read_text()
           swift=Path('Sources/ShiguangLauncherApp.swift').read_text()
           model=Path('Sources/LauncherModel.swift').read_text()
-          assert 'isImportFinishing' in model
-          assert 'private func reportImportFinalizing(_ rank: Int, phase: String)' in model
-          assert 'guard isImporting, !isImportFinishing, value.isFinite else { return }' in model
-          assert 'onFinalizing(1, "解压 100% · 正在扫描游戏入口")' in model
-          assert 'onFinalizing(2, "正在校验地图、配置和核心文件")' in model
-          assert 'onFinalizing(3, "正在准备安全安装及旧版备份")' in model
-          assert 'onFinalizing(4, "正在安装新资源包（保留原版备份）")' in model
-          assert 'onFinalizing(5, "正在核验已安装的游戏文件")' in model
-          assert 'onFinalizing(6, "正在清理旧版备份并完成安装")' in model
-          assert 'let installedEntries = entries' in model
-          assert 'let installedEntries = findEntries(in: savedGameRoot)' not in model
-          assert 'try manager.unzipItem(at: source, to: staging, skipCRC32: false' in model
-          assert 'skipCRC32: true' not in model
-          assert 'if existing { try? manager.moveItem(at: backup, to: savedGameRoot) }' in model
-          assert 'launcher.isImportFinishing' in swift
-          assert 'Text("收尾处理中")' in swift
-          assert 'ProgressView()' in swift
-          assert 'CRC 校验已结束' in swift
-          assert 'Text("综合测试版 1.2 · Build 118")' in swift
-          assert 'preferredRenderer:"webgl"' not in source
-          assert 'input.type="email"' in source
-          assert 'input.setAttribute("inputmode","email")' in source
-          assert 'input.setAttribute("lang","en-US")' in source
-          assert 'var stableViewport=null,fitTimer=null' in source
-          assert 'function scheduleFit()' in source
-          assert 'dockLast=' not in source
-          assert 'Math.min(w/960,h/560)' in source
-          assert 'case unlimited, fps60, fps30' in swift
-          assert 'case saving, balanced, ultra' in swift
-          assert 'Text("综合测试版 1.2 · Build 118")' in swift
-          assert 'Toggle(isOn: $compatibilityMode)' in swift
-          assert 'shiguang.compatibilityMode103' in swift
-          assert 'ShareLink(item: LaunchDiagnostics.logURL)' in swift
-          assert 'Label("导出故障日志"' in swift
-          assert 'resourceRevision' in model
-          assert 'coreRevision(root:' in model
-          assert 'require("resource/map/1.swf", minimum: 64)' in model
-          assert 'require("resource/ui.swf", minimum: 64)' in model
-          assert 'containsReferenceManifest && !containsPlayableMap' in model
-          assert 'ImportError.referenceOnlyPackage' in model
-          assert '2026110201' in swift
-          assert '2026110201' not in source
-          assert 'compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in source
-          assert 'total <= 32 * 1024' in source
-          assert 'Cache-Control: private, max-age=45' in source
-          assert 'let cacheHeader = tinyIcon' in source
-          assert 'preferredRenderer:"webgl"' not in source
-          assert 'options.preferredRenderer=' not in source
-          model=Path('Sources/LauncherModel.swift').read_text()
-          assert 'validateInstalledPackage(root:' in model
-          assert 'isInstalledValidated' in model
-          assert 'lastImportFailed' in model
-          assert 'cleanupFailedImport()' in model
-          assert 'importFailureMessage' in model
-          assert 'manager.unzipItem(at: source, to: staging, skipCRC32: false' in model
-          assert 'receiptName = ".shiguang-install-verified"' in model
-          assert 'Button("重新选择美化包")' in swift
-          assert 'launcher.lastImportFailed ? "本次导入失败，请重新选择"' in swift
-          assert 'webViewWebContentProcessDidTerminate' in swift
-          assert 'delayedTapEnabled' in swift
-          assert 'smartHoverEnabled: smartHoverEnabled' in swift
-          assert 'shiguang.smartHover12' in swift
-          assert 'window.__shiguangSmartHoverChoice' in swift
-          assert 'lastSmartHoverEnabled' in swift
-          assert 'touchControls.setSmartHover(window.__shiguangSmartHoverChoice===true)' not in source
-          assert 'setSmartHoverWanted(window.__shiguangSmartHoverChoice===true' in source
-          assert 'var smartEnableTimer=null,smartHoverRequested=false' in source
-          assert 'touchControls.setSmartHover(false);' in source
-          assert 'setTimeout(function(){' in source and '},3500);' in source
-          assert 'onWebContentTerminated' in swift
-          assert '[智能悬停安全回退]' in swift
-          assert 'function precisePress(p,duration)' in Path('Patches/touch-controls.js').read_text()
-          assert 'smartPressTimer' not in Path('Patches/touch-controls.js').read_text()
-          assert 'setSmartHover:function(on)' in source
           mouse=Path('Patches/touch-controls.js').read_text()
-          assert 'function smartPointerDown(ev)' in mouse
-          assert 'function smartPointerMove(ev)' in mouse
-          assert 'function smartPointerEnd(ev,cancelled)' in mouse
-          assert 'if(smartPointers.size>1){smartMultiTouch=true;cancelSmartTouch();return;}' in mouse
-          assert 'btn("sh-mouse-double",row,"双击",doubleClick)' in mouse
-          assert 'btn("sh-mouse-right",row,"右键",rightClick)' in mouse
-          assert '420' in mouse
-          assert 'if(!hover){' in mouse
-          assert 'setDelayedTap:setDelayedTap' in mouse
-          assert '-webkit-touch-callout:none' in mouse
-          assert 'contextmenu' in mouse and 'selectstart' in mouse
-          assert 'document.addEventListener("pointerdown",directPointerDown,true)' in mouse
-          assert 'document.addEventListener("pointerup",directPointerUp,true)' in mouse
-          assert 'Math.max(0,350-(performance.now()-t.pressedAt))' in mouse
-          assert 'bridge?.resetGameEntryForNewPage()' in source
-          assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
-          assert 'webView.isOpaque = true' in swift
-          assert 'traceObserver.disconnect()' in swift
-          assert 'MobilePatchManager' in model
-          assert 'func importMobilePatch(_ url: URL)' in model
-          assert 'mobilePatchRoot' in source
+          project=Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
+          manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
+          assert 'Text("正式版 1.04")' in swift
+          assert 'MARKETING_VERSION = 1.0.4;' in project
+          assert 'CURRENT_PROJECT_VERSION = 120;' in project
+          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
+          assert 'smartbeta' not in project
+          assert manifest['based_on_test_branch']=='test/1.2-nono-precision-safe-start-b118'
+          assert manifest['release_version']=='1.0.4' and manifest['build_number']==120
+          assert manifest['resource_version']=='0.18.0' and manifest['core_revision']=='2026110304'
+          assert manifest['source_analysis_only'] and not manifest['game_assets_embedded']
+          assert manifest['client_sha256'] in Path('Patches/pvm-compat.js').read_text()
+          assert 'import CryptoKit' in model and '2026110304' in model
+          assert 'isImportFinishing' in model and 'unzipProgress.fractionCompleted' in model
+          assert 'skipCRC32: false' in model and 'validateInstalledPackage(root:' in model
+          assert 'MobilePatchManager' in model and 'func importMobilePatch(_ url: URL)' in model
+          assert 'func clearMobilePatch()' in model
+          assert 'mobilePatchRoot' in source and 'mobilePatchPanel' in swift
           assert 'let ifNoneMatch =' in source
           assert 'private var verifiedPathCache:' in source
           assert 'private let maxPathEntries = 40_000' in source
@@ -130,13 +54,29 @@ jobs:
           assert 'verifiedPathCache[key] = VerifiedPath(' in source
           assert 'verifiedPathCache.removeValue(forKey: key)' in source
           assert 'ETag:' in source and '304 Not Modified' in source
-          assert 'ShiguangMapBridge' not in source
-          assert 'mobilePatchPanel' in swift
-          assert 'toggleMapControls' not in swift
-          assert 'galaxy-navigation.js' not in source
           assert 'GeometryReader { lockedGeometry in' in swift
-          assert '先点游戏中的账号或密码框，再点这里输入' in source
-          print('Build118: patch overlay, map bridge and resource cache invariants OK')
+          assert 'ScrollView(.vertical)' in swift
+          assert 'function fit(force)' in source
+          assert 'Math.min(w/960,h/560)' in source
+          assert 'case unlimited, fps60, fps30' in swift
+          assert 'case saving, balanced, ultra' in swift
+          assert 'Toggle(isOn: $compatibilityMode)' in swift
+          assert 'input.type="email"' in source
+          assert 'input.setAttribute("inputmode","email")' in source
+          assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
+          assert 'enableMouse:function()' in source
+          assert 'function doubleClick()' in mouse and 'function rightClick()' in mouse
+          assert 'function precisePress(p,duration)' in mouse
+          assert 'function directPointerDown(ev)' in mouse
+          assert 'function directPointerUp(ev)' in mouse
+          assert 'btn("sh-mouse-double",row,"双击",doubleClick)' in mouse
+          assert 'btn("sh-mouse-right",row,"右键",rightClick)' in mouse
+          assert 'setDelayedTap:setDelayedTap' in mouse
+          assert 'ShiguangMapBridge' not in source and 'toggleMapControls' not in swift
+          assert not Path('Patches/test-smart-touch.js').exists()
+          for forbidden in ['smartHover','SmartHover','setSmartHover','smartPointer','smartTouch','ringAnchor','smartEnableTimer','__shiguangSmartHoverChoice','galaxy-navigation.js']:
+              assert forbidden not in swift+source+mouse, 'retired feature '+forbidden
+          print('PASS: Build118-derived formal 1.04, core/patch/precision/boot invariants, smart-hover completely retired')
           PY_CHECK
   build:
     needs: static-check
@@ -328,25 +268,25 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check test-version metadata
+      - name: Check formal 1.04 release metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.2.0'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '118'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.smartbeta'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.4'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '120'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.03 maintenance project source ZIP
+      - name: Package formal 1.04 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.2-nono-safe-b118/ --output=/tmp/ShiguangLauncher-v1.2-nono-safe-b118-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.2-nono-safe-b118-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.2-nono-safe-b118-source.zip | grep -Fx 'ShiguangLauncher-v1.2-nono-safe-b118/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.04-from-b118-b120/ --output=/tmp/ShiguangLauncher-v1.04-from-b118-b120-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.04-from-b118-b120-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.04-from-b118-b120-source.zip | grep -Fx 'ShiguangLauncher-v1.04-from-b118-b120/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.2-nono-safe-b118-ipa
+          name: ShiguangLauncher-v1.04-from-b118-b120-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.2-nono-safe-b118-source
-          path: /tmp/ShiguangLauncher-v1.2-nono-safe-b118-source.zip
+          name: ShiguangLauncher-v1.04-from-b118-b120-source
+          path: /tmp/ShiguangLauncher-v1.04-from-b118-b120-source.zip
           if-no-files-found: error
