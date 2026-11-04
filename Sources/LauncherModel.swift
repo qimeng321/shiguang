@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import ZIPFoundation
 
 // A small, visible shared folder for imports and diagnostics. Installed assets
@@ -198,6 +199,25 @@ enum LaunchDiagnostics {
         }
         let resolvedEntry = root.appendingPathComponent(entry)
         check("SWF 入口", file: resolvedEntry, required: true)
+        // This is a non-blocking fingerprint label, not a hard-coded version lock.
+        if let bytes = try? Data(contentsOf: resolvedEntry, options: .mappedIfSafe),
+           bytes.count <= 2_000_000 {
+            let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            if digest == "d64a9e3af813324f6e1f9844e74eee16dee5d76a4c8a26c417585467a3c3e59f" {
+                lines.append("[新版资源] Client.swf 与 0.18.0 分析样本匹配，原 PVM 兼容补丁适用")
+            } else {
+                lines.append("[资源识别] 未知 Client.swf 指纹，由启动流程自行验证 PVM 补丁")
+            }
+        }
+        if let revision = coreRevision(root: root, entry: entry) {
+            lines.append("[核心资源修订] " + revision +
+                (revision == "2026110304" ? "（已知 0.18.0 版本）" : "（尚未单独验证）"))
+        }
+        let versionFile = webRoot.appendingPathComponent("base.version")
+        if let text = try? String(contentsOf: versionFile, encoding: .utf8),
+           text.count <= 40 {
+            lines.append("[资源版本] " + text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         if !manager.fileExists(atPath: resolvedEntry.path) {
             lines.append("[诊断] 预期 SWF 绝对路径：\(resolvedEntry.path)")
             let parent = resolvedEntry.deletingLastPathComponent()
@@ -314,7 +334,8 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.03（Build 112 · 导入进度修复）启动；解压阶段结束后显示安装收尾状态，保护原资源包")
+        UserDefaults.standard.removeObject(forKey: "shiguang.smartHover12")
+        LaunchDiagnostics.log("启动器 正式版 1.04（Build 119 · 新资源兼容）启动；保留精准鼠标，实验性智能悬停已移除")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -692,7 +713,7 @@ final class LauncherModel: ObservableObject {
         // Only a complete CRC32-verified import with all critical files may
         // carry the ready receipt into the actual installed Game directory.
         let receipt = staging.appendingPathComponent(LaunchDiagnostics.receiptName)
-        try "full-unzip-crc32-ok; key-files-valid; v1.03\n".write(
+        try "full-unzip-crc32-ok; key-files-valid; v1.04\n".write(
             to: receipt, atomically: true, encoding: .utf8)
 
         onFinalizing(3, "正在准备安全安装及旧版备份")
