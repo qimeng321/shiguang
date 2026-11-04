@@ -139,7 +139,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.03")
+                        Text("正式版 1.04")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -529,7 +529,8 @@ struct GameView: View {
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
     var body: some View {
-        ZStack {
+        GeometryReader { lockedGeometry in
+            ZStack {
             Color.black.ignoresSafeArea()
             if isClearingWebCache {
                 ProgressView("正在清理网页缓存…")
@@ -545,7 +546,7 @@ struct GameView: View {
                     LaunchDiagnostics.log("网页错误：" + message)
                 })
                 .id(reloadGeneration) // recreate WKWebView and Flash, leave HTTP service/resources intact
-                .ignoresSafeArea()
+                .frame(width: lockedGeometry.size.width, height: lockedGeometry.size.height)
             } else if let errorText {
                 Text(errorText).foregroundStyle(.white).padding(24)
             } else {
@@ -577,7 +578,8 @@ struct GameView: View {
                         }
                         .accessibilityLabel(toolsExpanded ? "收起游戏工具" : "展开游戏工具")
                         if toolsExpanded {
-                            VStack(alignment: .leading, spacing: 3) {
+                            ScrollView(.vertical) {
+                              VStack(alignment: .leading, spacing: 3) {
                                 gameTool("keyboard", "输入键盘") {
                                     sendControl("toggleKeyboard")
                                 }
@@ -614,13 +616,15 @@ struct GameView: View {
                                 }
                                 .disabled(isClearingWebCache)
                             }
-                            .padding(8)
+                              .padding(8)
+                            }
                             .frame(width: 168)
+                            .frame(maxHeight: max(145, lockedGeometry.size.height - 92))
                             .background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 15))
                             .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
                         }
                     }
-                    .animation(.easeInOut(duration: 0.18), value: toolsExpanded)
+                    // Keep WebView geometry stable while toggling the tool menu.
                 }
                 .padding(.top, 14)
                 Spacer(minLength: 12)
@@ -656,7 +660,11 @@ struct GameView: View {
                         .padding(.bottom, 57)
                 }
             }
+            }
+            .frame(width: lockedGeometry.size.width, height: lockedGeometry.size.height)
+            .clipped()
         }
+        .ignoresSafeArea()
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .confirmationDialog("清理游戏网页缓存？", isPresented: $showingCacheConfirmation,
