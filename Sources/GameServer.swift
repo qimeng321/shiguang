@@ -19,6 +19,16 @@ final class GameServer {
     private var versionGetCount = 0
     private var proceededBeyondVersion = false
     private var inspectedVersionHeader = false
+    // Bounded per-session verified path cache; installed pack is read-only while playing.
+    private struct VerifiedLocalPath {
+        let url: URL
+        let checkedAt: TimeInterval
+    }
+    private var verifiedLocalPaths: [String: VerifiedLocalPath] = [:]
+    private let pathCacheTTL: TimeInterval = 45
+    private let pathCacheLimit = 40_000
+    private var pathCacheHits = 0
+    private var pathCacheMisses = 0
 
     // Diagnose the PVM header directly in the saved file; never modify it.
     private func inspectPVMHeader(_ file: URL) {
@@ -426,9 +436,27 @@ final class GameServer {
         let parts = decoded.split(separator: "/", omittingEmptySubsequences: false)
         guard !decoded.hasPrefix("/"), !decoded.contains("\\"),
               !parts.contains(where: { $0 == ".." || $0 == "." || $0.isEmpty }) else { return nil }
+        let key = base.path + "/" + decoded
+        let now = ProcessInfo.processInfo.systemUptime
+        if let entry = verifiedLocalPaths[key], now - entry.checkedAt < pathCacheTTL {
+            pathCacheHits += 1
+            if pathCacheHits == 1000 || pathCacheHits % 5000 == 0 {
+                LaunchDiagnostics.log("[路径缓存] 命中=\(pathCacheHits)；重新验证=\(pathCacheMisses)；条目=\(verifiedLocalPaths.count)")
+            }
+            return entry.url
+        }
+        pathCacheMisses += 1
         let resolved = base.appendingPathComponent(decoded).resolvingSymlinksInPath()
         guard resolved.path.hasPrefix(base.path + "/"),
-              (try? resolved.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return nil }
+              (try? resolved.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
+            verifiedLocalPaths.removeValue(forKey: key)
+            return nil
+        }
+        if verifiedLocalPaths.count >= pathCacheLimit {
+            verifiedLocalPaths.removeAll(keepingCapacity: true)
+            LaunchDiagnostics.log("[路径缓存] 达到40000项上限，已清空索引")
+        }
+        verifiedLocalPaths[key] = VerifiedLocalPath(url: resolved, checkedAt: now)
         return resolved
     }
 
@@ -661,7 +689,7 @@ final class GameServer {
           ruffle-player{display:block;flex:none;width:var(--game-w)!important;height:var(--game-h)!important}
           #message{position:fixed;inset:0;display:flex;justify-content:center;align-items:center;
                    background:#000;color:#b9c1d0;font:14px -apple-system,sans-serif;pointer-events:none}
-          /* Mouse and map controls are lazily mounted by touch-controls.js,
+          /* Precise mouse controls are mounted by touch-controls.js,
              so the normal game viewport has no transparent intercepting overlay. */
         </style>
         <script src="/ruffle/frame-cap.js"></script>
@@ -831,7 +859,7 @@ final class GameServer {
             return input;
           }
           // Native three-dot menu sends fixed, allowlisted commands.
-          // The mouse/map implementation lives in a separately syntax-checked
+          // The precise mouse implementation lives in a separately syntax-checked
           // script, and creates its overlays only when explicitly enabled.
           var touchControls=null;
           function toggleKeyboard(){
@@ -907,48 +935,37 @@ final class GameServer {
             var field=keyboardInput();
             return !!(field&&field.getRootNode().activeElement===field);
           }
-          function fit(){
-            var v=window.visualViewport;
-            var measuredW=Math.max(1,Math.round(v?v.width:window.innerWidth));
-            var measuredH=Math.max(1,Math.round(Math.max(v?v.height:0,window.innerHeight||0)));
-            var keyboardFocused=inputHasFocus();
-            if(!stableViewport){
-              stableViewport={w:measuredW,h:measuredH};
-            }else if(Math.abs(measuredW-stableViewport.w)>64 && !keyboardFocused){
-              // Orientation or actual split-view width change.
-              stableViewport={w:measuredW,h:measuredH};
-            }else if(!keyboardFocused){
-              stableViewport.w=measuredW;
-              // Avoid transient keyboard shrink and toolbar animations.
-              if(measuredH>=stableViewport.h-64)stableViewport.h=measuredH;
+          function fit(force){
+            var measuredW=Math.max(1,Math.round(window.innerWidth||document.documentElement.clientWidth));
+            var measuredH=Math.max(1,Math.round(window.innerHeight||document.documentElement.clientHeight));
+            if(!stableViewport||force){
+              stableViewport={w:measuredW,h:measuredH,
+                orientation:measuredW>=measuredH?"landscape":"portrait"};
             }
             var w=stableViewport.w,h=stableViewport.h;
             var factor=Math.min(w/960,h/560);
             var pw=Math.max(1,Math.floor(960*factor)),ph=Math.max(1,Math.floor(560*factor));
-            var state=pw+"×"+ph+"；可用屏幕 "+w+"×"+h;
-            // iOS may dispatch resize events repeatedly during keyboard
-            // animation. Avoid redundant CSS writes and forced layout work.
+            var state=pw+"×"+ph+"；锁定视口 "+w+"×"+h;
             if(state!==last){
               document.documentElement.style.setProperty("--game-w",pw+"px");
               document.documentElement.style.setProperty("--game-h",ph+"px");
               var game=document.getElementById("game");
               game.style.height=h+"px";game.style.width=w+"px";
-              last=state;report("等比例自适应："+state);
+              last=state;report("游戏画面固定尺寸："+state);
             }
-            if(player && (player.style.width!==pw+"px" || player.style.height!==ph+"px")){
+            if(player&&(player.style.width!==pw+"px"||player.style.height!==ph+"px")){
               player.style.width=pw+"px";player.style.height=ph+"px";
             }
             placeInputDock();
           }
           function scheduleFit(){
             if(fitTimer!==null)clearTimeout(fitTimer);
-            fitTimer=setTimeout(function(){fitTimer=null;fit();},65);
+            fitTimer=setTimeout(function(){fitTimer=null;fit(false);},110);
           }
           window.addEventListener("resize",scheduleFit);
           window.addEventListener("orientationchange",function(){
-            stableViewport=null;scheduleFit();
-            // WebKit reports rotation geometry in several asynchronous steps.
-            setTimeout(function(){stableViewport=null;fit();},350);
+            if(fitTimer!==null)clearTimeout(fitTimer);
+            fitTimer=setTimeout(function(){fitTimer=null;fit(true);},430);
           });
           if(window.visualViewport)window.visualViewport.addEventListener("resize",scheduleFit);
           fit();
