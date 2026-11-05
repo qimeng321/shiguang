@@ -338,7 +338,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.04（Build 120 · 以 Build118 为基础）启动；已移除智能悬停，保留精准鼠标和手机补丁")
+        LaunchDiagnostics.log("启动器 正式版 1.05（Build 122 · 以 Build118 为基础）启动；基地代理映射已修复、中文字体位置可调、保留手机补丁")
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
