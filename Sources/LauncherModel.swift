@@ -55,7 +55,7 @@ enum LaunchDiagnostics {
                 let text = """
                 拾光号启动器 - 共享文件夹
 
-                Import/：可放入 .srom 或 .zip 美化包，在启动器的“导入美化包”里选择从共享文件夹导入。
+                Import/：可放入 .srom、完整 .zip 美化包或游戏增量 .zip，在启动器的“导入美化包”里选择从共享文件夹导入。
                 diagnostics.txt：记录游戏启动、资源检查、网页脚本和本地资源服务的诊断信息。
 
                 已安装的完整游戏资源存放在应用私有的 Application Support/Game/ 中；
@@ -308,9 +308,19 @@ final class LauncherModel: ObservableObject {
     @Published var patchError: String?
     @Published private(set) var patchStatus = "可导入或撤销手机适配补丁，不修改原美化包。"
 
+    // Completely independent from full .srom and mobile .sgpatch imports.
+    @Published private(set) var deltaBusy = false
+    @Published private(set) var deltaProgress: Double = 0
+    @Published private(set) var deltaPhase = ""
+    @Published private(set) var deltaStatus = "仅合并变化的资源；自动检查版本、备份与回滚。"
+    @Published private(set) var deltaPreview: GameIncrementalPreview?
+    @Published var deltaError: String?
+    @Published private(set) var deltaRecoveryProblem: String?
+    private var deltaPendingArchive: URL?
+
     var canStartGame: Bool {
         guard let gameRoot, !selectedEntry.isEmpty, isInstalledValidated else { return false }
-        return !isImporting && !isClearing && FileManager.default.fileExists(
+        return !isImporting && !isClearing && !deltaBusy && deltaRecoveryProblem == nil && FileManager.default.fileExists(
             atPath: gameRoot.appendingPathComponent(selectedEntry).path
         )
     }
@@ -338,7 +348,14 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.05（Build 123 · 单字体轻量版）启动；基地代理映射已修复、中文字体位置可调、保留手机补丁")
+        LaunchDiagnostics.log("启动器 正式版 1.06（Build 124 · 独立游戏增量更新）启动；基地代理、单中文字体及手机补丁保留")
+        do {
+            try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
+        } catch {
+            deltaRecoveryProblem = error.localizedDescription
+            deltaError = "上次增量更新未完全恢复：\(error.localizedDescription)"
+            LaunchDiagnostics.log("[增量更新] 启动恢复失败，已阻止进入游戏：\(error.localizedDescription)")
+        }
         let root = Self.savedGameRoot
         if FileManager.default.fileExists(atPath: root.path) {
             gameRoot = root
@@ -420,7 +437,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func importPackage(_ source: URL) {
-        guard !isImporting && !isClearing else { return }
+        guard !isImporting && !isClearing && !deltaBusy else { return }
         let fileExtension = source.pathExtension.lowercased()
         guard fileExtension == "srom" || fileExtension == "zip" else {
             lastImportFailed = true
@@ -536,8 +553,114 @@ final class LauncherModel: ObservableObject {
     }
 
 
+    // Step 1: preview an incoming game delta ZIP; do not modify Game.
+    func prepareIncrementalUpdate(_ source: URL) {
+        guard !deltaBusy && !isImporting && !isClearing && !patchBusy else { return }
+        guard isInstalledValidated, let root = gameRoot, deltaRecoveryProblem == nil else {
+            deltaError = "请先安装并校验完整资源包，或解决未完成更新的回滚问题。"
+            return
+        }
+        guard source.pathExtension.lowercased() == "zip" else {
+            deltaError = "请选择 .zip 游戏增量更新包，不要选 .srom 或 .sgpatch。"
+            return
+        }
+        cancelPreparedIncrementalUpdate()
+        deltaBusy = true
+        deltaProgress = 0
+        deltaPhase = "正在复制并检查增量包"
+        deltaStatus = "正在预检版本、路径及文件大小，不会修改现有资源。"
+        let entry = selectedEntry
+        let scoped = source.startAccessingSecurityScopedResource()
+        Task.detached(priority: .userInitiated) {
+            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+            var local: URL?
+            do {
+                let copied = try Self.copyIntoSandbox(source) { fraction in
+                    Task { @MainActor in
+                        self.deltaProgress = max(self.deltaProgress, fraction * 0.3)
+                    }
+                }
+                local = copied
+                let preview = try GameIncrementalUpdater.inspect(
+                    archiveURL: copied, gameRoot: root, entry: entry)
+                await MainActor.run {
+                    self.deltaPendingArchive = copied
+                    self.deltaPreview = preview
+                    self.deltaBusy = false
+                    self.deltaProgress = 0
+                    self.deltaStatus = "预检通过：\(preview.currentRevision) → \(preview.targetRevision)，\(preview.fileCount) 个文件。请确认更新。"
+                    LaunchDiagnostics.log("[增量更新] 预检通过，目标=\(preview.targetRevision)，\(preview.fileCount) 文件、覆盖 \(preview.overwriteCount)、新增 \(preview.addedCount)")
+                }
+            } catch {
+                if let local { try? FileManager.default.removeItem(at: local) }
+                await MainActor.run {
+                    self.deltaBusy = false
+                    self.deltaProgress = 0
+                    self.deltaPhase = "预检失败"
+                    self.deltaStatus = "增量更新没有开始，已安装的游戏资源未改变。"
+                    self.deltaError = error.localizedDescription
+                    LaunchDiagnostics.log("[增量更新] 预检拒绝：\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func cancelPreparedIncrementalUpdate() {
+        if let pending = deltaPendingArchive { try? FileManager.default.removeItem(at: pending) }
+        deltaPendingArchive = nil
+        deltaPreview = nil
+    }
+
+    // Step 2: merge only after confirmation; the transaction owns rollback.
+    func installPreparedIncrementalUpdate() {
+        guard !deltaBusy && !isImporting && !isClearing && !patchBusy,
+              let archive = deltaPendingArchive, deltaPreview != nil,
+              let root = gameRoot, deltaRecoveryProblem == nil else { return }
+        let entry = selectedEntry
+        deltaPendingArchive = nil
+        deltaPreview = nil
+        deltaBusy = true
+        deltaProgress = 0.02
+        deltaPhase = "正在进行安全增量更新"
+        deltaStatus = "正在备份并合并变动资源，请勿关闭应用。"
+        Task.detached(priority: .userInitiated) {
+            defer { try? FileManager.default.removeItem(at: archive) }
+            do {
+                let result = try GameIncrementalUpdater.install(
+                    archiveURL: archive, gameRoot: root, entry: entry,
+                    onProgress: { fraction, phase in
+                        Task { @MainActor in
+                            self.deltaProgress = max(self.deltaProgress, fraction)
+                            self.deltaPhase = phase
+                        }
+                    })
+                await MainActor.run {
+                    self.refreshResourceCheck()
+                    self.patchSummary = MobilePatchManager.activeSummary
+                    self.deltaBusy = false
+                    self.deltaProgress = 1.0
+                    self.deltaPhase = "增量更新成功"
+                    self.deltaStatus = "更新成功：\(result.currentRevision) → \(result.targetRevision)，合并 \(result.fileCount) 个资源；重新进入游戏生效。"
+                }
+            } catch {
+                await MainActor.run {
+                    self.refreshResourceCheck()
+                    self.deltaBusy = false
+                    self.deltaProgress = 0
+                    self.deltaPhase = "更新失败"
+                    self.deltaStatus = "安装中止；原资源将保留或按日志回滚。"
+                    self.deltaError = error.localizedDescription
+                    if case GameIncrementalError.rollbackFailed = error {
+                        self.deltaRecoveryProblem = error.localizedDescription
+                    }
+                    LaunchDiagnostics.log("[增量更新] 安装失败：\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
     func importMobilePatch(_ url: URL) {
-        guard !patchBusy && !isImporting && !isClearing else { return }
+        guard !patchBusy && !isImporting && !isClearing && !deltaBusy else { return }
         guard isInstalledValidated, gameRoot != nil else {
             patchError = "请先导入并验证完整的 .srom 游戏资源，再安装手机补丁。"
             return
@@ -569,7 +692,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func clearMobilePatch() {
-        guard !patchBusy && !isImporting && !isClearing else { return }
+        guard !patchBusy && !isImporting && !isClearing && !deltaBusy else { return }
         patchBusy = true
         patchStatus = "正在撤销补丁…"
         Task.detached(priority: .userInitiated) {
@@ -590,7 +713,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func clearPackage() {
-        guard !isImporting && !isClearing else { return }
+        guard !isImporting && !isClearing && !deltaBusy else { return }
         isClearing = true
         LaunchDiagnostics.log("用户请求清除已安装美化包")
         status = "正在清除已安装的美化包…"
