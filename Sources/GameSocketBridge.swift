@@ -281,6 +281,7 @@ final class GameSocketBridge {
         private let onChannel: (String, UInt16) -> Void
         private let onRoom: (String, UInt16) -> Void
         private let remoteHost: String
+        private var downstreamFramer = GameProtocolFramer()
         private let remotePort: UInt16
 
         init(webSocket: NWConnection, queue: DispatchQueue, index: Int,
@@ -364,6 +365,14 @@ final class GameSocketBridge {
                 guard let data else { self.receiveWebSocket(); return }
                 self.upstreamCount += 1
                 self.upstreamTotal += data.count
+                // Header-only room diagnostics; no sensitive payload is logged.
+                if data.count >= 9 {
+                    let raw = [UInt8](data)
+                    let cmd = self.uint32BE(raw, 5)
+                    if cmd == 10002 || cmd == 10001 || cmd == 10003 {
+                        LaunchDiagnostics.log("[基地协议] 上行 CMD\(cmd)，内容已隐藏")
+                    }
+                }
                 if self.upstreamCount <= 4 || self.upstreamCount % 10 == 0 {
                     LaunchDiagnostics.log("[会话#\(self.index)] 上行#\(self.upstreamCount) \(data.count)字节（无负载）")
                 }
@@ -402,8 +411,10 @@ final class GameSocketBridge {
                     LaunchDiagnostics.log("[选服阶段] 收到 CMD1001 成功响应，进入游戏状态")
                     onEnterGame()
                 }
-                // RoomController: 24-byte session followed by IPv4 (4), port (2).
-                // Keep session and packet length intact: only replace endpoint.
+                // RoomController: session[24] + IPv4[4] + port[2].
+                if cmd == 10002 {
+                    LaunchDiagnostics.log("[基地协议] GET_ROOM_ADDRES 下行；结果=\(result)；包字节=\(packetSize)")
+                }
                 if cmd == 10002 && result == 0 {
                     let address = cursor + 17 + 24
                     if address + 6 <= cursor + packetSize {
@@ -480,8 +491,17 @@ final class GameSocketBridge {
                 // FIN may arrive with data. The previous implementation
                 // returned on complete before forwarding the final payload.
                 guard let data, !data.isEmpty else {
-                    if complete { self.stop("远端 TCP FIN（无附带数据）") }
-                    else { self.receiveTCP() }
+                    if complete {
+                        let remainder = self.downstreamFramer.flushRemainder()
+                        if !remainder.isEmpty {
+                            let ctx = NWConnection.ContentContext(identifier: "binary",
+                                metadata: [NWProtocolWebSocket.Metadata(opcode: .binary)])
+                            self.webSocket.send(content: remainder, contentContext: ctx, isComplete: true,
+                                completion: .contentProcessed { [weak self] _ in
+                                    self?.stop("远端 TCP FIN：已转发残留数据")
+                                })
+                        } else { self.stop("远端 TCP FIN（无附带数据）") }
+                    } else { self.receiveTCP() }
                     return
                 }
                 self.downstreamCount += 1
@@ -493,7 +513,17 @@ final class GameSocketBridge {
                     self.loggedDownstreamBytes = true
                     LaunchDiagnostics.log("[登录网络] 首次远端→Flash 传输：" + String(data.count) + " 字节（不记录内容）")
                 }
-                let mapped = self.mapServerList(data)
+                var mapped = self.downstreamFramer.consume(data, rewrite: { [weak self] frame in
+                    self?.mapServerList(frame) ?? frame
+                }, onAnomaly: { issue in
+                    LaunchDiagnostics.log("[网络帧重组] " + issue)
+                })
+                if complete { mapped.append(self.downstreamFramer.flushRemainder()) }
+                if mapped.isEmpty {
+                    if complete { self.stop("远端 FIN：剩余数据已处理") }
+                    else { self.receiveTCP() }
+                    return
+                }
                 let metadata = NWProtocolWebSocket.Metadata(opcode: .binary)
                 let context = NWConnection.ContentContext(identifier: "binary", metadata: [metadata])
                 self.webSocket.send(content: mapped, contentContext: context, isComplete: true,
