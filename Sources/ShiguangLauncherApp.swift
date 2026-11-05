@@ -114,6 +114,8 @@ struct LauncherView: View {
     @State private var showingLocalFiles = false
     @State private var showingClearConfirmation = false
     @State private var showingPatchPicker = false
+    @State private var showingDeltaPicker = false
+    @State private var showingDeltaLocalFiles = false
     @State private var showingPatchClearConfirmation = false
     @State private var showingGame = false
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
@@ -144,7 +146,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.05")
+                        Text("正式版 1.06")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -213,9 +215,9 @@ struct LauncherView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                         if let revision = launcher.resourceRevision {
-                            Text("识别到核心资源修订号：\(revision)\(revision == "2026110304" ? " · 新版 0.18.0" : (revision == "2026110201" ? " · 旧版资源" : " · 兼容性待验证"))")
+                            Text("识别到核心资源修订号：\(revision)\(revision == "2026110401" ? " · 新核心已更新" : (revision == "2026110304" ? " · 0.18.0" : (revision == "2026110201" ? " · 旧版资源" : " · 兼容性待验证")))")
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(revision == "2026110304" || revision == "2026110201" ? green : subtleInk)
+                                .foregroundStyle(revision == "2026110401" || revision == "2026110304" || revision == "2026110201" ? green : subtleInk)
                         }
                         Divider().opacity(0.35)
                         HStack(alignment: .top, spacing: 7) {
@@ -272,8 +274,11 @@ struct LauncherView: View {
                     .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.09), lineWidth: 1))
                     .padding(.top, 23)
 
-                    mobilePatchPanel
+                    incrementalUpdatePanel
                         .padding(.top, 18)
+
+                    mobilePatchPanel
+                        .padding(.top, 14)
 
                     Text("支持 .srom / .zip；已安装资源保持私有，不占用共享文件夹额外空间")
                         .font(.system(size: 12))
@@ -303,6 +308,29 @@ struct LauncherView: View {
                                         Color(red: 0.95, green: 0.97, blue: 1)],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
                     .ignoresSafeArea()
+            }
+        }
+        .alert("增量更新异常", isPresented: Binding(
+            get: { launcher.deltaError != nil },
+            set: { if !$0 { launcher.deltaError = nil } }
+        )) {
+            Button("知道了", role: .cancel) { launcher.deltaError = nil }
+        } message: {
+            Text(launcher.deltaError ?? "增量更新未完成。")
+        }
+        .confirmationDialog("游戏资源增量更新确认", isPresented: Binding(
+            get: { launcher.deltaPreview != nil },
+            set: { if !$0 { launcher.cancelPreparedIncrementalUpdate() } }
+        ), titleVisibility: .visible) {
+            if let preview = launcher.deltaPreview {
+                Button("确认更新 \(preview.fileCount) 个文件") {
+                    launcher.installPreparedIncrementalUpdate()
+                }
+            }
+            Button("取消", role: .cancel) { launcher.cancelPreparedIncrementalUpdate() }
+        } message: {
+            if let preview = launcher.deltaPreview {
+                Text("当前：\(preview.currentRevision) → 新版：\(preview.targetRevision)。覆盖 \(preview.overwriteCount) 个文件，新增 \(preview.addedCount) 个文件。更新过程中不能进入游戏；失败自动恢复旧文件。")
             }
         }
         .alert("手机补丁安装失败", isPresented: Binding(
@@ -341,6 +369,45 @@ struct LauncherView: View {
                 showingPicker = false
                 launcher.importPackage(url)
             }
+        }
+        .sheet(isPresented: $showingDeltaPicker) {
+            PackageDocumentPicker { url in
+                showingDeltaPicker = false
+                launcher.prepareIncrementalUpdate(url)
+            }
+        }
+        .sheet(isPresented: $showingDeltaLocalFiles) {
+            NavigationStack {
+                let files = launcher.localPackages.filter { $0.pathExtension.lowercased() == "zip" }
+                Group {
+                    if files.isEmpty {
+                        VStack(spacing: 12) {
+                            Text("Import 文件夹里尚未找到 ZIP 增量包")
+                            Text("请先在“文件”App 将增量 ZIP 放入拾光号 → Import 文件夹。")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                            Button("刷新") { launcher.refreshLocalPackages() }
+                        }
+                        .padding(24)
+                    } else {
+                        List(files, id: \.path) { url in
+                            Button(url.lastPathComponent) {
+                                showingDeltaLocalFiles = false
+                                launcher.prepareIncrementalUpdate(url)
+                            }
+                        }
+                    }
+                }
+                .navigationTitle("选择增量 ZIP")
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("关闭") { showingDeltaLocalFiles = false }
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("刷新") { launcher.refreshLocalPackages() }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showingPatchPicker) {
             PackageDocumentPicker { url in
@@ -415,6 +482,65 @@ struct LauncherView: View {
                 GameView(root: root, entry: launcher.selectedEntry) { showingGame = false }
             }
         }
+    }
+
+    private var incrementalUpdatePanel: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.2.circlepath.circle")
+                    .foregroundStyle(blue)
+                Text("游戏资源增量更新")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ink)
+                Spacer()
+                Text("1.06 新功能")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(green)
+            }
+            Text("无需重新导入几 GB 的完整游戏包；只合并更新 ZIP 中的资源。")
+                .font(.system(size: 12)).foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(launcher.deltaStatus)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if launcher.deltaBusy {
+                ProgressView(value: launcher.deltaProgress, total: 1.0)
+                    .tint(blue)
+                HStack {
+                    Text(launcher.deltaPhase).foregroundStyle(subtleInk)
+                    Spacer()
+                    Text("\(Int(launcher.deltaProgress * 100))%")
+                        .monospacedDigit().foregroundStyle(blue)
+                }
+                .font(.system(size: 12))
+            }
+            HStack(spacing: 10) {
+                Button {
+                    showingDeltaPicker = true
+                } label: {
+                    Label("选择增量 ZIP", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity).padding(.vertical, 11)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!launcher.canStartGame || launcher.deltaBusy || launcher.patchBusy)
+                Button {
+                    launcher.refreshLocalPackages()
+                    showingDeltaLocalFiles = true
+                } label: {
+                    Label("共享文件夹", systemImage: "folder")
+                        .frame(maxWidth: .infinity).padding(.vertical, 11)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!launcher.canStartGame || launcher.deltaBusy || launcher.patchBusy)
+            }
+            Text("自动检查版本、校验 CRC32、备份被替换文件，失败时回滚。手机补丁请使用下方独立入口。")
+                .font(.system(size: 11)).foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(17)
+        .background(.white.opacity(0.84), in: RoundedRectangle(cornerRadius: 19))
+        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.09), lineWidth: 1))
     }
 
     private var mobilePatchPanel: some View {
