@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - "release/shiguang-1.0.6-b124-delta"
+      - "release/shiguang-1.0.6-b125-ui-delta-srom"
 
 jobs:
   static-check:
