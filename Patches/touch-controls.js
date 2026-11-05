@@ -1,4 +1,4 @@
-/* Shiguang v6.4 Formal 1.04 Build120: precise mouse + double/right-click without smart-hover.
+/* Shiguang v6.4 Formal 1.05 Build121: precise mouse + double/right-click without smart-hover.
    Ruffle 0.7.1 reads PointerEvent.offsetX/Y from its inner canvas. */
 (function(){
 "use strict";

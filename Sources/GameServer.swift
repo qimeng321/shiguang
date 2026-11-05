@@ -119,7 +119,7 @@ final class GameServer {
         self.compatibilityModeEnabled = UserDefaults.standard.bool(
             forKey: "shiguang.compatibilityMode103"
         )
-        self.bridge = packagedWebApp ? try GameSocketBridge() : nil
+        self.bridge = packagedWebApp ? try GameSocketBridge.shared() : nil
         guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path) else {
             throw ServerError.missingRuffle
@@ -132,6 +132,13 @@ final class GameServer {
             LaunchDiagnostics.log("[引擎版本] 内置旧版 Ruffle（此包未附带 engine-version.txt）")
         }
         try startHTTPListener(at: 0)
+    }
+
+    func leaveGame() {
+        bridge?.leaveGame()
+        listener?.cancel()
+        listener = nil
+        LaunchDiagnostics.log("[页面生命周期] 游戏结束：HTTP 监听关闭、代理会话清理已请求")
     }
 
     deinit { listener?.cancel() }
@@ -221,7 +228,16 @@ final class GameServer {
             return
         }
         let headOnly = parts[0] == "HEAD"
-        let path = components.path
+        // Normalize only the observed malformed SWF daily-sign path;
+        // generic file-path validation still rejects traversal and empty parts.
+        let requestedPath = components.path
+        let path: String
+        if requestedPath == "/module/com/robot/module/app//nonoPanel/NonoVipDailySignPanel.swf" {
+            path = "/module/com/robot/module/app/nonoPanel/NonoVipDailySignPanel.swf"
+            LaunchDiagnostics.log("[每日签到] 已修正 SWF 请求中的重复斜杠：NonoVipDailySignPanel.swf")
+        } else {
+            path = requestedPath
+        }
         let lower = path.lowercased()
         if lower == "/version.swf" && !headOnly {
             let raw = components.query ?? ""
@@ -761,7 +777,8 @@ final class GameServer {
             },
             socketProxy:[
               {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
-              {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"}
+              {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
+              {host:"103.91.210.16",port:22975,proxyUrl:"ws://127.0.0.1:32975"}
             ]
           };
         </script><script src="/ruffle/ruffle.js"></script>

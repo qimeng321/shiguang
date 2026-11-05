@@ -18,10 +18,10 @@ def main():
     before = list(top.FontMatrix)
     if len(before) != 6 or abs(float(before[0]) - 0.001) > 0.0001:
         raise SystemExit(f"Unexpected CFF FontMatrix; keeping original font: {before}")
-    # Raise fallback glyph outlines ~35 units at 1000 UPEM (~3.5% of an em).
+    # Raise fallback glyph outlines ~60 units at 1000 UPEM (~6% of an em).
     # Translation changes only the CFF glyph origin, not the stage or pointer mapping.
     after = list(before)
-    after[5] = round(float(after[5]) + 0.035, 6)
+    after[5] = round(float(after[5]) + 0.060, 6)
     top.FontMatrix = after
     temp = path.with_suffix(".adjusted.otf")
     font.save(str(temp))
@@ -32,7 +32,7 @@ def main():
     if abs(float(saved[5]) - float(after[5])) > 0.000001:
         raise SystemExit(f"Font baseline roundtrip failed: {saved}")
     temp.replace(path)
-    print(f"FONT: Noto Sans CJK fallback origin shifted +35/1000 em: {before} -> {saved}")
+    print(f"FONT: Noto Sans CJK fallback origin shifted +60/1000 em: {before} -> {saved}")
 
 if __name__ == "__main__":
     main()

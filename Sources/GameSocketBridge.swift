@@ -3,6 +3,33 @@ import Network
 
 /// Local WebSocket-to-TCP relay for a browser-based Flash client.
 final class GameSocketBridge {
+    // Retain one listener set per app process: no rebinding while a prior
+    // GameView's Network.framework cancellation is still in flight.
+    private static let sharedLock = NSLock()
+    private static var retainedBridge: GameSocketBridge?
+    static func shared() throws -> GameSocketBridge {
+        sharedLock.lock()
+        defer { sharedLock.unlock() }
+        if let bridge = retainedBridge { return bridge }
+        let bridge = try GameSocketBridge()
+        retainedBridge = bridge
+        return bridge
+    }
+
+    func leaveGame() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let old = Array(self.sessions.values)
+            old.forEach { $0.stop("已退出游戏：清理旧 Socket 连接") }
+            self.gameEnteredFlag = false
+            self.activeChannelHost = nil
+            self.activeChannelPort = nil
+            self.activeRoomHost = nil
+            self.activeRoomPort = nil
+            LaunchDiagnostics.log("[页面生命周期] 已清理旧游戏会话；保留本地监听供再次进入")
+        }
+    }
+
     static let serverHost = "103.91.210.16"
     static let serverPort: UInt16 = 22973
     static let localPort: UInt16 = 32973
@@ -11,12 +38,18 @@ final class GameSocketBridge {
     // connects to the original channel port returned by CMD105/106.
     static let virtualChannelPort: UInt16 = 22974
     static let localChannelPort: UInt16 = 32974
+    // GET_ROOM_ADDRES (10002) advertises an independent room socket.
+    static let virtualRoomPort: UInt16 = 22975
+    static let localRoomPort: UInt16 = 32975
 
     private let queue = DispatchQueue(label: "cn.shiguanghao.launcher.socket")
     private let listener: NWListener
     private let channelListener: NWListener
+    private let roomListener: NWListener
     private var activeChannelHost: String?
     private var activeChannelPort: UInt16?
+    private var activeRoomHost: String?
+    private var activeRoomPort: UInt16?
     private var sessions: [UUID: Session] = [:]
     private var acceptedCount = 0
     private var gameEnteredFlag=false
@@ -60,6 +93,28 @@ final class GameSocketBridge {
         channelParameters.requiredInterfaceType = .loopback
         channelListener = try NWListener(using: channelParameters,
             on: NWEndpoint.Port(rawValue: Self.localChannelPort)!)
+        let roomOptions = NWProtocolWebSocket.Options()
+        roomOptions.autoReplyPing = true
+        roomOptions.setClientRequestHandler(queue) { _, _ in
+            NWProtocolWebSocket.Response(status: .accept, subprotocol: nil)
+        }
+        let roomParameters = NWParameters.tcp
+        roomParameters.defaultProtocolStack.applicationProtocols.insert(roomOptions, at: 0)
+        roomParameters.requiredInterfaceType = .loopback
+        roomListener = try NWListener(using: roomParameters,
+            on: NWEndpoint.Port(rawValue: Self.localRoomPort)!)
+        roomListener.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                LaunchDiagnostics.log("[基地代理] 本地 WebSocket 监听成功 32975，虚拟基地端口 22975")
+            case .failed(let error):
+                self?.failureReason = "基地代理启动失败 [32975]：\(error.localizedDescription)"
+                LaunchDiagnostics.log("[基地代理] 本地监听失败：" + error.localizedDescription)
+            case .waiting(let error):
+                LaunchDiagnostics.log("[基地代理] 等待中：" + error.localizedDescription)
+            default: break
+            }
+        }
         channelListener.stateUpdateHandler = { state in
             switch state {
             case .ready:
@@ -106,7 +161,12 @@ final class GameSocketBridge {
                                       self.activeChannelPort = port
                                       LaunchDiagnostics.log("[频道发现] 原始游戏服务器：" + host + ":" + String(port))
                                   },
-                                  onEnterGame: { [weak self] in self?.gameEnteredFlag = true }) { [weak self] in
+                                  onEnterGame: { [weak self] in self?.gameEnteredFlag = true },
+                                  onRoom: { [weak self] host, port in
+                                      self?.activeRoomHost = host
+                                      self?.activeRoomPort = port
+                                      LaunchDiagnostics.log("[基地发现] 服务器地址=" + host + ":" + String(port))
+                                  }) { [weak self] in
                 self?.sessions.removeValue(forKey: id)
             }
             self.sessions[id] = session
@@ -127,19 +187,47 @@ final class GameSocketBridge {
                                   remoteHost: host,
                                   remotePort: port,
                                   onChannel: { _, _ in },
-                                  onEnterGame: { [weak self] in self?.gameEnteredFlag = true }) { [weak self] in
+                                  onEnterGame: { [weak self] in self?.gameEnteredFlag = true },
+                                  onRoom: { [weak self] host, port in
+                                      self?.activeRoomHost = host
+                                      self?.activeRoomPort = port
+                                      LaunchDiagnostics.log("[基地发现] 服务器地址=" + host + ":" + String(port))
+                                  }) { [weak self] in
                 self?.sessions.removeValue(forKey: id)
             }
             self.sessions[id] = session
             session.start()
         }
+        roomListener.newConnectionHandler = { [weak self] webSocket in
+            guard let self else { webSocket.cancel(); return }
+            guard let host = self.activeRoomHost, let port = self.activeRoomPort else {
+                LaunchDiagnostics.log("[基地代理] 收到连接，但尚未取得有效的 GET_ROOM_ADDRES 地址")
+                webSocket.cancel()
+                return
+            }
+            self.acceptedCount += 1
+            let id = UUID()
+            let session = Session(webSocket: webSocket, queue: self.queue,
+                                  index: self.acceptedCount,
+                                  remoteHost: host, remotePort: port,
+                                  onChannel: { _, _ in },
+                                  onEnterGame: {},
+                                  onRoom: { _, _ in }) { [weak self] in
+                self?.sessions.removeValue(forKey: id)
+            }
+            self.sessions[id] = session
+            LaunchDiagnostics.log("[基地代理] 将基地连接转发至服务器 " + host + ":" + String(port))
+            session.start()
+        }
         listener.start(queue: queue)
         channelListener.start(queue: queue)
+        roomListener.start(queue: queue)
     }
 
     deinit {
         listener.cancel()
         channelListener.cancel()
+        roomListener.cancel()
         remoteProbe?.cancel()
         sessions.values.forEach { $0.stop() }
     }
@@ -191,16 +279,20 @@ final class GameSocketBridge {
         private var downstreamTotal=0
         private let onEnterGame: () -> Void
         private let onChannel: (String, UInt16) -> Void
+        private let onRoom: (String, UInt16) -> Void
         private let remoteHost: String
         private let remotePort: UInt16
 
         init(webSocket: NWConnection, queue: DispatchQueue, index: Int,
              remoteHost: String, remotePort: UInt16,
              onChannel: @escaping (String, UInt16) -> Void,
-             onEnterGame: @escaping () -> Void, onClose: @escaping () -> Void) {
+             onEnterGame: @escaping () -> Void,
+             onRoom: @escaping (String, UInt16) -> Void,
+             onClose: @escaping () -> Void) {
             self.remoteHost = remoteHost
             self.remotePort = remotePort
             self.onChannel = onChannel
+            self.onRoom = onRoom
             self.onEnterGame = onEnterGame
             self.index = index
             self.webSocket = webSocket
@@ -309,6 +401,30 @@ final class GameSocketBridge {
                 if cmd == 1001 && result == 0 {
                     LaunchDiagnostics.log("[选服阶段] 收到 CMD1001 成功响应，进入游戏状态")
                     onEnterGame()
+                }
+                // RoomController: 24-byte session followed by IPv4 (4), port (2).
+                // Keep session and packet length intact: only replace endpoint.
+                if cmd == 10002 && result == 0 {
+                    let address = cursor + 17 + 24
+                    if address + 6 <= cursor + packetSize {
+                        let octets = Array(bytes[address..<(address+4)])
+                        let port = (UInt16(bytes[address+4]) << 8) | UInt16(bytes[address+5])
+                        let host = octets.map { String($0) }.joined(separator: ".")
+                        if port > 0 && octets[0] != 0 && octets[0] != 127 && octets[0] < 224 {
+                            onRoom(host, port)
+                            let virtualOctets = GameSocketBridge.serverHost.split(separator: ".").compactMap { UInt8($0) }
+                            if virtualOctets.count == 4 {
+                                for i in 0..<4 { bytes[address+i] = virtualOctets[i] }
+                                bytes[address+4] = UInt8(GameSocketBridge.virtualRoomPort >> 8)
+                                bytes[address+5] = UInt8(GameSocketBridge.virtualRoomPort & 255)
+                                LaunchDiagnostics.log("[基地代理] GET_ROOM_ADDRES：已映射为虚拟 22975 端口，原目标=" + host + ":" + String(port))
+                            }
+                        } else {
+                            LaunchDiagnostics.log("[基地代理] GET_ROOM_ADDRES 返回无效目标，未改写")
+                        }
+                    } else {
+                        LaunchDiagnostics.log("[基地代理] GET_ROOM_ADDRES 数据长度不足")
+                    }
                 }
                 if cmd == 105 || cmd == 106 {
                     let countOffset=cursor+17+(cmd == 105 ? 8 : 0)

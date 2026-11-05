@@ -144,7 +144,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.04")
+                        Text("正式版 1.05")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -664,7 +664,8 @@ struct GameView: View {
                         .accessibilityLabel(toolsExpanded ? "收起游戏工具" : "展开游戏工具")
                         if toolsExpanded {
                             ScrollView(.vertical) {
-                              VStack(alignment: .leading, spacing: 3) {
+                              LazyVGrid(columns: [GridItem(.flexible(), spacing: 4),
+                                                  GridItem(.flexible(), spacing: 4)], spacing: 3) {
                                 gameTool("keyboard", "输入键盘") {
                                     sendControl("toggleKeyboard")
                                 }
@@ -689,7 +690,7 @@ struct GameView: View {
                                     fpsEnabled.toggle()
                                     sendControl("toggleFPS")
                                 }
-                                Divider().padding(.vertical, 3)
+                                // Compact two-column menu; no full-width divider.
                                 gameTool("arrow.clockwise", "刷新游戏") {
                                     collapseToolMenu()
                                     reloadGame()
@@ -703,8 +704,8 @@ struct GameView: View {
                             }
                               .padding(8)
                             }
-                            .frame(width: 168)
-                            .frame(maxHeight: max(145, lockedGeometry.size.height - 92))
+                            .frame(width: 214)
+                            .frame(maxHeight: max(110, min(194, lockedGeometry.size.height - 92)))
                             .background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 15))
                             .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
                         }
@@ -783,6 +784,7 @@ struct GameView: View {
                         return
                     }
                     if service.playURL(for: entry) != nil {
+                        if Task.isCancelled { service.leaveGame(); return }
                         server = service
                         LaunchDiagnostics.log("本地资源服务就绪：\(service.playURL(for: entry)?.absoluteString ?? "未知 URL")")
                         return
@@ -797,18 +799,23 @@ struct GameView: View {
                 LaunchDiagnostics.log("本地服务创建失败：" + error.localizedDescription)
             }
         }
-        .onDisappear { server = nil }
+        .onDisappear {
+            server?.leaveGame()
+            server = nil
+        }
     }
 
     private func gameTool(_ icon: String, _ label: String,
                           action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(label, systemImage: icon)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color(red: 0.13, green: 0.29, blue: 0.48))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 10)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
+                .frame(maxWidth: .infinity, minHeight: 42, alignment: .center)
+                .padding(.horizontal, 3)
+                .padding(.vertical, 3)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
