@@ -107,30 +107,6 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
     }
 }
 
-// Adjust the bundled fallback CJK font without moving the Flash stage.
-enum GameFontPreset: String, CaseIterable, Identifiable {
-    case original, lifted110, lifted170
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .original: return "原始"
-        case .lifted110: return "上移"
-        case .lifted170: return "再上移"
-        }
-    }
-    var resourceFilename: String {
-        switch self {
-        case .original: return "NotoSansCJKsc-Regular.otf"
-        case .lifted110: return "NotoSansCJKsc-Lift110.otf"
-        case .lifted170: return "NotoSansCJKsc-Lift170.otf"
-        }
-    }
-    static let defaultsKey = "shiguang.fontBaselinePreset"
-    static var saved: GameFontPreset {
-        GameFontPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .lifted110
-    }
-}
-
 struct LauncherView: View {
     @EnvironmentObject private var launcher: LauncherModel
     @State private var showingPicker = false
@@ -142,7 +118,6 @@ struct LauncherView: View {
     @State private var showingGame = false
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
     @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.unlimited.rawValue
-    @AppStorage(GameFontPreset.defaultsKey) private var fontPreset = GameFontPreset.lifted110.rawValue
     @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
@@ -185,7 +160,6 @@ struct LauncherView: View {
 
                     VStack(spacing: 12) {
                         qualityPicker
-                        fontPositionPicker
                         frameCapPicker
                         compatibilityPicker
                     }
@@ -495,31 +469,6 @@ struct LauncherView: View {
         }
         .padding(15)
         .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18))
-    }
-
-    private var fontPositionPicker: some View {
-        let current = GameFontPreset(rawValue: fontPreset) ?? .lifted110
-        return VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                Image(systemName: "textformat").foregroundStyle(blue)
-                Text("中文字体位置").font(.system(size: 16, weight: .bold)).foregroundStyle(ink)
-                Spacer()
-                Text(current.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(blue)
-            }
-            Picker("中文字体位置", selection: $fontPreset) {
-                ForEach(GameFontPreset.allCases) { item in
-                    Text(item.title).tag(item.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            Text("选择后重新进入游戏生效；仅影响后备字体，不移动游戏画布或触控坐标。")
-                .font(.system(size: 12)).foregroundStyle(subtleInk)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 19))
-        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
     }
 
     private var frameCapPicker: some View {

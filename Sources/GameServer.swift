@@ -739,7 +739,7 @@ final class GameServer {
         let qualityPreset = GameQualityPreset.saved
         let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
-        let selectedFontURL = "/ruffle/fonts/" + GameFontPreset.saved.resourceFilename
+        // One tested fallback font, vertically adjusted; no alternate copies.
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
             return String(String(data: data, encoding: .utf8)!.dropFirst().dropLast())
@@ -748,7 +748,6 @@ final class GameServer {
         <!doctype html><html lang="zh-CN"><head>
         <meta charset="utf-8"><meta name="shiguang-quality" content="\(selectedQuality)">
         <meta name="shiguang-max-fps" content="\(selectedFrameCap)">
-        <meta name="shiguang-font-url" content="\(selectedFontURL)">
         <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
         <style>
           :root {--game-w:960px;--game-h:560px}
@@ -763,7 +762,7 @@ final class GameServer {
         <script src="/ruffle/frame-cap.js"></script>
         <script>
           var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
-          var configuredFontURL=document.querySelector('meta[name="shiguang-font-url"]').content;
+          var configuredFontURL="/ruffle/fonts/NotoSansCJKsc-Regular.otf";
           window.RufflePlayer=window.RufflePlayer||{};
           window.RufflePlayer.config={
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
@@ -1079,7 +1078,7 @@ final class GameServer {
             options.quality=configuredQuality;
             try{
               var chk=await fetch(configuredFontURL,{method:"HEAD",cache:"no-store"});
-              report("中文字体预检：HTTP "+chk.status+"，Noto Sans CJK SC；档位="+configuredFontURL);
+              report("中文字体预检：HTTP "+chk.status+"，正式单字体 Noto Sans CJK SC");
             }catch(fontError){
               report("中文字体预检失败："+String(fontError).slice(0,140));
             }

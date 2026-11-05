@@ -12,6 +12,6 @@
   "old_archive_comparison_available": false,
   "based_on_test_branch": "test/1.2-nono-precision-safe-start-b118",
   "release_version": "1.0.5",
-  "build_number": 122,
+  "build_number": 123,
   "runtime_verification": "not tested on iOS hardware"
 }

@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - main
-      - "release/shiguang-1.0.5-b122"
+      - "release/shiguang-1.0.5-b123-single-font"
 
 jobs:
   static-check:
@@ -33,11 +33,11 @@ jobs:
           manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
           assert 'Text("正式版 1.05")' in swift
           assert 'MARKETING_VERSION = 1.0.5;' in project
-          assert 'CURRENT_PROJECT_VERSION = 122;' in project
+          assert 'CURRENT_PROJECT_VERSION = 123;' in project
           assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
           assert 'smartbeta' not in project
           assert manifest['based_on_test_branch']=='test/1.2-nono-precision-safe-start-b118'
-          assert manifest['release_version']=='1.0.5' and manifest['build_number']==122
+          assert manifest['release_version']=='1.0.5' and manifest['build_number']==123
           assert manifest['resource_version']=='0.18.0' and manifest['core_revision']=='2026110304'
           assert manifest['source_analysis_only'] and not manifest['game_assets_embedded']
           assert manifest['client_sha256'] in Path('Patches/pvm-compat.js').read_text()
@@ -55,8 +55,8 @@ jobs:
           proxy_options=source.split('options.socketProxy=[',1)[1].split('];',1)[0]
           assert 'port:22975' in proxy_options and '32975' in proxy_options
           assert 'GameProtocolFramer' in bridge and 'downstreamFramer.consume' in bridge
-          assert 'GameFontPreset' in swift and 'fontPositionPicker' in swift
-          assert 'configuredFontURL' in source
+          assert 'GameFontPreset' not in swift and 'fontPositionPicker' not in swift
+          assert 'configuredFontURL' in source and 'NotoSansCJKsc-Regular.otf' in source
           assert 'MobilePatchManager' in model and 'func importMobilePatch(_ url: URL)' in model
           assert 'func clearMobilePatch()' in model
           assert 'mobilePatchRoot' in source and 'mobilePatchPanel' in swift
@@ -158,13 +158,17 @@ jobs:
           python3 -m pip install "fonttools==4.60.1"
           python3 Patches/adjust-cjk-baseline.py Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
           python3 - <<'PY_VERIFY_FONT'
+          from pathlib import Path
           from fontTools.ttLib import TTFont
-          for name,expected in [('Regular',0),('Lift110',0.110),('Lift170',0.170)]:
-              font=TTFont('Resources/Ruffle/fonts/NotoSansCJKsc-'+name+'.otf')
-              value=float(font['CFF '].cff.topDictIndex[0].FontMatrix[5])
-              assert abs(value-expected)<0.000001, (name,value)
-              font.close()
-          print('Verified three CJK fallback baselines')
+          root=Path('Resources/Ruffle/fonts')
+          fonts=list(root.glob('*.otf'))
+          assert len(fonts)==1, f'Expected exactly one packaged fallback font, got {fonts}'
+          assert fonts[0].name=='NotoSansCJKsc-Regular.otf'
+          font=TTFont(str(fonts[0]))
+          offset=float(font['CFF '].cff.topDictIndex[0].FontMatrix[5])
+          font.close()
+          assert abs(offset-0.110)<0.000001, f'Unexpected font baseline: {offset}'
+          print('Verified ONE fallback CJK font with +110/1000 em offset')
           PY_VERIFY_FONT
       - name: Validate Canvas touch controls module
         shell: bash
@@ -289,22 +293,23 @@ jobs:
       - name: Check formal 1.05 release metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.5'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '122'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '123'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.05 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.05-b122/ --output=/tmp/ShiguangLauncher-v1.05-b122-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.05-b122-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.05-b122-source.zip | grep -Fx 'ShiguangLauncher-v1.05-b122/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.05-b123-singlefont/ --output=/tmp/ShiguangLauncher-v1.05-b123-singlefont-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.05-b123-singlefont-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.05-b123-singlefont-source.zip | grep -Fx 'ShiguangLauncher-v1.05-b123-singlefont/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.05-b122-ipa
+          name: ShiguangLauncher-v1.05-b123-singlefont-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.05-b122-source
-          path: /tmp/ShiguangLauncher-v1.05-b122-source.zip
+          name: ShiguangLauncher-v1.05-b123-singlefont-source
+          path: /tmp/ShiguangLauncher-v1.05-b123-singlefont-source.zip
           if-no-files-found: error
