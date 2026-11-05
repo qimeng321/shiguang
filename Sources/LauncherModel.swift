@@ -348,7 +348,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.06（Build 124 · 独立游戏增量更新）启动；基地代理、单中文字体及手机补丁保留")
+        LaunchDiagnostics.log("启动器 正式版 1.06（Build 125 · 选中高亮及 ZIP/SROM 增量导入）启动；基地代理、单中文字体及手机补丁保留")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {
@@ -553,15 +553,15 @@ final class LauncherModel: ObservableObject {
     }
 
 
-    // Step 1: preview an incoming game delta ZIP; do not modify Game.
+    // Step 1: preview a ZIP-structured .zip/.srom game delta; do not modify Game.
     func prepareIncrementalUpdate(_ source: URL) {
         guard !deltaBusy && !isImporting && !isClearing && !patchBusy else { return }
         guard isInstalledValidated, let root = gameRoot, deltaRecoveryProblem == nil else {
             deltaError = "请先安装并校验完整资源包，或解决未完成更新的回滚问题。"
             return
         }
-        guard source.pathExtension.lowercased() == "zip" else {
-            deltaError = "请选择 .zip 游戏增量更新包，不要选 .srom 或 .sgpatch。"
+        guard ["zip", "srom"].contains(source.pathExtension.lowercased()) else {
+            deltaError = "请选择 .zip 或 .srom 游戏增量包；手机适配补丁请使用下方独立入口。"
             return
         }
         cancelPreparedIncrementalUpdate()

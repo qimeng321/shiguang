@@ -378,12 +378,12 @@ struct LauncherView: View {
         }
         .sheet(isPresented: $showingDeltaLocalFiles) {
             NavigationStack {
-                let files = launcher.localPackages.filter { $0.pathExtension.lowercased() == "zip" }
+                let files = launcher.localPackages.filter { ["zip", "srom"].contains($0.pathExtension.lowercased()) }
                 Group {
                     if files.isEmpty {
                         VStack(spacing: 12) {
-                            Text("Import 文件夹里尚未找到 ZIP 增量包")
-                            Text("请先在“文件”App 将增量 ZIP 放入拾光号 → Import 文件夹。")
+                            Text("Import 文件夹里尚未找到 ZIP / SROM 增量包")
+                            Text("请先在“文件”App 将 .zip 或 .srom 增量包放入拾光号 → Import 文件夹。")
                                 .font(.subheadline).foregroundStyle(.secondary)
                             Button("刷新") { launcher.refreshLocalPackages() }
                         }
@@ -397,7 +397,7 @@ struct LauncherView: View {
                         }
                     }
                 }
-                .navigationTitle("选择增量 ZIP")
+                .navigationTitle("选择增量包")
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button("关闭") { showingDeltaLocalFiles = false }
@@ -493,11 +493,8 @@ struct LauncherView: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(ink)
                 Spacer()
-                Text("1.06 新功能")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(green)
             }
-            Text("无需重新导入几 GB 的完整游戏包；只合并更新 ZIP 中的资源。")
+            Text("无需重新导入几 GB 的完整游戏包；支持 .zip / .srom 增量包，仅合并变更资源。")
                 .font(.system(size: 12)).foregroundStyle(subtleInk)
                 .fixedSize(horizontal: false, vertical: true)
             Text(launcher.deltaStatus)
@@ -519,7 +516,7 @@ struct LauncherView: View {
                 Button {
                     showingDeltaPicker = true
                 } label: {
-                    Label("选择增量 ZIP", systemImage: "square.and.arrow.down")
+                    Label("选择增量包", systemImage: "square.and.arrow.down")
                         .frame(maxWidth: .infinity).padding(.vertical, 11)
                 }
                 .buttonStyle(.borderedProminent)
@@ -552,9 +549,6 @@ struct LauncherView: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(ink)
                 Spacer()
-                Text("测试功能")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(subtleInk)
             }
             Text(launcher.patchSummary)
                 .font(.system(size: 12, weight: .semibold))
@@ -611,13 +605,29 @@ struct LauncherView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(blue)
             }
-            Picker("最高帧率", selection: $frameCapPreset) {
+            HStack(spacing: 5) {
                 ForEach(GameFrameCapPreset.allCases) { option in
-                    Text(option.title).tag(option.rawValue)
+                    let isSelected = frameCapPreset == option.rawValue
+                    Button {
+                        frameCapPreset = option.rawValue
+                    } label: {
+                        Text(option.title)
+                            .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(isSelected ? Color.white : ink)
+                            .frame(maxWidth: .infinity, minHeight: 42)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(isSelected ? blue : Color.white)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("最高帧率：" + option.title)
+                    .accessibilityValue(isSelected ? "已选择" : "未选择")
                 }
             }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("最高帧率限制")
+            .padding(5)
+            .background(Color(red: 0.91, green: 0.93, blue: 0.96),
+                        in: RoundedRectangle(cornerRadius: 13, style: .continuous))
             Text(current.description)
                 .font(.system(size: 12))
                 .foregroundStyle(subtleInk)
@@ -666,13 +676,29 @@ struct LauncherView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(blue)
             }
-            Picker("游戏画质", selection: $qualityPreset) {
+            HStack(spacing: 5) {
                 ForEach(GameQualityPreset.allCases) { option in
-                    Text(option.title).tag(option.rawValue)
+                    let isSelected = qualityPreset == option.rawValue
+                    Button {
+                        qualityPreset = option.rawValue
+                    } label: {
+                        Text(option.title)
+                            .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                            .foregroundStyle(isSelected ? Color.white : ink)
+                            .frame(maxWidth: .infinity, minHeight: 42)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(isSelected ? blue : Color.white)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("游戏画质：" + option.title)
+                    .accessibilityValue(isSelected ? "已选择" : "未选择")
                 }
             }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("游戏画质档位")
+            .padding(5)
+            .background(Color(red: 0.91, green: 0.93, blue: 0.96),
+                        in: RoundedRectangle(cornerRadius: 13, style: .continuous))
             Text(current.detail)
                 .font(.system(size: 12))
                 .foregroundStyle(subtleInk)

@@ -33,7 +33,7 @@ jobs:
           manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
           assert 'Text("正式版 1.06")' in swift
           assert 'MARKETING_VERSION = 1.0.6;' in project
-          assert 'CURRENT_PROJECT_VERSION = 124;' in project
+          assert 'CURRENT_PROJECT_VERSION = 125;' in project
           assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
           assert 'smartbeta' not in project
           assert manifest['based_on_test_branch']=='test/1.2-nono-precision-safe-start-b118'
@@ -67,6 +67,12 @@ jobs:
           assert 'prepareIncrementalUpdate(_ source: URL)' in model
           assert 'installPreparedIncrementalUpdate()' in model
           assert 'incrementalUpdatePanel' in swift and 'showingDeltaPicker' in swift
+          assert '["zip", "srom"].contains(source.pathExtension.lowercased())' in model
+          assert '["zip", "srom"].contains(url.pathExtension.lowercased())' in delta
+          assert 'case .fullGamePackage' in delta
+          assert 'frameCapPreset = option.rawValue' in swift and 'qualityPreset = option.rawValue' in swift
+          assert swift.count('.fill(isSelected ? blue : Color.white)') >= 2
+          assert 'Text("1.06 新功能")' not in swift and 'Text("测试功能")' not in swift
           assert 'GameIncrementalUpdater.swift' in project
           assert 'MobilePatchManager' in model and 'func importMobilePatch(_ url: URL)' in model
           assert 'func clearMobilePatch()' in model
@@ -221,7 +227,7 @@ jobs:
           # Quality choices are selected on home screen, stored in UserDefaults,
           # and read server-side before generating a new Ruffle HTML page.
           assert '@AppStorage(GameQualityPreset.defaultsKey)' in swift
-          assert 'Picker("游戏画质", selection: $qualityPreset)' in swift
+          assert 'ForEach(GameQualityPreset.allCases)' in swift and 'qualityPreset = option.rawValue' in swift
           assert 'GameQualityPreset.saved' in html
           assert 'options.quality=configuredQuality' in html
           assert 'highDpi' not in html  # Not a documented Ruffle Web option
@@ -232,7 +238,7 @@ jobs:
           assert 'shiguang-quality' in html
           assert 'case saving, balanced, ultra' in swift
           assert '@AppStorage(GameFrameCapPreset.defaultsKey)' in swift
-          assert 'Picker("最高帧率", selection: $frameCapPreset)' in swift
+          assert 'ForEach(GameFrameCapPreset.allCases)' in swift and 'frameCapPreset = option.rawValue' in swift
           assert 'GameFrameCapPreset.saved' in html
           assert 'shiguang-max-fps' in html
           assert 'window.ShiguangFrameCap' in html
@@ -308,7 +314,7 @@ jobs:
       - name: Check formal 1.06 release metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.6'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '124'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '125'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
@@ -316,16 +322,16 @@ jobs:
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.06 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.06-b124-delta/ --output=/tmp/ShiguangLauncher-v1.06-b124-delta-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.06-b124-delta-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.06-b124-delta-source.zip | grep -Fx 'ShiguangLauncher-v1.06-b124-delta/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.06-b125-ui-delta-srom/ --output=/tmp/ShiguangLauncher-v1.06-b125-ui-delta-srom-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.06-b125-ui-delta-srom-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.06-b125-ui-delta-srom-source.zip | grep -Fx 'ShiguangLauncher-v1.06-b125-ui-delta-srom/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.06-b124-delta-ipa
+          name: ShiguangLauncher-v1.06-b125-ui-delta-srom-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.06-b124-delta-source
-          path: /tmp/ShiguangLauncher-v1.06-b124-delta-source.zip
+          name: ShiguangLauncher-v1.06-b125-ui-delta-srom-source
+          path: /tmp/ShiguangLauncher-v1.06-b125-ui-delta-srom-source.zip
           if-no-files-found: error

@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 import ZIPFoundation
 
-/// Updates only game files listed in a ZIP, with an on-disk rollback journal.
+/// Updates game files listed in ZIP-structured .zip/.srom archives, with an on-disk rollback journal.
 /// The existing multi-GB Game directory is never copied, replaced or deleted.
 struct GameIncrementalPreview {
     let currentRevision: String
@@ -18,16 +18,16 @@ enum GameIncrementalError: LocalizedError {
     case missingGame, badExtension, invalidArchive, unsafeFile(String)
     case unsupportedSize, missingCore, invalidRevision, upToDate(String)
     case downgrade(String, String), invalidGameFile(String), noSpace
-    case busyOrRecovery(String), rollbackFailed(String)
+    case busyOrRecovery(String), rollbackFailed(String), fullGamePackage
 
     var errorDescription: String? {
         switch self {
         case .missingGame: return "请先导入完整的游戏资源包，再使用增量更新。"
-        case .badExtension: return "请选择 ZIP 格式的游戏资源增量包。"
-        case .invalidArchive: return "增量包 ZIP 无法读取、解压或 CRC32 校验失败。"
+        case .badExtension: return "增量包仅支持 .zip 或 .srom 扩展名，且文件内容必须是 ZIP 格式。"
+        case .invalidArchive: return "增量包不是有效 ZIP 压缩内容，或解压、CRC32 校验失败；非 ZIP 格式的 .srom 暂不支持。"
         case .unsafeFile(let path): return "增量包包含不安全或不支持的文件：\(String(path.prefix(100)))"
-        case .unsupportedSize: return "增量包超出安全限制（最多 2000 个文件、300 MB 解压体积）。"
-        case .missingCore: return "这不是可识别的游戏增量包：缺少 config/dll.xml 或 dll/NieoCore.swf。"
+        case .unsupportedSize: return "增量包超出安全限制（最多 2000 个文件、300 MB 解压体积）；完整游戏包请通过“导入美化包”安装。"
+        case .missingCore: return "这不是可识别的游戏增量包：缺少 config/dll.xml 或 dll/NieoCore.swf；完整包请走“导入美化包”。"
         case .invalidRevision: return "无法从增量包识别有效的核心修订号。"
         case .upToDate(let revision): return "当前资源已是 \(revision)，无需重复更新。"
         case .downgrade(let from, let to): return "更新包版本 \(to) 低于现有版本 \(from)，已阻止覆盖。"
@@ -35,6 +35,7 @@ enum GameIncrementalError: LocalizedError {
         case .noSpace: return "手机可用空间不足以暂存增量文件和回滚备份。请释放存储空间后重试。"
         case .busyOrRecovery(let details): return "存在尚未完成的增量更新：\(details)"
         case .rollbackFailed(let details): return "无法完整恢复部分资源：\(details)。请保留增量备份并联系开发者。"
+        case .fullGamePackage: return "检测到完整游戏包入口（如 Client.swf / index.html）；请使用“导入美化包”，增量更新不会覆盖完整游戏包。"
         }
     }
 }
@@ -252,10 +253,24 @@ enum GameIncrementalUpdater {
 
     private static func checkArchive(_ url: URL) throws -> CheckedArchive {
         let fm = FileManager.default
-        guard url.pathExtension.lowercased() == "zip" else { throw GameIncrementalError.badExtension }
+        guard ["zip", "srom"].contains(url.pathExtension.lowercased()) else {
+            throw GameIncrementalError.badExtension
+        }
         let stats = try fm.attributesOfItem(atPath: url.path)
         let archiveBytes = (stats[.size] as? NSNumber)?.uint64Value ?? 0
         guard archiveBytes > 128 && archiveBytes <= maxArchiveBytes else { throw GameIncrementalError.unsupportedSize }
+        // .srom is an extension, not a compression format: accept ZIP-backed
+        // .srom only. Non-ZIP formats require an explicit decoder, never a guess.
+        guard let signatureHandle = try? FileHandle(forReadingFrom: url) else {
+            throw GameIncrementalError.invalidArchive
+        }
+        let signature = (try? signatureHandle.read(upToCount: 4)) ?? Data()
+        try? signatureHandle.close()
+        guard signature.starts(with: [0x50, 0x4B, 0x03, 0x04]) ||
+              signature.starts(with: [0x50, 0x4B, 0x05, 0x06]) ||
+              signature.starts(with: [0x50, 0x4B, 0x07, 0x08]) else {
+            throw GameIncrementalError.invalidArchive
+        }
         guard let archive = try? Archive(url: url, accessMode: .read) else {
             throw GameIncrementalError.invalidArchive
         }
@@ -265,6 +280,12 @@ enum GameIncrementalUpdater {
         var totalBytes: UInt64 = 0
         for entry in archive {
             let path = entry.path
+            // Never merge a full package into Game from the incremental entry.
+            // These files belong to the full .srom importer, not the delta updater.
+            if path == "Client.swf" || path == "index.html" ||
+               path.hasPrefix("assets/") || path.hasPrefix("login/") {
+                throw GameIncrementalError.fullGamePackage
+            }
             if entry.type == .directory {
                 let prefix = path.hasSuffix("/") ? String(path.dropLast()) : path
                 guard safeComponents(prefix), ["resource", "module", "dll", "config"].contains(String(prefix.split(separator: "/").first ?? "")) else {
