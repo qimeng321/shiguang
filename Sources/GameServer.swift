@@ -1080,9 +1080,12 @@ final class GameServer {
             }catch(fontError){
               report("中文字体预检失败："+String(fontError).slice(0,140));
             }
+            // Per-player options override the global Ruffle socketProxy.
+            // Base (roomSocket) needs the virtual port 22975 route too.
             options.socketProxy=[
               {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
               {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
+              {host:"103.91.210.16",port:22975,proxyUrl:"ws://127.0.0.1:32975"},
               {host:"127.0.0.1",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
               {host:"localhost",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
             ];
