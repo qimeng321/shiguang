@@ -8,7 +8,7 @@ on:
   push:
     branches:
       - main
-      - "release/shiguang-1.0.5-b123-single-font"
+      - "release/shiguang-1.0.6-b124-delta"
 
 jobs:
   static-check:
@@ -31,13 +31,13 @@ jobs:
           mouse=Path('Patches/touch-controls.js').read_text()
           project=Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
           manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
-          assert 'Text("正式版 1.05")' in swift
-          assert 'MARKETING_VERSION = 1.0.5;' in project
-          assert 'CURRENT_PROJECT_VERSION = 123;' in project
+          assert 'Text("正式版 1.06")' in swift
+          assert 'MARKETING_VERSION = 1.0.6;' in project
+          assert 'CURRENT_PROJECT_VERSION = 124;' in project
           assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
           assert 'smartbeta' not in project
           assert manifest['based_on_test_branch']=='test/1.2-nono-precision-safe-start-b118'
-          assert manifest['release_version']=='1.0.5' and manifest['build_number']==123
+          assert manifest['release_version']=='1.0.6' and manifest['build_number']==124
           assert manifest['resource_version']=='0.18.0' and manifest['core_revision']=='2026110304'
           assert manifest['source_analysis_only'] and not manifest['game_assets_embedded']
           assert manifest['client_sha256'] in Path('Patches/pvm-compat.js').read_text()
@@ -57,6 +57,17 @@ jobs:
           assert 'GameProtocolFramer' in bridge and 'downstreamFramer.consume' in bridge
           assert 'GameFontPreset' not in swift and 'fontPositionPicker' not in swift
           assert 'configuredFontURL' in source and 'NotoSansCJKsc-Regular.otf' in source
+          delta=Path('Sources/GameIncrementalUpdater.swift').read_text()
+          assert 'import ZIPFoundation' in delta and 'import CryptoKit' in delta
+          assert 'func recoverIfNeeded(gameRoot:' in delta
+          assert 'func inspect(archiveURL:' in delta and 'func install(archiveURL:' in delta
+          assert 'skipCRC32: false' in delta and 'SHA256()' in delta
+          assert 'backupRoot' in delta and 'journal.committed = true' in delta
+          assert 'GameIncrementalUpdater.recoverIfNeeded' in model
+          assert 'prepareIncrementalUpdate(_ source: URL)' in model
+          assert 'installPreparedIncrementalUpdate()' in model
+          assert 'incrementalUpdatePanel' in swift and 'showingDeltaPicker' in swift
+          assert 'GameIncrementalUpdater.swift' in project
           assert 'MobilePatchManager' in model and 'func importMobilePatch(_ url: URL)' in model
           assert 'func clearMobilePatch()' in model
           assert 'mobilePatchRoot' in source and 'mobilePatchPanel' in swift
@@ -272,6 +283,10 @@ jobs:
         run: |
           swiftc Sources/GameProtocolFramer.swift Patches/test-game-protocol-framer.swift -o "$RUNNER_TEMP/test-framer"
           "$RUNNER_TEMP/test-framer"
+      - name: Verify incremental update ZIP fixture and source syntax
+        run: |
+          python3 Patches/test-incremental-archive.py
+          swiftc -frontend -parse Sources/GameIncrementalUpdater.swift Sources/LauncherModel.swift Sources/ShiguangLauncherApp.swift
       - name: Build for iPhone and iPad
         run: |
           xcodebuild \
@@ -290,26 +305,27 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check formal 1.05 release metadata
+      - name: Check formal 1.06 release metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.5'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '123'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.6'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '124'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.05 project source ZIP
+      - name: Package formal 1.06 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.05-b123-singlefont/ --output=/tmp/ShiguangLauncher-v1.05-b123-singlefont-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.05-b123-singlefont-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.05-b123-singlefont-source.zip | grep -Fx 'ShiguangLauncher-v1.05-b123-singlefont/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.06-b124-delta/ --output=/tmp/ShiguangLauncher-v1.06-b124-delta-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.06-b124-delta-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.06-b124-delta-source.zip | grep -Fx 'ShiguangLauncher-v1.06-b124-delta/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.05-b123-singlefont-ipa
+          name: ShiguangLauncher-v1.06-b124-delta-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.05-b123-singlefont-source
-          path: /tmp/ShiguangLauncher-v1.05-b123-singlefont-source.zip
+          name: ShiguangLauncher-v1.06-b124-delta-source
+          path: /tmp/ShiguangLauncher-v1.06-b124-delta-source.zip
           if-no-files-found: error
