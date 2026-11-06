@@ -348,7 +348,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.06（Build 125 · 选中高亮及 ZIP/SROM 增量导入）启动；基地代理、单中文字体及手机补丁保留")
+        LaunchDiagnostics.log("启动器 拾光号专用版（Build 126 · iPhone 15 Pro WebContent 稳定性试验）启动；基地代理、单中文字体及手机补丁保留")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {

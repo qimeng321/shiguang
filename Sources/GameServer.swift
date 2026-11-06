@@ -116,9 +116,7 @@ final class GameServer {
         } else {
             LaunchDiagnostics.log("[手机补丁] 无启用覆盖层或补丁版本与当前游戏不一致")
         }
-        self.compatibilityModeEnabled = UserDefaults.standard.bool(
-            forKey: "shiguang.compatibilityMode103"
-        )
+        self.compatibilityModeEnabled = (UserDefaults.standard.object(forKey: "shiguang.compatibilityMode103") as? Bool) ?? true
         self.bridge = packagedWebApp ? try GameSocketBridge.shared() : nil
         guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path) else {
@@ -739,6 +737,7 @@ final class GameServer {
         let qualityPreset = GameQualityPreset.saved
         let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
+        let specialRenderer = SpecialRendererPreset.saved.rawValue
         // One tested fallback font, vertically adjusted; no alternate copies.
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
@@ -748,6 +747,7 @@ final class GameServer {
         <!doctype html><html lang="zh-CN"><head>
         <meta charset="utf-8"><meta name="shiguang-quality" content="\(selectedQuality)">
         <meta name="shiguang-max-fps" content="\(selectedFrameCap)">
+        <meta name="shiguang-renderer" content="\(specialRenderer)">
         <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
         <style>
           :root {--game-w:960px;--game-h:560px}
@@ -762,12 +762,14 @@ final class GameServer {
         <script src="/ruffle/frame-cap.js"></script>
         <script>
           var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
+          var configuredRenderer=document.querySelector('meta[name="shiguang-renderer"]').content;
           var configuredFontURL="/ruffle/fonts/NotoSansCJKsc-Regular.otf";
           window.RufflePlayer=window.RufflePlayer||{};
           window.RufflePlayer.config={
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
             scale:"showAll",forceScale:true,letterbox:"on",salign:"",forceAlign:true,
             quality:configuredQuality,
+            preferredRenderer:configuredRenderer==="automatic"?null:configuredRenderer,
             allowScriptAccess:true,publicPath:"/ruffle/",
             fontSources:[configuredFontURL],
             defaultFonts:{
@@ -1076,6 +1078,7 @@ final class GameServer {
               japaneseMincho:["Noto Sans CJK SC"]
             };
             options.quality=configuredQuality;
+            if(configuredRenderer!=="automatic")options.preferredRenderer=configuredRenderer;
             try{
               var chk=await fetch(configuredFontURL,{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，正式单字体 Noto Sans CJK SC");
@@ -1095,7 +1098,7 @@ final class GameServer {
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
             report("画质选择：quality="+configuredQuality+"；兼容模式="+(configuredQuality==="low"?"开启":"关闭")+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
-              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+              +"；渲染偏好="+configuredRenderer+"（可能自动回退）；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();

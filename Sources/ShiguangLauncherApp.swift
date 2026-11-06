@@ -72,7 +72,7 @@ enum GameQualityPreset: String, CaseIterable, Identifiable {
     }
     static let defaultsKey = "shiguang.qualityPreset"
     static var saved: GameQualityPreset {
-        GameQualityPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .balanced
+        GameQualityPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .saving
     }
 }
 
@@ -103,7 +103,30 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
     }
     static let defaultsKey = "shiguang.maxFrameRate"
     static var saved: GameFrameCapPreset {
-        GameFrameCapPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .unlimited
+        GameFrameCapPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .fps30
+    }
+}
+
+enum SpecialRendererPreset: String, CaseIterable, Identifiable {
+    case automatic, webgl, canvas
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .automatic: return "自动 GPU"
+        case .webgl: return "WebGL 对照"
+        case .canvas: return "Canvas 兜底"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .automatic: return "默认自动 GPU。先按此设置打开背包测试稳定性。"
+        case .webgl: return "旧版强制 WebGL 时曾卡在地图；仅用于对照测试，异常时切回自动。"
+        case .canvas: return "基础软件渲染对照；可能较卡，部分 Flash 效果可能不完整。"
+        }
+    }
+    static let defaultsKey = "shiguang.special.renderer"
+    static var saved: SpecialRendererPreset {
+        SpecialRendererPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .automatic
     }
 }
 
@@ -118,9 +141,10 @@ struct LauncherView: View {
     @State private var showingDeltaLocalFiles = false
     @State private var showingPatchClearConfirmation = false
     @State private var showingGame = false
-    @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
-    @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.unlimited.rawValue
-    @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
+    @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.saving.rawValue
+    @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.fps30.rawValue
+    @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = true
+    @AppStorage(SpecialRendererPreset.defaultsKey) private var rendererChoice = SpecialRendererPreset.automatic.rawValue
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -146,7 +170,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.06")
+                        Text("专用版 · 15 Pro")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -155,7 +179,7 @@ struct LauncherView: View {
                     }
                     .padding(.top, 20)
 
-                    Text("轻装启程 · 重返星际")
+                    Text("iPhone 15 Pro 稳定性对照 · 独立安装")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(subtleInk)
                         .padding(.top, 7)
@@ -163,6 +187,7 @@ struct LauncherView: View {
                     VStack(spacing: 12) {
                         qualityPicker
                         frameCapPicker
+                        specialRendererPicker
                         compatibilityPicker
                     }
                     .padding(.top, 23)
@@ -643,6 +668,46 @@ struct LauncherView: View {
         .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
     }
 
+    private var specialRendererPicker: some View {
+        let selected = SpecialRendererPreset(rawValue: rendererChoice) ?? .automatic
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "cpu").foregroundStyle(blue)
+                Text("15 Pro 渲染对照").font(.system(size: 16, weight: .bold)).foregroundStyle(ink)
+                Spacer()
+                Text("专用").font(.system(size: 11, weight: .semibold)).foregroundStyle(blue)
+            }
+            HStack(spacing: 5) {
+                ForEach(SpecialRendererPreset.allCases) { option in
+                    let selectedItem = rendererChoice == option.rawValue
+                    Button { rendererChoice = option.rawValue } label: {
+                        Text(option.title)
+                            .font(.system(size: 12, weight: selectedItem ? .semibold : .medium))
+                            .foregroundStyle(selectedItem ? Color.white : ink)
+                            .lineLimit(1).minimumScaleFactor(0.77)
+                            .frame(maxWidth: .infinity, minHeight: 42)
+                            .background(RoundedRectangle(cornerRadius: 10)
+                                .fill(selectedItem ? blue : Color.white))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("渲染后端：" + option.title)
+                    .accessibilityValue(selectedItem ? "已选择" : "未选择")
+                }
+            }
+            .padding(5)
+            .background(Color(red: 0.91, green: 0.93, blue: 0.96),
+                        in: RoundedRectangle(cornerRadius: 13))
+            Text(selected.detail).font(.system(size: 12)).foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("切换后重新进入游戏生效 · 不改动原始游戏资源")
+                .font(.system(size: 11)).foregroundStyle(subtleInk)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 19))
+        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
+    }
+
     private var compatibilityPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle(isOn: $compatibilityMode) {
@@ -913,7 +978,10 @@ struct GameView: View {
             Text("仅清理本应用 WebKit 的网页磁盘及内存缓存，不删除美化包、已安装游戏资源、账号数据或保存的 diagnostics.txt。")
         }
         .task {
+            let device = ProcessInfo.processInfo
             LaunchDiagnostics.log("进入游戏：\(entry)")
+            LaunchDiagnostics.log("[15Pro专用版] 系统=\(device.operatingSystemVersionString)；物理内存=\(device.physicalMemory / (1024 * 1024))MiB；省电=\(device.isLowPowerModeEnabled)；热状态=\(device.thermalState)；渲染偏好=\(SpecialRendererPreset.saved.rawValue)；画质=\(GameQualityPreset.saved.rawValue)；帧上限=\(GameFrameCapPreset.saved.fpsLimit)")
+            LaunchDiagnostics.log("[15Pro专用版] 证书内存权限未由源码擅自开启；需要在重新签名后检查真实 Entitlements")
             do {
                 let actualSWF = root.appendingPathComponent(entry)
                 guard FileManager.default.fileExists(atPath: actualSWF.path) else {
@@ -950,6 +1018,9 @@ struct GameView: View {
                 errorText = "本地服务创建失败：\(error.localizedDescription)；请检查 Network 框架监听器参数。"
                 LaunchDiagnostics.log("本地服务创建失败：" + error.localizedDescription)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            LaunchDiagnostics.log("[15Pro专用版] 宿主 App 收到低内存警告；WebContent 进程内存另行管理")
         }
         .onDisappear {
             server?.leaveGame()
@@ -1220,6 +1291,7 @@ struct GameWebView: UIViewRepresentable {
         var lastControlGeneration = 0
         var lastDelayedTapEnabled = false
         private var navigationCount = 0
+        private let createdAt = ProcessInfo.processInfo.systemUptime
         let onStatus: (String) -> Void
         let onError: (String) -> Void
         init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
@@ -1247,6 +1319,9 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            let device = ProcessInfo.processInfo
+            let lifetime = Int(max(0, device.systemUptime - createdAt))
+            LaunchDiagnostics.log("[15Pro专用版/WebContent终止] 运行秒数=\(lifetime)；省电=\(device.isLowPowerModeEnabled)；热状态=\(device.thermalState)；后端偏好=\(SpecialRendererPreset.saved.rawValue)；画质=\(GameQualityPreset.saved.rawValue)；帧上限=\(GameFrameCapPreset.saved.fpsLimit)")
             LaunchDiagnostics.log("[严重诊断] WebKit 内容进程终止，已保留资源与诊断日志；需要手动刷新")
             onError("游戏网页进程已终止，可能存在内存压力或渲染异常。请点「重新加载游戏」重试，并导出 diagnostics.txt 排查。")
         }
