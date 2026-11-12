@@ -146,7 +146,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.06")
+                        Text("正式版 1.07")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -1139,11 +1139,38 @@ struct GameWebView: UIViewRepresentable {
               window.addEventListener('DOMContentLoaded', function () {
                 status('HTML 已加载，等待游戏脚本与 Flash…');
                 if (window.location.pathname === '/') {
-                  ['/assets/index.js', '/assets/nieo_wasm_core_bg.wasm', '/Client.swf', '/ruffle/ruffle.js', '/config/doorConfig.xml', '/resource/main_resource.swf', '/config/ServerR.xml', '/login/Login.swf', '/version.swf'].forEach(function (path) {
-                    fetch(path, { method: 'HEAD', cache: 'no-store' })
-                      .then(function (response) { report('资源检测：' + path + ' → HTTP ' + response.status); })
-                      .catch(function (error) { fail('资源请求失败：' + path + '；' + String(error)); });
-                  });
+                  var resourcePaths = ['/assets/index.js', '/Client.swf', '/ruffle/ruffle.js', '/config/doorConfig.xml', '/config/dll.xml', '/resource/main_resource.swf', '/config/ServerR.xml', '/login/Login.swf', '/version.swf'];
+                  function checkResourcePaths() {
+                    resourcePaths.forEach(function (path) {
+                      fetch(path, { method: 'HEAD', cache: 'no-store' })
+                        .then(function (response) { report('资源检测：' + path + ' → HTTP ' + response.status); })
+                        .catch(function (error) { fail('资源请求失败：' + path + '；' + String(error)); });
+                    });
+                  }
+                  fetch('/assets/index.js', { method: 'GET', cache: 'no-store' })
+                    .then(function (response) {
+                      if (!response.ok) throw new Error('HTTP ' + response.status);
+                      return response.text();
+                    })
+                    .then(function (source) {
+                      var match = source.match(/["']([^"']+\\.wasm(?:\\?[^"']*)?)["']/i);
+                      if (match) {
+                        var wasmPath = match[1].split(/[?#]/)[0];
+                        if (wasmPath.indexOf('/') !== 0) {
+                          if (wasmPath.indexOf('./') === 0) wasmPath = '/assets/' + wasmPath.slice(2);
+                          else if (wasmPath.indexOf('assets/') === 0) wasmPath = '/' + wasmPath;
+                          else wasmPath = '/assets/' + wasmPath;
+                        }
+                        resourcePaths.splice(1, 0, wasmPath);
+                      } else {
+                        status('资源诊断：未能从 assets/index.js 识别 WASM 路径');
+                      }
+                      checkResourcePaths();
+                    })
+                    .catch(function (error) {
+                      fail('WASM 路径识别失败：' + String(error));
+                      checkResourcePaths();
+                    });
                 }
                 var checks = 0, previous = '';
                 var timer = setInterval(function () {

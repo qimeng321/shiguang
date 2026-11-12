@@ -87,7 +87,7 @@ final class GameServer {
         guard lower.hasPrefix("/config/") || lower.hasPrefix("/resource/") ||
               lower.hasPrefix("/login/") || lower.hasPrefix("/dll/") ||
               lower.hasSuffix(".swf") || lower.hasSuffix(".xml") ||
-              lower == "/assets/nieo_wasm_core_bg.wasm" else { return }
+              lower.hasSuffix(".wasm") else { return }
         guard tracedRequestCount < maxTracedRequests else {
             if tracedRequestCount == maxTracedRequests {
                 LaunchDiagnostics.log("HTTP 详细记录达到 300 条，后续请求已省略")
@@ -246,7 +246,7 @@ final class GameServer {
         }
         if lower == "/" || lower == "/index.html" ||
            lower.hasSuffix("/index.js") || lower.hasSuffix("/ruffle.js") ||
-           lower.hasSuffix("/client.swf") || lower.hasSuffix("/nieo_wasm_core_bg.wasm") ||
+           lower.hasSuffix("/client.swf") || lower.hasSuffix(".wasm") ||
            lower.hasSuffix("/video.mp4") {
             LaunchDiagnostics.log("HTTP 请求：\(parts[0]) \(path)")
         }
@@ -288,27 +288,31 @@ final class GameServer {
             if relative == "index.html" {
                 servePackagedIndex(headOnly: headOnly, connection: connection)
             } else if relative.lowercased() == "ip.txt" {
-                // The Flash login client fetches /ip.txt AFTER the player submits
-                // credentials. Without it, it never reaches Flash Socket.connect.
-                // Prefer the package's own file when available; only synthesize
-                // a fallback from the known Windows microclient configuration.
+                // The launcher endpoint is authoritative. Preserve the package's
+                // text format when it contains the previous host; never serve a
+                // stale address from an imported SROM.
+                let endpoint = GameSocketBridge.serverHost + ":" + String(GameSocketBridge.serverPort)
+                var responseText = endpoint
                 if let original = safeFile(relative, below: root),
-                   FileManager.default.fileExists(atPath: original.path) {
-                    LaunchDiagnostics.log("[登录地址] 使用美化包自带 ip.txt（保持原文件内容）")
-                    serve(relative: relative, below: root, headOnly: headOnly,
-                          rangeHeader: rangeHeader, ifNoneMatch: ifNoneMatch, connection: connection)
+                   let originalText = try? String(contentsOf: original, encoding: .utf8) {
+                    let updated = originalText.replacingOccurrences(
+                        of: "103.91.210.16", with: GameSocketBridge.serverHost)
+                    if updated.contains(GameSocketBridge.serverHost) {
+                        responseText = updated
+                        LaunchDiagnostics.log("[登录地址] 已将资源包 ip.txt 更新为新服务器地址：" + endpoint)
+                    } else {
+                        LaunchDiagnostics.log("[登录地址] 资源包 ip.txt 未包含已知旧地址，使用启动器服务器：" + endpoint)
+                    }
                 } else {
-                    let endpoint = GameSocketBridge.serverHost + ":" + String(GameSocketBridge.serverPort)
-                    LaunchDiagnostics.log("[登录地址] 美化包没有 ip.txt；依据 Windows 微端线上配置返回 "
-                                          + endpoint + "（HTTP 200，纯文本）")
-                    send(data: Data(endpoint.utf8),
-                         mime: "text/plain; charset=utf-8",
-                         headOnly: headOnly, connection: connection)
-                    if !headOnly, let bridge {
-                        queue.asyncAfter(deadline: .now() + 12) {
-                            if !bridge.hasReceivedClient {
-                                LaunchDiagnostics.log("[登录网络诊断] ip.txt 已返回，12秒内仍无 Flash Socket 连接；需继续核查登录 SWF 对返回内容的解析及 Ruffle Socket 支持")
-                            }
+                    LaunchDiagnostics.log("[登录地址] 资源包没有可读取的 ip.txt，使用启动器服务器：" + endpoint)
+                }
+                send(data: Data(responseText.utf8),
+                     mime: "text/plain; charset=utf-8",
+                     headOnly: headOnly, connection: connection)
+                if !headOnly, let bridge {
+                    queue.asyncAfter(deadline: .now() + 12) {
+                        if !bridge.hasReceivedClient {
+                            LaunchDiagnostics.log("[登录网络诊断] 新 ip.txt 已返回，12秒内仍无 Flash Socket 连接；需继续核查登录 SWF 对返回内容的解析及 Ruffle Socket 支持")
                         }
                     }
                 }
@@ -430,7 +434,7 @@ final class GameServer {
             allowScriptAccess: true,
             logLevel: "debug",
             socketProxy: [{
-              host: "103.91.210.16",
+              host: "202.189.22.234",
               port: 22973,
               proxyUrl: "ws://127.0.0.1:32973"
             }]
@@ -778,9 +782,9 @@ final class GameServer {
               japaneseMincho:["Noto Sans CJK SC"]
             },
             socketProxy:[
-              {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
-              {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
-              {host:"103.91.210.16",port:22975,proxyUrl:"ws://127.0.0.1:32975"}
+              {host:"202.189.22.234",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"202.189.22.234",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
+              {host:"202.189.22.234",port:22975,proxyUrl:"ws://127.0.0.1:32975"}
             ]
           };
         </script><script src="/ruffle/ruffle.js"></script>
@@ -1085,9 +1089,9 @@ final class GameServer {
             // Per-player options override the global Ruffle socketProxy.
             // Base (roomSocket) needs the virtual port 22975 route too.
             options.socketProxy=[
-              {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
-              {host:"103.91.210.16",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
-              {host:"103.91.210.16",port:22975,proxyUrl:"ws://127.0.0.1:32975"},
+              {host:"202.189.22.234",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"202.189.22.234",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
+              {host:"202.189.22.234",port:22975,proxyUrl:"ws://127.0.0.1:32975"},
               {host:"127.0.0.1",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
               {host:"localhost",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
             ];

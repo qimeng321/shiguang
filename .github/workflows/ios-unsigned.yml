@@ -10,6 +10,7 @@ on:
       - main
       - "release/shiguang-1.0.6-b124-delta"
       - "release/shiguang-1.0.6-b125-ui-delta-srom"
+      - "release/shiguang-1.0.7-b126-launcher"
 
 jobs:
   static-check:
@@ -32,9 +33,9 @@ jobs:
           mouse=Path('Patches/touch-controls.js').read_text()
           project=Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
           manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
-          assert 'Text("正式版 1.06")' in swift
-          assert 'MARKETING_VERSION = 1.0.6;' in project
-          assert 'CURRENT_PROJECT_VERSION = 125;' in project
+          assert 'Text("正式版 1.07")' in swift
+          assert 'MARKETING_VERSION = 1.0.7;' in project
+          assert 'CURRENT_PROJECT_VERSION = 126;' in project
           assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
           assert 'smartbeta' not in project
           assert manifest['based_on_test_branch']=='test/1.2-nono-precision-safe-start-b118'
@@ -46,6 +47,12 @@ jobs:
           assert 'isImportFinishing' in model and 'unzipProgress.fractionCompleted' in model
           assert 'skipCRC32: false' in model and 'validateInstalledPackage(root:' in model
           bridge=Path('Sources/GameSocketBridge.swift').read_text()
+          assert '202.189.22.234' in bridge and '103.91.210.16' not in bridge
+          assert 'host:"103.91.210.16"' not in source
+          assert 'configuredCorePath(base:' in model and 'configuredWASMPath(base:' in model
+          assert 'require("dll/NieoCore.swf"' not in model
+          assert 'require("assets/nieo_wasm_core_bg.wasm"' not in model
+          assert '[登录地址] 已将资源包 ip.txt 更新为新服务器地址' in source
           assert 'func leaveGame()' in bridge and 'static func shared()' in bridge
           assert 'cmd == 10002' in bridge and 'virtualRoomPort' in bridge
           assert 'NonoVipDailySignPanel.swf' in source and 'requestedPath' in source
@@ -107,7 +114,7 @@ jobs:
           assert not Path('Patches/test-smart-touch.js').exists()
           for forbidden in ['smartHover','SmartHover','setSmartHover','smartPointer','smartTouch','ringAnchor','smartEnableTimer','__shiguangSmartHoverChoice','galaxy-navigation.js']:
               assert forbidden not in swift+source+mouse, 'retired feature '+forbidden
-          print('PASS: Build118-derived formal 1.05, core/patch/precision/boot invariants, smart-hover completely retired')
+          print('PASS: formal 1.07 Build126, dynamic SROM paths, server endpoint and preserved launcher invariants')
           PY_CHECK
   build:
     needs: static-check
@@ -312,27 +319,27 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check formal 1.06 release metadata
+      - name: Check formal 1.07 release metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.6'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '125'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.7'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '126'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.06 project source ZIP
+      - name: Package formal 1.07 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.06-b125-ui-delta-srom/ --output=/tmp/ShiguangLauncher-v1.06-b125-ui-delta-srom-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.06-b125-ui-delta-srom-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.06-b125-ui-delta-srom-source.zip | grep -Fx 'ShiguangLauncher-v1.06-b125-ui-delta-srom/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.07-b126-launcher/ --output=/tmp/ShiguangLauncher-v1.07-b126-launcher-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.07-b126-launcher-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.07-b126-launcher-source.zip | grep -Fx 'ShiguangLauncher-v1.07-b126-launcher/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.06-b125-ui-delta-srom-ipa
+          name: ShiguangLauncher-v1.07-b126-launcher-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.06-b125-ui-delta-srom-source
-          path: /tmp/ShiguangLauncher-v1.06-b125-ui-delta-srom-source.zip
+          name: ShiguangLauncher-v1.07-b126-launcher-source
+          path: /tmp/ShiguangLauncher-v1.07-b126-launcher-source.zip
           if-no-files-found: error

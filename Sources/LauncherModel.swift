@@ -96,6 +96,79 @@ enum LaunchDiagnostics {
     // the critical game files and their headers, not merely the SWF filename.
     // This is a bounded disk check (11 small headers/metadata) even for 3GB packs.
     static let receiptName = ".shiguang-install-verified"
+    static func normalizedResourcePath(_ rawValue: String, relativeDirectory: String = "") -> String? {
+        var value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let query = value.firstIndex(of: "?") { value = String(value[..<query]) }
+        if let fragment = value.firstIndex(of: "#") { value = String(value[..<fragment]) }
+        value = value.replacingOccurrences(of: "\\", with: "/")
+        while value.hasPrefix("/") { value.removeFirst() }
+        if value.hasPrefix("./") {
+            value = String(value.dropFirst(2))
+            if !relativeDirectory.isEmpty { value = relativeDirectory + "/" + value }
+        } else if !value.contains("/"), !relativeDirectory.isEmpty {
+            value = relativeDirectory + "/" + value
+        }
+        let parts = value.split(separator: "/", omittingEmptySubsequences: true)
+        guard !parts.isEmpty, !parts.contains(".."), !parts.contains(".") else { return nil }
+        return parts.joined(separator: "/")
+    }
+
+    // Read the exact core SWF path declared by the package's dll.xml.
+    // The 0.18.0 package declares <item path="dll/SGCore.swf?revision"...>.
+    static func configuredCorePath(base: URL) -> String? {
+        let fm = FileManager.default
+        let config = base.appendingPathComponent("config/dll.xml")
+        guard let values = try? config.resourceValues(forKeys: [.fileSizeKey]),
+              (values.fileSize ?? 0) <= 128 * 1024,
+              let xml = try? String(contentsOf: config, encoding: .utf8),
+              let regex = try? NSRegularExpression(
+                pattern: #"(?i)<item\b[^>]*\bpath\s*=\s*["']([^"']+\.swf(?:\?[^"']*)?)["']"#),
+              let range = Range(NSRange(xml.startIndex..., in: xml), in: xml) else {
+            for candidate in ["dll/NieoCore.swf", "dll/SGCore.swf"] {
+                if fm.fileExists(atPath: base.appendingPathComponent(candidate).path) { return candidate }
+            }
+            return nil
+        }
+        for match in regex.matches(in: xml, range: NSRange(range, in: xml)) {
+            guard match.numberOfRanges > 1,
+                  let pathRange = Range(match.range(at: 1), in: xml),
+                  let relative = normalizedResourcePath(String(xml[pathRange])),
+                  relative.lowercased().hasSuffix(".swf") else { continue }
+            return relative
+        }
+        for candidate in ["dll/NieoCore.swf", "dll/SGCore.swf"] {
+            if fm.fileExists(atPath: base.appendingPathComponent(candidate).path) { return candidate }
+        }
+        return nil
+    }
+
+    // Resolve the WASM file actually named in assets/index.js. Its wasm-bindgen
+    // glue can be bundled in index.js; no separate nieo_wasm_core_bg.js is needed.
+    static func configuredWASMPath(base: URL) -> String? {
+        let fm = FileManager.default
+        let js = base.appendingPathComponent("assets/index.js")
+        if let values = try? js.resourceValues(forKeys: [.fileSizeKey]),
+           (values.fileSize ?? 0) <= 64 * 1024 * 1024,
+           let source = try? String(contentsOf: js, encoding: .utf8),
+           let regex = try? NSRegularExpression(
+                pattern: #"["']([^"']+\.wasm(?:\?[^"']*)?)["']"#,
+                options: [.caseInsensitive]),
+           let range = Range(NSRange(source.startIndex..., in: source), in: source) {
+            for match in regex.matches(in: source, range: NSRange(range, in: source)) {
+                guard match.numberOfRanges > 1,
+                      let pathRange = Range(match.range(at: 1), in: source),
+                      let relative = normalizedResourcePath(
+                        String(source[pathRange]), relativeDirectory: "assets"),
+                      relative.lowercased().hasSuffix(".wasm") else { continue }
+                return relative
+            }
+        }
+        for candidate in ["assets/nieo_wasm_core_bg.wasm", "assets/SG_wasm_core_bg.wasm"] {
+            if fm.fileExists(atPath: base.appendingPathComponent(candidate).path) { return candidate }
+        }
+        return nil
+    }
+
     static func validateInstalledPackage(root: URL, entry: String) -> [String] {
         let fm = FileManager.default
         guard !entry.isEmpty else { return ["没有找到可启动的游戏 SWF 入口"] }
@@ -125,6 +198,7 @@ enum LaunchDiagnostics {
                 }
             }
         }
+
         // SWF must have a valid FWS/CWS/ZWS signature; reject empty/damaged stubs.
         let swf = root.appendingPathComponent(entry)
         if let attributes = try? fm.attributesOfItem(atPath: swf.path),
@@ -139,23 +213,29 @@ enum LaunchDiagnostics {
         } else {
             failures.append("游戏入口 \(entry)：文件缺失或内容过短")
         }
-        // A NieoData web package has known runtime dependencies; all must
-        // exist. Generic stand-alone SWF files keep the legacy fallback mode.
-        if fm.fileExists(atPath: base.appendingPathComponent("index.html").path)
-            || !folder.isEmpty {
+
+        // Web packages are validated against their own JS/WASM and dll.xml paths.
+        // Stand-alone SWF packages keep the legacy fallback behavior.
+        if fm.fileExists(atPath: base.appendingPathComponent("index.html").path) || !folder.isEmpty {
             require("index.html", minimum: 64)
             require("assets/index.js", minimum: 64)
-            require("assets/nieo_wasm_core_bg.wasm", minimum: 8)
+            if let wasmPath = configuredWASMPath(base: base) {
+                require(wasmPath, minimum: 8, magic: [0x00, 0x61, 0x73, 0x6D])
+            } else {
+                failures.append("assets/index.js：未识别到实际引用的 WASM 文件，且未找到兼容路径")
+            }
             require("config/doorConfig.xml", minimum: 8)
             require("config/ServerR.xml", minimum: 8)
             require("config/dll.xml", minimum: 8)
             require("version.swf", minimum: 6)
             require("resource/main_resource.swf", minimum: 64)
-            // The 2026110201 update-reference ZIP contains only 16 core files.
-            // A real offline .srom must also include the actual map and UI.
             require("resource/map/1.swf", minimum: 64)
             require("resource/ui.swf", minimum: 64)
-            require("dll/NieoCore.swf", minimum: 64)
+            if let corePath = configuredCorePath(base: base) {
+                require(corePath, minimum: 64)
+            } else {
+                failures.append("config/dll.xml：未识别到游戏核心 SWF 路径，且未找到 NieoCore/SGCore")
+            }
             require("login/Login.swf", minimum: 64)
         }
         return failures
@@ -242,7 +322,18 @@ enum LaunchDiagnostics {
             check("index.html", file: webRoot.appendingPathComponent("index.html"), required: true)
             check("网页 JS", file: webRoot.appendingPathComponent("assets/index.js"), required: true)
             check("网页 CSS", file: webRoot.appendingPathComponent("assets/index.css"), required: false)
-            check("网络 WASM", file: webRoot.appendingPathComponent("assets/nieo_wasm_core_bg.wasm"), required: true)
+            if let wasmPath = configuredWASMPath(base: webRoot) {
+                check("网络 WASM（index.js 引用）", file: webRoot.appendingPathComponent(wasmPath), required: true)
+            } else {
+                lines.append("[缺失] assets/index.js：未识别到 WASM 路径")
+                missingRequired += 1
+            }
+            if let corePath = configuredCorePath(base: webRoot) {
+                check("游戏核心（dll.xml）", file: webRoot.appendingPathComponent(corePath), required: true)
+            } else {
+                lines.append("[缺失] config/dll.xml：未识别到游戏核心路径")
+                missingRequired += 1
+            }
             check("启动视频（可选）", file: webRoot.appendingPathComponent("video.mp4"), required: false)
         }
         if let ruffle = Bundle.main.url(forResource: "Ruffle", withExtension: nil) {
