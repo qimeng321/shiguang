@@ -262,6 +262,12 @@ final class GameServer {
             serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
             return
         }
+        if packagedWebApp && path == "/__micro/wheel-probe" {
+            let body = WheelProbe.isActive() ? "{\"active\":true}" : "{\"active\":false}"
+            send(data: Data(body.utf8), mime: "application/json",
+                 headOnly: headOnly, connection: connection)
+            return
+        }
         if packagedWebApp && path == "/__micro/status" {
             let entered = bridge?.hasEnteredGame ?? false
             let body = entered ? "{\"enteredGame\":true}" : "{\"enteredGame\":false}"
@@ -585,6 +591,15 @@ final class GameServer {
         let response = isPartial ? "206 Partial Content" : "200 OK"
         traceRequest(headOnly ? "HEAD" : "GET", "/" + relative,
                      status: isPartial ? 206 : 200, size: byteCount)
+        // Only requests for the three Destiny Wheel resources activate a
+        // bounded diagnostics window; no SWF is changed or reloaded.
+        if !headOnly && !isPartial && (
+            relative == "resource/appRes/1211/WheelChoice_UI.swf" ||
+            relative == "module/com/robot/module/app/WheelAnimate.swf" ||
+            relative == "resource/map/10036.swf"
+        ) {
+            WheelProbe.activate(relative)
+        }
         let contentRange = isPartial ? "Content-Range: bytes \(first)-\(last)/\(total)\r\n" : ""
         // Normal clients keep the original no-store policy. This opt-in mode
         // caches only tiny immutable icons; version/map/login/core never cache.
@@ -946,6 +961,47 @@ final class GameServer {
             if(touchControls)touchControls.hideAll();
             setDockVisible(!inputShown,"三点菜单切换输入栏");
           }
+          // Test-only page timing diagnostics for the Destiny Wheel.
+          // Reads only the local native probe flag; never modifies Ruffle or game events.
+          (function(){
+            var nativeRAF=(window.ShiguangFrameCap && window.ShiguangFrameCap.nativeRequestFrame)
+              || window.requestAnimationFrame.bind(window);
+            var probeRunning=false,frames=0,last=0,maxGap=0,wasActive=false,rafId=0,errors=0;
+            function sample(t){
+              if(!probeRunning || document.hidden){rafId=0;return;}
+              if(last){var gap=t-last;if(gap>maxGap)maxGap=gap;}
+              last=t;frames++;
+              rafId=nativeRAF(sample);
+            }
+            document.addEventListener("visibilitychange",function(){
+              report("命运之轮页面状态：hidden="+document.hidden);
+            });
+            window.addEventListener("error",function(ev){
+              if(errors++<6)report("命运之轮页面异常："+String(ev.message||"unknown").slice(0,160));
+            });
+            setInterval(async function(){
+              try{
+                var response=await fetch("/__micro/wheel-probe",{cache:"no-store"});
+                var active=response.ok && (await response.json()).active===true;
+                if(active && !wasActive){
+                  frames=0;last=0;maxGap=0;probeRunning=true;
+                  if(!document.hidden)rafId=nativeRAF(sample);
+                  report("命运之轮帧追踪开始；仅观测页面 rAF，不代表 Flash 的 ENTER_FRAME");
+                }else if(!active && wasActive){
+                  probeRunning=false;
+                  report("命运之轮帧追踪结束");
+                }
+                if(active){
+                  report("命运之轮页面帧：3秒采样="+frames+" 最大间隔="+Math.round(maxGap)+"ms"
+                    +" hidden="+document.hidden+" focus="+document.hasFocus());
+                  frames=0;maxGap=0;
+                  if(document.hidden){probeRunning=false;rafId=0;}
+                  else if(!probeRunning){probeRunning=true;last=0;rafId=nativeRAF(sample);}
+                }
+                wasActive=active;
+              }catch(ex){if(errors++<6)report("命运之轮追踪请求异常："+String(ex).slice(0,160));}
+            },3000);
+          })();
           // Display browser frame-callback cadence, NOT the SWF's actual frame count.
           // Fully dormant until enabled; sampling stops when page is hidden.
           var fpsActive=false,fpsHandle=0,fpsCount=0,fpsStart=0,fpsBadge=null;

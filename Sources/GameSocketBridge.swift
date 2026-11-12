@@ -1,6 +1,32 @@
 import Foundation
 import Network
 
+enum WheelProbe {
+    private static let lock = NSLock()
+    private static var deadline: TimeInterval = 0
+    private static var tracedPackets = 0
+    static func activate(_ resource: String) {
+        lock.lock()
+        let now = ProcessInfo.processInfo.systemUptime
+        if now >= deadline { tracedPackets = 0 }
+        deadline = now + 32
+        lock.unlock()
+        LaunchDiagnostics.log("[命运之轮专项] 资源加载：\(resource)；开启32秒协议/帧率追踪")
+    }
+    static func isActive() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return ProcessInfo.processInfo.systemUptime < deadline
+    }
+    static func trace(_ message: String) {
+        lock.lock()
+        let allowed = ProcessInfo.processInfo.systemUptime < deadline && tracedPackets < 200
+        if allowed { tracedPackets += 1 }
+        lock.unlock()
+        if allowed { LaunchDiagnostics.log("[命运之轮协议] " + message) }
+    }
+}
+
 /// Local WebSocket-to-TCP relay for a browser-based Flash client.
 final class GameSocketBridge {
     // Retain one listener set per app process: no rebinding while a prior
@@ -365,6 +391,24 @@ final class GameSocketBridge {
                 guard let data else { self.receiveWebSocket(); return }
                 self.upstreamCount += 1
                 self.upstreamTotal += data.count
+                // Header-only wheel diagnostics. Never log account IDs,
+                // authentication material, payloads or incoming game resources.
+                if WheelProbe.isActive() {
+                    let raw = [UInt8](data)
+                    var offset = 0
+                    var observed = 0
+                    while offset + 9 <= raw.count && observed < 12 {
+                        let declared = Int(self.uint32BE(raw, offset))
+                        guard declared >= 9 && declared <= raw.count - offset else {
+                            WheelProbe.trace("会话#\(self.index) 上行片段字节=\(raw.count-offset)（无法确认完整游戏包）")
+                            break
+                        }
+                        let cmd = self.uint32BE(raw, offset + 5)
+                        WheelProbe.trace("会话#\(self.index) 上行CMD\(cmd) 长度=\(declared)")
+                        offset += declared
+                        observed += 1
+                    }
+                }
                 // Header-only room diagnostics; no sensitive payload is logged.
                 if data.count >= 9 {
                     let raw = [UInt8](data)
@@ -407,6 +451,7 @@ final class GameSocketBridge {
                 guard packetSize>=17 && cursor+packetSize<=bytes.count else { break }
                 let cmd=uint32BE(bytes,cursor+5)
                 let result=uint32BE(bytes,cursor+13)
+                WheelProbe.trace("会话#\(self.index) 下行CMD\(cmd) 长度=\(packetSize) 结果=\(result)")
                 if cmd == 1001 && result == 0 {
                     LaunchDiagnostics.log("[选服阶段] 收到 CMD1001 成功响应，进入游戏状态")
                     onEnterGame()
