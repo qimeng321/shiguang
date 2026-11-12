@@ -11,6 +11,7 @@ on:
       - "release/shiguang-1.0.6-b124-delta"
       - "release/shiguang-1.0.6-b125-ui-delta-srom"
       - "release/shiguang-1.0.7-b126-launcher"
+      - "release/shiguang-1.0.7-b127-server-icon"
 
 jobs:
   static-check:
@@ -35,7 +36,7 @@ jobs:
           manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
           assert 'Text("正式版 1.07")' in swift
           assert 'MARKETING_VERSION = 1.0.7;' in project
-          assert 'CURRENT_PROJECT_VERSION = 126;' in project
+          assert 'CURRENT_PROJECT_VERSION = 127;' in project
           assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
           assert 'smartbeta' not in project
           assert manifest['based_on_test_branch']=='test/1.2-nono-precision-safe-start-b118'
@@ -47,8 +48,16 @@ jobs:
           assert 'isImportFinishing' in model and 'unzipProgress.fractionCompleted' in model
           assert 'skipCRC32: false' in model and 'validateInstalledPackage(root:' in model
           bridge=Path('Sources/GameSocketBridge.swift').read_text()
-          assert '202.189.22.234' in bridge and '103.91.210.16' not in bridge
+          assert '202.189.22.79' in bridge and '202.189.22.234' not in bridge and '103.91.210.16' not in bridge
           assert 'host:"103.91.210.16"' not in source
+          assert 'host:"202.189.22.234"' not in source
+          assert 'of: "202.189.22.234", with: GameSocketBridge.serverHost' in source
+          assert '启动器 正式版 1.07（Build 127' in model
+          from hashlib import sha256
+          icon_path=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png')
+          assert sha256(icon_path.read_bytes()).hexdigest() == '69fd6308b1b3e2b077978df1ed1bb8f464ec79681d35f2ec5cfacc0dae2c10ea'
+          appicons=json.loads(Path('Resources/Assets.xcassets/AppIcon.appiconset/Contents.json').read_text())
+          assert appicons['images'] == [{'filename':'AppIcon.png','idiom':'universal','platform':'ios','size':'1024x1024'}]
           assert 'configuredCorePath(base:' in model and 'configuredWASMPath(base:' in model
           assert 'require("dll/NieoCore.swf"' not in model
           assert 'require("assets/nieo_wasm_core_bg.wasm"' not in model
@@ -114,7 +123,7 @@ jobs:
           assert not Path('Patches/test-smart-touch.js').exists()
           for forbidden in ['smartHover','SmartHover','setSmartHover','smartPointer','smartTouch','ringAnchor','smartEnableTimer','__shiguangSmartHoverChoice','galaxy-navigation.js']:
               assert forbidden not in swift+source+mouse, 'retired feature '+forbidden
-          print('PASS: formal 1.07 Build126, dynamic SROM paths, server endpoint and preserved launcher invariants')
+          print('PASS: formal 1.07 Build127, dynamic SROM paths, server endpoint and preserved launcher invariants')
           PY_CHECK
   build:
     needs: static-check
@@ -322,7 +331,7 @@ jobs:
       - name: Check formal 1.07 release metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.7'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '126'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '127'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
@@ -330,16 +339,16 @@ jobs:
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.07 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.07-b126-launcher/ --output=/tmp/ShiguangLauncher-v1.07-b126-launcher-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.07-b126-launcher-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.07-b126-launcher-source.zip | grep -Fx 'ShiguangLauncher-v1.07-b126-launcher/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.07-b127-server-icon/ --output=/tmp/ShiguangLauncher-v1.07-b127-server-icon-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.07-b127-server-icon-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.07-b127-server-icon-source.zip | grep -Fx 'ShiguangLauncher-v1.07-b127-server-icon/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.07-b126-launcher-ipa
+          name: ShiguangLauncher-v1.07-b127-server-icon-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.07-b126-launcher-source
-          path: /tmp/ShiguangLauncher-v1.07-b126-launcher-source.zip
+          name: ShiguangLauncher-v1.07-b127-server-icon-source
+          path: /tmp/ShiguangLauncher-v1.07-b127-server-icon-source.zip
           if-no-files-found: error

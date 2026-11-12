@@ -1,13 +1,13 @@
 # 拾光号 iOS 启动器正式版 1.07
 
 - Version: 1.0.7
-- Build: 126
+- Build: 127
 - Bundle ID: `cn.shiguanghao.launcher`
 - Base: `release/shiguang-1.0.6-b125-ui-delta-srom`
 
 ## 1.07 更新
 
-- 游戏服务器更新为 `202.189.22.234:22973`。
+- 游戏服务器更新为 `202.189.22.79:22973`。
 - 登录时处理资源包 `ip.txt`：替换已知旧 IP，避免继续连接旧服务器。
 - 资源校验根据 `config/dll.xml` 的 `item path` 动态识别核心 SWF。
 - 资源校验根据 `assets/index.js` 动态识别实际 WASM 路径；不再要求独立的 `nieo_wasm_core_bg.js`。
@@ -20,7 +20,7 @@ IPA 仅负责启动器和运行环境；游戏核心、WASM、JS、Client.swf、
 
 ## 图标说明
 
-本次自动构建沿用 1.06 仓库中已提交的 AppIcon 资产；用户提供的新 Logo 尚未写入该资产目录，因此本 IPA 不宣称已更换图标。
+新拾光号 App 图标已正式集成，使用用户提供的完整 1024×1024 PNG，由 Xcode 自动生成各设备图标尺寸。
 
 ## 验证边界
 

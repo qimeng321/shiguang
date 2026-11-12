@@ -30,7 +30,7 @@ final class GameSocketBridge {
         }
     }
 
-    static let serverHost = "202.189.22.234"
+    static let serverHost = "202.189.22.79"
     static let serverPort: UInt16 = 22973
     static let localPort: UInt16 = 32973
     // Distinct virtual port for the dynamically advertised game channel.
@@ -465,7 +465,7 @@ final class GameSocketBridge {
                                     }
                                     bytes[entry+24]=UInt8(GameSocketBridge.virtualChannelPort>>8)
                                     bytes[entry+25]=UInt8(GameSocketBridge.virtualChannelPort & 255)
-                                    LaunchDiagnostics.log("[服务器列表] 频道已通过虚拟 202.189.22.234:22974 转发；实际目的地址保持 " + host + ":" + String(port))
+                                    LaunchDiagnostics.log("[服务器列表] 频道已通过虚拟 202.189.22.79:22974 转发；实际目的地址保持 " + host + ":" + String(port))
                                 } else {
                                     LaunchDiagnostics.log("[服务器列表] 本频道未做地址替换：不满足安全条件或超出首频道映射")
                                 }

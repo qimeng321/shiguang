@@ -295,8 +295,11 @@ final class GameServer {
                 var responseText = endpoint
                 if let original = safeFile(relative, below: root),
                    let originalText = try? String(contentsOf: original, encoding: .utf8) {
-                    let updated = originalText.replacingOccurrences(
-                        of: "103.91.210.16", with: GameSocketBridge.serverHost)
+                    let updated = originalText
+                        .replacingOccurrences(
+                            of: "103.91.210.16", with: GameSocketBridge.serverHost)
+                        .replacingOccurrences(
+                            of: "202.189.22.234", with: GameSocketBridge.serverHost)
                     if updated.contains(GameSocketBridge.serverHost) {
                         responseText = updated
                         LaunchDiagnostics.log("[登录地址] 已将资源包 ip.txt 更新为新服务器地址：" + endpoint)
@@ -434,7 +437,7 @@ final class GameServer {
             allowScriptAccess: true,
             logLevel: "debug",
             socketProxy: [{
-              host: "202.189.22.234",
+              host: "202.189.22.79",
               port: 22973,
               proxyUrl: "ws://127.0.0.1:32973"
             }]
@@ -782,9 +785,9 @@ final class GameServer {
               japaneseMincho:["Noto Sans CJK SC"]
             },
             socketProxy:[
-              {host:"202.189.22.234",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
-              {host:"202.189.22.234",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
-              {host:"202.189.22.234",port:22975,proxyUrl:"ws://127.0.0.1:32975"}
+              {host:"202.189.22.79",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"202.189.22.79",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
+              {host:"202.189.22.79",port:22975,proxyUrl:"ws://127.0.0.1:32975"}
             ]
           };
         </script><script src="/ruffle/ruffle.js"></script>
@@ -1089,9 +1092,9 @@ final class GameServer {
             // Per-player options override the global Ruffle socketProxy.
             // Base (roomSocket) needs the virtual port 22975 route too.
             options.socketProxy=[
-              {host:"202.189.22.234",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
-              {host:"202.189.22.234",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
-              {host:"202.189.22.234",port:22975,proxyUrl:"ws://127.0.0.1:32975"},
+              {host:"202.189.22.79",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"202.189.22.79",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
+              {host:"202.189.22.79",port:22975,proxyUrl:"ws://127.0.0.1:32975"},
               {host:"127.0.0.1",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
               {host:"localhost",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
             ];
