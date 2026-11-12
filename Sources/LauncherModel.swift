@@ -439,7 +439,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.07（Build 127 · 新服务器地址和新 App 图标）启动；基地代理、单中文字体及手机补丁保留")
+        LaunchDiagnostics.log("启动器 正式版 1.07（Build 128 · 首页图标同步）启动；基地代理、单中文字体及手机补丁保留")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {

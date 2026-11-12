@@ -1,7 +1,7 @@
 # 拾光号 iOS 启动器正式版 1.07
 
 - Version: 1.0.7
-- Build: 127
+- Build: 128
 - Bundle ID: `cn.shiguanghao.launcher`
 - Base: `release/shiguang-1.0.6-b125-ui-delta-srom`
 
@@ -25,3 +25,9 @@ IPA 仅负责启动器和运行环境；游戏核心、WASM、JS、Client.swf、
 ## 验证边界
 
 静态资源校验不代表服务器可达，也不代表登录、战斗、基地或 NoNo 已完成真机测试。新版外来 SGCore 的活动资源兼容性仍单独验证。
+
+
+## 1.07 Build128 首页图标补丁
+
+- 启动器首页顶部展示图 `LauncherArt.png` 与最新 AppIcon 同步，修复首页仍显示旧图的问题。
+- 服务器仍为 `202.189.22.79:22973`，其它功能保持不变。
