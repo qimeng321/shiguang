@@ -13,6 +13,7 @@ on:
       - "release/shiguang-1.0.7-b126-launcher"
       - "release/shiguang-1.0.7-b127-server-icon"
       - "release/shiguang-1.0.7-b128-home-icon"
+      - "release/shiguang-1.0.7-b128-wheel-404fix"
 
 jobs:
   static-check:
@@ -69,6 +70,13 @@ jobs:
           assert 'func leaveGame()' in bridge and 'static func shared()' in bridge
           assert 'cmd == 10002' in bridge and 'virtualRoomPort' in bridge
           assert 'NonoVipDailySignPanel.swf' in source and 'requestedPath' in source
+          # Regression: Destiny Wheel sends a malformed double-slash SWF URL.
+          # Only this known path is rewritten; generic unsafe paths are rejected.
+          assert 'requestedPath == "/resource//appRes/1211/WheelChoice_UI.swf"' in source
+          assert 'path = "/resource/appRes/1211/WheelChoice_UI.swf"' in source
+          assert '[命运之轮] 已修正 SWF 请求中的重复斜杠' in source
+          assert '!parts.contains(where: { $0 == ".." || $0 == "." || $0.isEmpty })' in source
+          assert 'decoded.contains("\\\\")' in source
           assert 'GridItem(.flexible(), spacing: 4)' in swift
           assert '32975' in source and '32975' in bridge
           # Ruffle's load(options) overwrites global socketProxy; assert the live
@@ -343,16 +351,16 @@ jobs:
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package formal 1.07 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.07-b128-home-icon/ --output=/tmp/ShiguangLauncher-v1.07-b128-home-icon-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.07-b128-home-icon-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.07-b128-home-icon-source.zip | grep -Fx 'ShiguangLauncher-v1.07-b128-home-icon/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.07-b128-wheel-404fix/ --output=/tmp/ShiguangLauncher-v1.07-b128-wheel-404fix-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.07-b128-wheel-404fix-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.07-b128-wheel-404fix-source.zip | grep -Fx 'ShiguangLauncher-v1.07-b128-wheel-404fix/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.07-b128-home-icon-ipa
+          name: ShiguangLauncher-v1.07-b128-wheel-404fix-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.07-b128-home-icon-source
-          path: /tmp/ShiguangLauncher-v1.07-b128-home-icon-source.zip
+          name: ShiguangLauncher-v1.07-b128-wheel-404fix-source
+          path: /tmp/ShiguangLauncher-v1.07-b128-wheel-404fix-source.zip
           if-no-files-found: error
