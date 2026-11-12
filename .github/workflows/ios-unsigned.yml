@@ -139,7 +139,7 @@ jobs:
           PY_CHECK
   build:
     needs: static-check
-    runs-on: macos-15-intel
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Align Ruffle Web engine with Windows microclient (0.7.1)
