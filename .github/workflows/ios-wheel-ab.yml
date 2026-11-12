@@ -179,10 +179,14 @@ jobs:
           test "$(find Resources/Ruffle -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
           python3 - <<'PY_CHECK'
           from pathlib import Path
+          import os
           p=Path('Resources/Ruffle/ruffle.js').read_text()
-          if '0.7.1' not in p:
-              raise SystemExit('Wrong Ruffle web bundle: expected version 0.7.1')
-          print('Validated Ruffle 0.7.1 web runtime, JS bytes',len(p))
+          variant=os.environ['RUFFLE_VARIANT']
+          if len(p) < 1000:
+              raise SystemExit('Ruffle Web JS asset unexpectedly small')
+          if variant == 'stable' and '0.7.1' not in p:
+              raise SystemExit('Wrong Ruffle stable bundle: expected 0.7.1')
+          print('Validated Ruffle', variant, 'web runtime; JS bytes',len(p))
           PY_CHECK
       - name: Bundle OFL Simplified Chinese font for Ruffle
         shell: bash
