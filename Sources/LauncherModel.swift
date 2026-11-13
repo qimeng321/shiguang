@@ -439,7 +439,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.08（Build 129 · 手机核心补丁兼容）启动；保留 1.07 原功能")
+        LaunchDiagnostics.log("启动器 正式版 1.08（Build 130 · 通用手机补丁）启动；保留 1.07 原功能")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {
@@ -1109,7 +1109,7 @@ enum MobilePatchError: LocalizedError {
         case .invalidFile(let path): return "补丁资源缺失或不是普通文件：\(path)"
         case .oversized: return "补丁过大：单包最多 512 MB、2048 个资源文件。"
         case .noAssets: return "补丁清单没有可覆盖的游戏资源。"
-        case .coreMismatch(let path): return "核心资源版本或 SHA-256 校验不匹配：\(path)；补丁未安装，原版资源保持不变。"
+        case .coreMismatch(let path): return "补丁指定的原版核心 SHA-256 校验不匹配：\(path)；补丁未安装，原版资源保持不变。"
         }
     }
 }
@@ -1134,19 +1134,21 @@ enum MobilePatchManager {
         guard let m = manifest(in: active), m.format == "shiguang-mobile-patch-v1" else {
             return "未安装手机适配补丁"
         }
-        return "\(m.name) · v\(m.version) · 覆盖 \(m.files.count) 个资源"
+        let unlockedCore = m.files.contains("dll/SGCore.swf") &&
+            (m.targetRevision == nil || m.targetRevision == "") && m.originalSHA256 == nil
+        return "\(m.name) · v\(m.version) · 覆盖 \(m.files.count) 个资源" +
+            (unlockedCore ? " · 跨版本核心补丁（需自行验证兼容性）" : "")
     }
 
-    /// Keep core revision gating at play time, not just import time.
-    /// After replacing the .srom, a patch targeted at another game version is ignored.
-    // The core overlay is only enabled when its original game file exactly
-    // matches the pinned SHA-256. This check runs both at install and startup.
+    /// A patch without targetRevision and originalSHA256 is intentionally
+    /// revision-independent. Keep checking SHA-256 for older pinned patches;
+    /// never silently bypass an explicit hash supplied by the patch author.
+    /// This cannot guarantee future SGCore ABI compatibility: an unlocked
+    /// core overlay may need replacement after a game resource update.
     private static func mismatchedCore(_ m: MobilePatchManifest, gameRoot: URL) -> String? {
         let originals = m.files.filter { $0 == "dll/SGCore.swf" }
         guard !originals.isEmpty else { return nil }
-        guard let revision = m.targetRevision, !revision.isEmpty,
-              let hashes = m.originalSHA256 else { return "缺少资源修订号或核心 SHA-256 校验" }
-        _ = revision
+        guard let hashes = m.originalSHA256 else { return nil }
         let base = gameRoot.resolvingSymlinksInPath()
         for path in originals {
             guard let expected = hashes[path]?.lowercased(),
@@ -1177,9 +1179,9 @@ enum MobilePatchManager {
         return active.resolvingSymlinksInPath()
     }
 
-    // Resource overlays preserve the v1 whitelist. v1.08 additionally permits
-    // exactly one named core SWF with a pinned original SHA-256; never permit
-    // arbitrary DLLs, login files, configs, HTML, JS or engine replacements.
+    // Resource overlays preserve the v1 whitelist. v1.08 Build130 also permits
+    // exactly one named core SWF, including revision-independent patches;
+    // never permit arbitrary DLLs, login, configs, HTML, JS or engines.
     static func permitted(_ path: String) -> Bool {
         guard path.count <= 240, !path.hasPrefix("/"),
               !path.contains("\\"), !path.contains("%"),
@@ -1274,9 +1276,19 @@ enum MobilePatchManager {
         for path in m.files {
             let file = staged.appendingPathComponent(path).resolvingSymlinksInPath()
             guard file.path.hasPrefix(staged.resolvingSymlinksInPath().path + "/"),
-                  let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
                   values.isRegularFile == true, values.isSymbolicLink != true else {
                 throw MobilePatchError.invalidFile(path)
+            }
+            // Reject malformed core SWF archives even for revision-independent patches.
+            if path == "dll/SGCore.swf" {
+                guard (values.fileSize ?? 0) >= 64 else { throw MobilePatchError.invalidFile(path) }
+                let handle = try FileHandle(forReadingFrom: file)
+                defer { try? handle.close() }
+                let magic = try handle.read(upToCount: 3) ?? Data()
+                guard ["FWS", "CWS", "ZWS"].contains(String(data: magic, encoding: .ascii) ?? "") else {
+                    throw MobilePatchError.invalidFile(path)
+                }
             }
         }
         if fm.fileExists(atPath: backup.path) { try fm.removeItem(at: backup) }
@@ -1289,6 +1301,9 @@ enum MobilePatchManager {
             throw error
         }
         if hasOld { try? fm.removeItem(at: backup) }
+        if m.files.contains("dll/SGCore.swf") && m.targetRevision == nil && m.originalSHA256 == nil {
+            LaunchDiagnostics.log("[手机补丁] 通用核心覆盖：未绑定资源修订或原核心 SHA-256；如资源包升级后异常，请撤销补丁")
+        }
         LaunchDiagnostics.log("[手机补丁] 已原子启用 \(m.name) v\(m.version)，\(m.files.count) 个资源；原 Game 文件未修改")
         return activeSummary
     }
