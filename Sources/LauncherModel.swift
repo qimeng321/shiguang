@@ -439,7 +439,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 正式版 1.07（Build 128 · 首页图标同步）启动；基地代理、单中文字体及手机补丁保留")
+        LaunchDiagnostics.log("启动器 测试版 1.08（Build 129 · 命运之轮核心补丁校验）启动；保留 1.07 原功能")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {
@@ -752,7 +752,7 @@ final class LauncherModel: ObservableObject {
 
     func importMobilePatch(_ url: URL) {
         guard !patchBusy && !isImporting && !isClearing && !deltaBusy else { return }
-        guard isInstalledValidated, gameRoot != nil else {
+        guard isInstalledValidated, let installedGameRoot = gameRoot else {
             patchError = "请先导入并验证完整的 .srom 游戏资源，再安装手机补丁。"
             return
         }
@@ -764,7 +764,7 @@ final class LauncherModel: ObservableObject {
         Task.detached(priority: .userInitiated) {
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             do {
-                let result = try MobilePatchManager.install(url, currentRevision: revision)
+                let result = try MobilePatchManager.install(url, currentRevision: revision, gameRoot: installedGameRoot)
                 await MainActor.run {
                     self.patchSummary = result
                     self.patchStatus = "补丁已启用；退出并重新进入游戏后生效。"
@@ -1092,11 +1092,13 @@ struct MobilePatchManifest: Codable {
     let version: String
     let targetRevision: String?
     let files: [String]
+    // Optional for legacy resource-only patches. Mandatory for dll/SGCore.swf.
+    let originalSHA256: [String: String]?
 }
 
 enum MobilePatchError: LocalizedError {
     case invalidFormat, invalidManifest, invalidArchive, incompatible(String)
-    case unsafePath(String), invalidFile(String), oversized, noAssets
+    case unsafePath(String), invalidFile(String), oversized, noAssets, coreMismatch(String)
     var errorDescription: String? {
         switch self {
         case .invalidFormat: return "补丁文件必须是 ZIP 格式（扩展名 .sgpatch 或 .zip）。"
@@ -1106,7 +1108,8 @@ enum MobilePatchError: LocalizedError {
         case .unsafePath(let path): return "补丁包含不安全或不支持的资源路径：\(String(path.prefix(120)))"
         case .invalidFile(let path): return "补丁资源缺失或不是普通文件：\(path)"
         case .oversized: return "补丁过大：单包最多 512 MB、2048 个资源文件。"
-        case .noAssets: return "补丁清单没有包含可覆盖的 resource/ 游戏资源。"
+        case .noAssets: return "补丁清单没有可覆盖的游戏资源。"
+        case .coreMismatch(let path): return "核心资源版本或 SHA-256 校验不匹配：\(path)；补丁未安装，原版资源保持不变。"
         }
     }
 }
@@ -1136,28 +1139,61 @@ enum MobilePatchManager {
 
     /// Keep core revision gating at play time, not just import time.
     /// After replacing the .srom, a patch targeted at another game version is ignored.
-    static func activeRoot(currentRevision: String?) -> URL? {
+    // The core overlay is only enabled when its original game file exactly
+    // matches the pinned SHA-256. This check runs both at install and startup.
+    private static func mismatchedCore(_ m: MobilePatchManifest, gameRoot: URL) -> String? {
+        let originals = m.files.filter { $0 == "dll/SGCore.swf" }
+        guard !originals.isEmpty else { return nil }
+        guard let revision = m.targetRevision, !revision.isEmpty,
+              let hashes = m.originalSHA256 else { return "缺少资源修订号或核心 SHA-256 校验" }
+        _ = revision
+        let base = gameRoot.resolvingSymlinksInPath()
+        for path in originals {
+            guard let expected = hashes[path]?.lowercased(),
+                  expected.count == 64,
+                  expected.unicodeScalars.allSatisfy({ (48...57).contains(Int($0.value)) || (97...102).contains(Int($0.value)) }) else {
+                return path
+            }
+            let original = base.appendingPathComponent(path).resolvingSymlinksInPath()
+            guard original.path.hasPrefix(base.path + "/"),
+                  let values = try? original.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isRegularFile == true, values.isSymbolicLink != true,
+                  let bytes = try? Data(contentsOf: original, options: .mappedIfSafe) else { return path }
+            let actual = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            if actual != expected { return path }
+        }
+        return nil
+    }
+
+    static func activeRoot(currentRevision: String?, gameRoot: URL) -> URL? {
         guard let m = manifest(in: active), m.format == "shiguang-mobile-patch-v1",
               !m.files.isEmpty else { return nil }
         if let expected = m.targetRevision, !expected.isEmpty,
            expected != currentRevision { return nil }
+        if let mismatch = mismatchedCore(m, gameRoot: gameRoot) {
+            LaunchDiagnostics.log("[手机补丁] 核心覆盖拒绝启用：原始 SHA-256 不匹配，\(mismatch)")
+            return nil
+        }
         return active.resolvingSymlinksInPath()
     }
 
-    // Limit all overlays to game resource assets. Never override Client.swf,
-    // login, dll, config, Javascript, Ruffle runtime, local proxy or app files.
+    // Resource overlays preserve the v1 whitelist. v1.08 additionally permits
+    // exactly one named core SWF with a pinned original SHA-256; never permit
+    // arbitrary DLLs, login files, configs, HTML, JS or engine replacements.
     static func permitted(_ path: String) -> Bool {
-        guard path.count <= 240, path.hasPrefix("resource/"),
-              !path.hasPrefix("/"), !path.contains("\\"), !path.contains("%"),
+        guard path.count <= 240, !path.hasPrefix("/"),
+              !path.contains("\\"), !path.contains("%"),
               !path.unicodeScalars.contains(where: { $0.value < 32 }) else { return false }
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         guard components.count >= 2,
               !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return false }
+        if path == "dll/SGCore.swf" { return true }
+        guard path.hasPrefix("resource/") else { return false }
         let ext = (path as NSString).pathExtension.lowercased()
         return ["swf", "png", "jpg", "jpeg", "gif", "webp", "xml", "json", "mp3"].contains(ext)
     }
 
-    static func install(_ source: URL, currentRevision: String?) throws -> String {
+    static func install(_ source: URL, currentRevision: String?, gameRoot: URL) throws -> String {
         let fm = FileManager.default
         guard ["sgpatch", "zip"].contains(source.pathExtension.lowercased()) else {
             throw MobilePatchError.invalidFormat
@@ -1227,6 +1263,9 @@ enum MobilePatchManager {
             throw MobilePatchError.incompatible(target)
         }
         guard !m.files.isEmpty else { throw MobilePatchError.noAssets }
+        if let mismatch = mismatchedCore(m, gameRoot: gameRoot) {
+            throw MobilePatchError.coreMismatch(mismatch)
+        }
         let listed = Set(m.files)
         guard listed.count == m.files.count, listed == filePaths.subtracting(["mobile-patch.json"]),
               m.files.allSatisfy({ permitted($0) }) else {

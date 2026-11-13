@@ -109,7 +109,7 @@ final class GameServer {
         // Do NOT alter the original Application Support/Game files.
         let installedRevision = LaunchDiagnostics.coreRevision(root: self.root, entry: "Client.swf")
         self.mobilePatchRoot = packagedWebApp
-            ? MobilePatchManager.activeRoot(currentRevision: installedRevision)
+            ? MobilePatchManager.activeRoot(currentRevision: installedRevision, gameRoot: self.root)
             : nil
         if let patch = self.mobilePatchRoot {
             LaunchDiagnostics.log("[手机补丁] 启动游戏时启用覆盖层：\(patch.lastPathComponent)；核心版本=\(installedRevision ?? "未知")")
@@ -324,7 +324,7 @@ final class GameServer {
                     }
                 }
             } else {
-                if relative.hasPrefix("resource/"),
+                if MobilePatchManager.permitted(relative),
                    let patch = mobilePatchRoot,
                    safeFile(relative, below: patch) != nil {
                     LaunchDiagnostics.log("[手机补丁] 覆盖游戏资源：\(relative)")
