@@ -54,7 +54,7 @@ jobs:
           assert 'host:"103.91.210.16"' not in source
           assert 'host:"202.189.22.234"' not in source
           assert 'of: "202.189.22.234", with: GameSocketBridge.serverHost' in source
-          assert '启动器 正式版 1.07（Build 128' in model
+          assert '启动器 测试版 1.08（Build 129' in model
           from hashlib import sha256
           icon_path=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png')
           assert sha256(icon_path.read_bytes()).hexdigest() == '69fd6308b1b3e2b077978df1ed1bb8f464ec79681d35f2ec5cfacc0dae2c10ea'
