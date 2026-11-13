@@ -1,10 +1,10 @@
-name: Build Shiguang iOS 1.08 B129 Formal
+name: Build Shiguang iOS 1.08 B130 Universal Patch
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - "release/shiguang-1.0.8-b129"
+      - "release/shiguang-1.0.8-b130-unlocked"
 
 jobs:
   static-check:
@@ -29,7 +29,7 @@ jobs:
           manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
           assert 'Text("正式版 1.08")' in swift
           assert 'MARKETING_VERSION = 1.0.8;' in project
-          assert 'CURRENT_PROJECT_VERSION = 129;' in project
+          assert 'CURRENT_PROJECT_VERSION = 130;' in project
           assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
           home=Path('Resources/Assets.xcassets/LauncherArt.imageset/LauncherArt.png').read_bytes()
           icon=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png').read_bytes()
@@ -43,6 +43,16 @@ jobs:
           assert 'import CryptoKit' in model and '2026110304' in model
           assert 'isImportFinishing' in model and 'unzipProgress.fractionCompleted' in model
           assert 'originalSHA256' in model and 'mismatchedCore' in model
+          # A universal patch intentionally omits both keys; the core override
+          # must remain active regardless of installed SROM revision or SHA.
+          assert 'guard let hashes = m.originalSHA256 else { return nil }' in model
+          assert 'let unlockedCore = m.files.contains("dll/SGCore.swf")' in model
+          assert 'm.originalSHA256 == nil' in model
+          assert 'if let target = m.targetRevision, !target.isEmpty, target != currentRevision' in model
+          assert 'if let expected = m.targetRevision, !expected.isEmpty' in model
+          assert 'let magic = try handle.read(upToCount: 3)' in model
+          assert 'if path == "dll/SGCore.swf"' in model
+          assert 'configuredCorePath(base:' in model and 'configuredWASMPath(base:' in model
           assert 'path == "dll/SGCore.swf"' in model
           assert 'MobilePatchManager.permitted(relative)' in source
           assert 'activeRoot(currentRevision: installedRevision, gameRoot: self.root)' in source
@@ -54,7 +64,7 @@ jobs:
           assert 'host:"103.91.210.16"' not in source
           assert 'host:"202.189.22.234"' not in source
           assert 'of: "202.189.22.234", with: GameSocketBridge.serverHost' in source
-          assert '启动器 正式版 1.08（Build 129' in model
+          assert '启动器 正式版 1.08（Build 130' in model
           from hashlib import sha256
           icon_path=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png')
           assert sha256(icon_path.read_bytes()).hexdigest() == '69fd6308b1b3e2b077978df1ed1bb8f464ec79681d35f2ec5cfacc0dae2c10ea'
@@ -132,7 +142,7 @@ jobs:
           assert not Path('Patches/test-smart-touch.js').exists()
           for forbidden in ['smartHover','SmartHover','setSmartHover','smartPointer','smartTouch','ringAnchor','smartEnableTimer','__shiguangSmartHoverChoice','galaxy-navigation.js']:
               assert forbidden not in swift+source+mouse, 'retired feature '+forbidden
-          print('PASS: official 1.08 Build129 core patch pinning, dynamic SROM paths, and 1.07 launcher invariants')
+          print('PASS: official 1.08 Build130 unlocked mobile patches, dynamic full SROM support, and 1.07 launcher invariants')
           PY_CHECK
   build:
     needs: static-check
@@ -337,27 +347,27 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check 1.08 Build129 metadata
+      - name: Check 1.08 Build130 metadata
         run: |
           /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.8'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '129'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '130'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.08 Build129 project source ZIP
+      - name: Package formal 1.08 Build130 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.08-b129-formal/ --output=/tmp/ShiguangLauncher-v1.08-b129-formal-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.08-b129-formal-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.08-b129-formal-source.zip | grep -Fx 'ShiguangLauncher-v1.08-b129-formal/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.08-b130-unlocked/ --output=/tmp/ShiguangLauncher-v1.08-b130-unlocked-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.08-b130-unlocked-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.08-b130-unlocked-source.zip | grep -Fx 'ShiguangLauncher-v1.08-b130-unlocked/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.08-b129-formal-ipa
+          name: ShiguangLauncher-v1.08-b130-unlocked-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.08-b129-formal-source
-          path: /tmp/ShiguangLauncher-v1.08-b129-formal-source.zip
+          name: ShiguangLauncher-v1.08-b130-unlocked-source
+          path: /tmp/ShiguangLauncher-v1.08-b130-unlocked-source.zip
           if-no-files-found: error
