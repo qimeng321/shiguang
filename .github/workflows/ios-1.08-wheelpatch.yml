@@ -1,10 +1,10 @@
-name: Build Shiguang iOS 1.08 B129 Wheel Patch Test
+name: Build Shiguang iOS 1.08 B129 Formal
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - "test/shiguang-1.08-b129-wheelpatch"
+      - "release/shiguang-1.0.8-b129"
 
 jobs:
   static-check:
@@ -27,7 +27,7 @@ jobs:
           mouse=Path('Patches/touch-controls.js').read_text()
           project=Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
           manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
-          assert 'Text("测试版 1.08")' in swift
+          assert 'Text("正式版 1.08")' in swift
           assert 'MARKETING_VERSION = 1.0.8;' in project
           assert 'CURRENT_PROJECT_VERSION = 129;' in project
           assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
@@ -54,7 +54,7 @@ jobs:
           assert 'host:"103.91.210.16"' not in source
           assert 'host:"202.189.22.234"' not in source
           assert 'of: "202.189.22.234", with: GameSocketBridge.serverHost' in source
-          assert '启动器 测试版 1.08（Build 129' in model
+          assert '启动器 正式版 1.08（Build 129' in model
           from hashlib import sha256
           icon_path=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png')
           assert sha256(icon_path.read_bytes()).hexdigest() == '69fd6308b1b3e2b077978df1ed1bb8f464ec79681d35f2ec5cfacc0dae2c10ea'
@@ -132,7 +132,7 @@ jobs:
           assert not Path('Patches/test-smart-touch.js').exists()
           for forbidden in ['smartHover','SmartHover','setSmartHover','smartPointer','smartTouch','ringAnchor','smartEnableTimer','__shiguangSmartHoverChoice','galaxy-navigation.js']:
               assert forbidden not in swift+source+mouse, 'retired feature '+forbidden
-          print('PASS: 1.08 Build129 Wheel core pinning, dynamic SROM paths, and 1.07 launcher invariants')
+          print('PASS: official 1.08 Build129 core patch pinning, dynamic SROM paths, and 1.07 launcher invariants')
           PY_CHECK
   build:
     needs: static-check
@@ -346,18 +346,18 @@ jobs:
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package 1.08 Wheel test project source ZIP
+      - name: Package formal 1.08 Build129 project source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.08-b129-wheelpatch/ --output=/tmp/ShiguangLauncher-v1.08-b129-wheelpatch-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.08-b129-wheelpatch-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.08-b129-wheelpatch-source.zip | grep -Fx 'ShiguangLauncher-v1.08-b129-wheelpatch/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.08-b129-formal/ --output=/tmp/ShiguangLauncher-v1.08-b129-formal-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.08-b129-formal-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.08-b129-formal-source.zip | grep -Fx 'ShiguangLauncher-v1.08-b129-formal/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.08-b129-wheelpatch-ipa
+          name: ShiguangLauncher-v1.08-b129-formal-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.08-b129-wheelpatch-source
-          path: /tmp/ShiguangLauncher-v1.08-b129-wheelpatch-source.zip
+          name: ShiguangLauncher-v1.08-b129-formal-source
+          path: /tmp/ShiguangLauncher-v1.08-b129-formal-source.zip
           if-no-files-found: error
