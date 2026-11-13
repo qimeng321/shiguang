@@ -582,7 +582,7 @@ struct LauncherView: View {
                 .buttonStyle(.bordered)
                 .disabled(launcher.patchSummary == "未安装手机适配补丁" || launcher.patchBusy)
             }
-            Text("仅支持带 mobile-patch.json 清单的 .sgpatch / .zip；补丁必须是 resource/ 内的游戏资源。安装/撤销后重新进入游戏生效。")
+            Text("支持 .sgpatch / .zip；允许 resource/ 与 dll/SGCore.swf。通用核心补丁不锁资源版本，但新版资源可能不兼容；异常时可撤销。导入后重新进入游戏生效。")
                 .font(.system(size: 11))
                 .foregroundStyle(subtleInk)
                 .fixedSize(horizontal: false, vertical: true)
