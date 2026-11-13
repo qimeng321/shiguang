@@ -439,7 +439,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 测试版 1.08（Build 129 · 命运之轮核心补丁校验）启动；保留 1.07 原功能")
+        LaunchDiagnostics.log("启动器 正式版 1.08（Build 129 · 手机核心补丁兼容）启动；保留 1.07 原功能")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {
