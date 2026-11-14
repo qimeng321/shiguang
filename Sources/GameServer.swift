@@ -7,25 +7,56 @@ final class BattleLoadTrace {
     static let shared = BattleLoadTrace()
     private let lock = NSLock()
     private var records: [String] = []
+    private var counts: [String: Int] = [:]
+    private var requestCount = 0
+    private var totalBytes: UInt64 = 0
+    private var conditionalHits = 0
 
+    // Counts are HTTP requests, NOT decoded Flash objects or WebKit memory.
     func reset() {
         lock.lock()
         defer { lock.unlock() }
         records.removeAll(keepingCapacity: true)
+        counts.removeAll(keepingCapacity: true)
+        requestCount = 0
+        totalBytes = 0
+        conditionalHits = 0
     }
 
-    func record(path: String, bytes: UInt64) {
+    func record(path: String, bytes: UInt64, status: Int = 200) {
         let lower = path.lowercased()
         guard lower.contains("fightresource/") ||
               lower.contains("petfightdll.swf") ||
               lower.contains("petstorage.swf") ||
               lower.contains("worldmap.swf") else { return }
-        let entry = String(format: "%.3f", Date().timeIntervalSince1970) +
-                    " " + String(path.prefix(110)) + " (" + String(bytes) + "B)"
+        var message: String?
         lock.lock()
-        records.append(entry)
-        if records.count > 24 { records.removeFirst(records.count - 24) }
+        requestCount += 1
+        totalBytes += bytes
+        if status == 304 { conditionalHits += 1 }
+        let times = (counts[path] ?? 0) + 1
+        counts[path] = times
+        records.append(String(format: "%.3f", Date().timeIntervalSince1970) +
+                       " " + String(path.prefix(110)) + " (\(bytes)B HTTP\(status))")
+        if records.count > 80 { records.removeFirst(records.count - 80) }
+        // Log sparse repetition landmarks for large battle assets even after
+        // the general HTTP log quota has been reached.
+        if bytes >= 512 * 1024 && [2, 5, 10, 20, 40].contains(times) {
+            message = "[1.10战斗重复请求] 第\(times)次 \(String(path.prefix(110)))，此次HTTP=\(bytes)B (不代表重复解码)"
+        }
         lock.unlock()
+        if let message { LaunchDiagnostics.log(message) }
+    }
+
+    func summary() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        let duplicates = counts.filter { $0.value > 1 }
+            .sorted { $0.value > $1.value }
+            .prefix(5)
+            .map { "\(String($0.key.suffix(52)))×\($0.value)" }
+            .joined(separator: ", ")
+        return "战斗相关HTTP请求=\(requestCount)，传输=\(totalBytes / 1024 / 1024)MiB，304命中=\(conditionalHits)，不同路径=\(counts.count)，重复前五=\(duplicates.isEmpty ? "无" : duplicates)"
     }
 
     func snapshot() -> String {
@@ -48,8 +79,9 @@ final class GameServer {
     var bridgeError: String? { bridge?.failureDescription }
     private let packagedWebApp: Bool
     private let compatibilityModeEnabled: Bool
+    private let battleHTTPCacheEnabled: Bool
     private var tracedRequestCount = 0
-    private let maxTracedRequests = 300
+    private let maxTracedRequests = 1200
     private var versionGetCount = 0
     private var proceededBeyondVersion = false
     private var inspectedVersionHeader = false
@@ -98,10 +130,10 @@ final class GameServer {
     // resources explicitly to distinguish 'Flash never requested it' from 404.
     private func traceRequest(_ method: String, _ path: String, status: Int, size: UInt64? = nil) {
         let lower = path.lowercased()
-        if method == "GET" && status == 200 {
-            BattleLoadTrace.shared.record(path: path, bytes: size ?? 0)
+        if method == "GET" && (status == 200 || status == 304) {
+            BattleLoadTrace.shared.record(path: path, bytes: size ?? 0, status: status)
             if lower.hasSuffix("/petfightdll.swf") {
-                LaunchDiagnostics.log("[1.09战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
+                LaunchDiagnostics.log("[1.10战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
             }
         }
         if method == "GET" && status == 200 {
@@ -130,7 +162,7 @@ final class GameServer {
               lower.hasSuffix(".wasm") else { return }
         guard tracedRequestCount < maxTracedRequests else {
             if tracedRequestCount == maxTracedRequests {
-                LaunchDiagnostics.log("HTTP 详细记录达到 300 条，后续请求已省略")
+                LaunchDiagnostics.log("HTTP 详细记录达到 \(maxTracedRequests) 条；战斗聚合统计继续记录")
             }
             tracedRequestCount += 1
             return
@@ -160,6 +192,8 @@ final class GameServer {
         self.compatibilityModeEnabled = UserDefaults.standard.bool(
             forKey: "shiguang.compatibilityMode103"
         )
+        self.battleHTTPCacheEnabled = UserDefaults.standard.bool(forKey: "shiguang.battleHttpCache110")
+        LaunchDiagnostics.log("[1.10战斗实验] 战斗资源HTTP缓存=" + (battleHTTPCacheEnabled ? "开启（实验）" : "关闭（对照）"))
         self.bridge = packagedWebApp ? try GameSocketBridge.shared() : nil
         guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path) else {
@@ -179,6 +213,7 @@ final class GameServer {
         bridge?.leaveGame()
         listener?.cancel()
         listener = nil
+        LaunchDiagnostics.log("[1.10战斗汇总] " + BattleLoadTrace.shared.summary())
         LaunchDiagnostics.log("[页面生命周期] 游戏结束：HTTP 监听关闭、代理会话清理已请求")
     }
 
@@ -624,8 +659,6 @@ final class GameServer {
         }
         let byteCount = total == 0 ? UInt64(0) : last - first + 1
         let response = isPartial ? "206 Partial Content" : "200 OK"
-        traceRequest(headOnly ? "HEAD" : "GET", "/" + relative,
-                     status: isPartial ? 206 : 200, size: byteCount)
         let contentRange = isPartial ? "Content-Range: bytes \(first)-\(last)/\(total)\r\n" : ""
         // Normal clients keep the original no-store policy. This opt-in mode
         // caches only tiny immutable icons; version/map/login/core never cache.
@@ -637,22 +670,33 @@ final class GameServer {
              low.hasPrefix("resource/item/cloth/swf/") ||
              low.hasPrefix("resource/item/petitem/icon/") ||
              low.hasPrefix("resource/item/doodle/icon/"))
-        let cacheHeader = tinyIcon ? "Cache-Control: private, max-age=45" : "Cache-Control: no-store"
-        // ETag is opt-in ONLY for small immutable icons in compatibility mode.
+        // The 1.10 cache toggle tests HTTP browser caching only. It cannot
+        // free Ruffle/Flash decoded resources. Keep critical game modules,
+        // version, login, and maps outside the experiment.
+        let battleCacheFile = battleHTTPCacheEnabled && !isPartial && total > 0 &&
+            total <= 2_500_000 && low.hasSuffix(".swf") &&
+            (low.hasPrefix("resource/fightresource/pet/swf/") ||
+             low.hasPrefix("resource/fightresource/skill/swf/"))
+        let cacheable = tinyIcon || battleCacheFile
+        let age = battleCacheFile ? 120 : 45
+        let cacheHeader = cacheable ? "Cache-Control: private, max-age=\(age)" : "Cache-Control: no-store"
+        // ETag is restricted to immutable small icons or selected battle art.
         // Do not cache PVM, maps, login SWF or game core files.
         let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         let etag = "\"\(total)-\(Int64(modified * 1000))\""
-        let etagHeader = tinyIcon ? "ETag: \(etag)\r\n" : ""
-        if tinyIcon && !headOnly && ifNoneMatch == etag {
+        let etagHeader = cacheable ? "ETag: \(etag)\r\n" : ""
+        if cacheable && !headOnly && ifNoneMatch == etag {
             try? handle.close()
             traceRequest("GET", "/" + relative, status: 304)
-            let notModified = "HTTP/1.1 304 Not Modified\r\nETag: \(etag)\r\nCache-Control: private, max-age=45\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            let notModified = "HTTP/1.1 304 Not Modified\r\nETag: \(etag)\r\n\(cacheHeader)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             connection.send(content: Data(notModified.utf8), completion: .contentProcessed { [weak self] error in
                 if error == nil { self?.finishHTTPResponse(connection) }
                 else { connection.cancel() }
             })
             return
         }
+        traceRequest(headOnly ? "HEAD" : "GET", "/" + relative,
+                     status: isPartial ? 206 : 200, size: byteCount)
         let setupMs = Double(DispatchTime.now().uptimeNanoseconds - setupStart) / 1_000_000
         if setupMs > 150 {
             LaunchDiagnostics.log(String(format: "[HTTP慢资源准备] %.1fms %@", setupMs, relative))
