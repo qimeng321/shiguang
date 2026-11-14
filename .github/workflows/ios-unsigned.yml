@@ -29,6 +29,7 @@ jobs:
           node Patches/test-frame-cap.js
           node Patches/test-direct-touch.js
           node Patches/test-precision-no-hover.js
+          python3 Patches/test-incremental-archive.py
           python3 - <<'PY_CHECK'
           from pathlib import Path
           import plistlib
