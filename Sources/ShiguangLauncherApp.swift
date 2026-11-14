@@ -121,6 +121,7 @@ struct LauncherView: View {
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
     @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.unlimited.rawValue
     @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
+    @AppStorage("shiguang.nativeCoreB131") private var nativeCoreB131 = true
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -146,7 +147,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.08")
+                        Text("原生内核测试 B131")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -161,6 +162,7 @@ struct LauncherView: View {
                         .padding(.top, 7)
 
                     VStack(spacing: 12) {
+                        nativeCorePicker
                         qualityPicker
                         frameCapPicker
                         compatibilityPicker
@@ -662,6 +664,34 @@ struct LauncherView: View {
         .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18))
     }
 
+    private var nativeCorePicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("游戏运行内核", systemImage: "cpu")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ink)
+                Spacer()
+                Text("独立测试版")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(blue)
+            }
+            Picker("游戏运行内核", selection: $nativeCoreB131) {
+                Text("原生 Ruffle / Metal").tag(true)
+                Text("网页 Ruffle / 备用").tag(false)
+            }
+            .pickerStyle(.segmented)
+            Text(nativeCoreB131
+                 ? "原生内核使用 Rust + Metal，替代游戏画面中的 WKWebView；登录、动态资源与部分工具操作需真机验证。"
+                 : "网页模式为正式版 1.08 的原有 Ruffle Web 实现，用于同资源包 A/B 对照测试。")
+                .font(.system(size: 12))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 19))
+    }
+
     private var qualityPicker: some View {
         let current = GameQualityPreset(rawValue: qualityPreset) ?? .balanced
         return VStack(alignment: .leading, spacing: 11) {
@@ -762,6 +792,7 @@ struct GameView: View {
     @State private var fpsEnabled = false
     // Saved across WebView reloads; off by default for normal click speed.
     @AppStorage("shiguang.delayedTap103") private var delayedTapEnabled = false
+    @AppStorage("shiguang.nativeCoreB131") private var nativeCoreB131 = true
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -774,6 +805,16 @@ struct GameView: View {
                     .foregroundStyle(.white)
                     .tint(.white)
             } else if let server, let url = server.playURL(for: entry) {
+                if nativeCoreB131 {
+                    // The official Swift resource server continues to serve the
+                    // original .srom and any optional .sgpatch overrides.
+                    // Only the actual SWF renderer changes to native Rust/Metal.
+                    NativeRuffleController(url: nativeSWFURL(from: url),
+                                           quality: GameQualityPreset.saved,
+                                           onError: { message in errorText = message })
+                        .id(reloadGeneration)
+                        .frame(width: lockedGeometry.size.width, height: lockedGeometry.size.height)
+                } else {
                 GameWebView(url: url, controlGeneration: controlGeneration,
                             controlAction: controlAction, delayedTapEnabled: delayedTapEnabled,
                             onStatus: { message in
@@ -784,6 +825,7 @@ struct GameView: View {
                 })
                 .id(reloadGeneration) // recreate WKWebView and Flash, leave HTTP service/resources intact
                 .frame(width: lockedGeometry.size.width, height: lockedGeometry.size.height)
+                }
             } else if let errorText {
                 Text(errorText).foregroundStyle(.white).padding(24)
             } else {
@@ -913,7 +955,7 @@ struct GameView: View {
             Text("仅清理本应用 WebKit 的网页磁盘及内存缓存，不删除美化包、已安装游戏资源、账号数据或保存的 diagnostics.txt。")
         }
         .task {
-            LaunchDiagnostics.log("进入游戏：\(entry)")
+            LaunchDiagnostics.log("进入游戏：\(entry)；引擎：" + (nativeCoreB131 ? "Rust/Metal 原生 Ruffle" : "WebKit/WASM 网页 Ruffle"))
             do {
                 let actualSWF = root.appendingPathComponent(entry)
                 guard FileManager.default.fileExists(atPath: actualSWF.path) else {
@@ -974,8 +1016,23 @@ struct GameView: View {
         .accessibilityLabel(label)
     }
 
+    private func nativeSWFURL(from webURL: URL) -> URL {
+        var parts = URLComponents(url: webURL, resolvingAgainstBaseURL: false)!
+        parts.query = nil
+        parts.fragment = nil
+        parts.path = "/" + entry.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return parts.url!
+    }
+
     private func sendControl(_ action: String) {
         guard server != nil else { return }
+        if nativeCoreB131 {
+            let message = "当前是原生 Metal 内核。网页端的精准鼠标和 JS 键盘接口尚未移植，请切回网页模式对照；原生触摸已由 UIKit 处理。"
+            errorText = message
+            LaunchDiagnostics.log("[原生引擎] 已拦截网页特有操作：" + action)
+            collapseToolMenu()
+            return
+        }
         controlAction = action
         controlGeneration += 1
         LaunchDiagnostics.log("[触控辅助] 调用：" + action)
@@ -1004,7 +1061,9 @@ struct GameView: View {
         virtualMouseEnabled = false
         fpsEnabled = false
         reloadGeneration += 1
-        LaunchDiagnostics.log("[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
+        LaunchDiagnostics.log(nativeCoreB131
+            ? "[游戏控制] 用户点击刷新游戏：重新创建 Rust/Metal 原生播放器，保留资源与本地 HTTP 服务"
+            : "[游戏控制] 用户点击刷新游戏：重建 WKWebView，保留 .srom 资源和本地 HTTP 服务")
     }
 
     private func clearWebCache() {
