@@ -101,8 +101,8 @@ patch("core/src/avm2/object/loaderinfo_object.rs",[
         // after dispatching its unload event, before replacing LoaderInfo.
         // Root SWF cache remains untouched. Other live display objects can
         // regenerate their textures/shape handles on next render if needed.
-        let unloaded_movie = match &*self.0.loaded_stream.borrow() {
-            LoaderStream::Swf(movie, _) => Some(*movie),
+        let unloaded_movie = match self.0.loaded_stream.get() {
+            LoaderStream::Swf(movie, _) => Some(movie),
             _ => None,
         };
         if let Some(movie) = unloaded_movie {
