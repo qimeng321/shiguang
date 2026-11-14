@@ -26,7 +26,7 @@ patch("core/src/character.rs",[
     ("use std::cell::OnceCell;", "use std::cell::RefCell;"),
     ("handle: OnceCell<BitmapHandle>,", "handle: RefCell<Option<BitmapHandle>>,"),
     ("handle: OnceCell::default(),", "handle: RefCell::new(None),"),
-    ("""        // FIXME - use \`OnceCell::get_or_try_init\` when stabilized.
+    ("""        // FIXME - use `OnceCell::get_or_try_init` when stabilized.
         if let Some(handle) = self.handle.get() {
             return Ok(handle.clone());
         }
