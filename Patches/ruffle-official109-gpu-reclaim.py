@@ -13,6 +13,8 @@ def patch(path,replacements):
     f=root/path
     s=f.read_text(encoding="utf-8")
     for before,after in replacements:
+        # A JS-authored source string may retain a slash before a literal Rust backtick.
+        before=before.replace(chr(92)+chr(96), chr(96))
         count=s.count(before)
         if count!=1:
             sys.exit(f"[B143] Source mismatch {path}: occurrence={count}, anchor={before[:100]!r}")
