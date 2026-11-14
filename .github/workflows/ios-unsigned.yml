@@ -16,6 +16,7 @@ on:
       - "release/shiguang-1.0.7-b128-wheel-404fix"
       - "release/shiguang-1.0.7-b128-wheel-macos26"
       - "release/shiguang-1.0.9-b136-nightly-font"
+      - "tests/ios109-dpr15-battle-http-cache-c"
 
 jobs:
   static-check:
@@ -61,7 +62,7 @@ jobs:
           assert 'battleExperimentPicker' not in swift and 'fontMetricsPicker' not in swift
           assert 'GameFontMetricsPreset' not in swift and 'GameFontMetricsPreset' not in source
           assert 'var configuredFontURL="/ruffle/fonts/NotoSansCJKsc-Regular.otf";' in source
-          assert 'self.battleHTTPCacheEnabled = false' in source
+          assert 'self.battleHTTPCacheEnabled = true' in source
           assert '1.09定时采样' in swift and 'NativeMemoryProbe' in swift
           assert 'BattleLoadTrace.shared.reset()' in source
           assert 'func markStart()' in source and 'func markEnd()' in source
@@ -310,6 +311,7 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
             CODE_SIGNING_ALLOWED=NO \
             build
       - name: Package unsigned IPA
@@ -341,11 +343,11 @@ jobs:
           unzip -Z -1 /tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip | grep -Fx 'ShiguangLauncher-v1.09-b136-nightly-font/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.09-b136-nightly-font-ipa
+          name: ShiguangLauncher-testC-battle-cache-build-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.09-b136-nightly-font-source
+          name: ShiguangLauncher-testC-battle-cache-source
           path: /tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip
           if-no-files-found: error
