@@ -197,7 +197,7 @@ jobs:
           assert 'quality:configuredQuality' in html
           assert 'let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in html
           assert 'let tinyIcon = compatibilityModeEnabled && !isPartial' in html
-          assert 'let cacheHeader = tinyIcon' in html
+          assert 'let cacheHeader = cacheable' in html
           assert 'shiguang-quality' in html
           assert 'case saving, balanced, ultra' in swift
           assert '@AppStorage(GameFrameCapPreset.defaultsKey)' in swift
