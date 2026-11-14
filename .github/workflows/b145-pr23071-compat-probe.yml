@@ -1,0 +1,46 @@
+name: B145 PR23071 compatibility assessment (do not package)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "fix/official109-b145-gc-lifecycles"
+
+permissions:
+  contents: read
+
+jobs:
+  assess:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ruffle-rs/ruffle
+          ref: 65d984777f5acc28e18fe6c3e89d28266fc1fb75
+          fetch-depth: 0
+      - name: Compare PR23071 library-GC branch with official Nightly
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/pull/23071/head:refs/remotes/origin/pr23071'
+          echo "Nightly: $(git rev-parse HEAD)"
+          echo "PR23071: $(git rev-parse refs/remotes/origin/pr23071)"
+          set +e
+          git merge --no-ff --no-commit refs/remotes/origin/pr23071 > /tmp/b145-merge-log.txt 2>&1
+          merge_rc=$?
+          set -e
+          echo "PR23071 merge exit code: $merge_rc" | tee /tmp/b145-merge-summary.txt
+          echo "Conflicted source files:" | tee -a /tmp/b145-merge-summary.txt
+          git diff --name-only --diff-filter=U | tee -a /tmp/b145-merge-summary.txt
+          echo "Conflict count: $(git diff --name-only --diff-filter=U | wc -l)" | tee -a /tmp/b145-merge-summary.txt
+          echo "--- Merged-file status ---" | tee -a /tmp/b145-merge-summary.txt
+          git status --short | tee -a /tmp/b145-merge-summary.txt
+          cat /tmp/b145-merge-summary.txt
+          echo "Assessment only; full PR not yet integrated into launcher."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: b145-pr23071-compat-report
+          path: |
+            /tmp/b145-merge-summary.txt
+            /tmp/b145-merge-log.txt
+          if-no-files-found: error
