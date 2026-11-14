@@ -328,14 +328,14 @@ enum GameIncrementalUpdater {
             guard let target = revision(from: xml) else { throw GameIncrementalError.invalidRevision }
             revisionValue = target
         }
-        LaunchDiagnostics.log("[增量更新] 检测到\\(paths.count)个资源文件；目标修订号=\\(revisionValue ?? "保持当前")")
+        LaunchDiagnostics.log("[增量更新] 检测到\(paths.count)个资源文件；目标修订号=\(revisionValue ?? "保持当前")")
         return CheckedArchive(paths: paths, entries: entries, totalBytes: totalBytes,
                               targetRevision: revisionValue)
     }
 
     private static func revision(from data: Data) -> String? {
         guard let xml = String(data: data, encoding: .utf8),
-              let after = xml.components(separatedBy: "ver=\\\"").dropFirst().first else { return nil }
+              let after = xml.components(separatedBy: "ver=\"").dropFirst().first else { return nil }
         let value = String(after.prefix(while: { $0.isNumber }))
         // The resource pack's own dll.xml carries the version. Keep basic
         // structural validation but do not lock the updater to one core name.
