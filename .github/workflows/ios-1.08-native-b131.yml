@@ -1,0 +1,394 @@
+name: Build Shiguang iOS 1.08 B131 Native Ruffle Hybrid Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "test/shiguang-1.08-b131-native-core"
+
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm FPS and keyboard/layout test invariants
+        run: |
+          node --check Patches/frame-cap.js
+          node --check Patches/touch-controls.js
+          node Patches/test-frame-cap.js
+          node Patches/test-direct-touch.js
+          node Patches/test-precision-no-hover.js
+          python3 - <<'PY_CHECK'
+          from pathlib import Path
+          import json,plistlib
+          source=Path('Sources/GameServer.swift').read_text()
+          swift=Path('Sources/ShiguangLauncherApp.swift').read_text()
+          model=Path('Sources/LauncherModel.swift').read_text()
+          mouse=Path('Patches/touch-controls.js').read_text()
+          project=Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
+          manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
+          assert 'Text("原生内核测试 B131")' in swift
+          assert 'MARKETING_VERSION = 1.0.8;' in project
+          assert 'CURRENT_PROJECT_VERSION = 131;' in project
+          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.nativeb131;' in project
+          home=Path('Resources/Assets.xcassets/LauncherArt.imageset/LauncherArt.png').read_bytes()
+          icon=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png').read_bytes()
+          assert home == icon, 'Home header logo must match current AppIcon'
+          assert 'smartbeta' not in project
+          assert manifest['based_on_test_branch']=='test/1.2-nono-precision-safe-start-b118'
+          assert manifest['release_version']=='1.0.6' and manifest['build_number']==124
+          assert manifest['resource_version']=='0.18.0' and manifest['core_revision']=='2026110304'
+          assert manifest['source_analysis_only'] and not manifest['game_assets_embedded']
+          assert manifest['client_sha256'] in Path('Patches/pvm-compat.js').read_text()
+          assert 'import CryptoKit' in model and '2026110304' in model
+          assert 'isImportFinishing' in model and 'unzipProgress.fractionCompleted' in model
+          assert 'originalSHA256' in model and 'mismatchedCore' in model
+          # A universal patch intentionally omits both keys; the core override
+          # must remain active regardless of installed SROM revision or SHA.
+          assert 'guard let hashes = m.originalSHA256 else { return nil }' in model
+          assert 'let unlockedCore = m.files.contains("dll/SGCore.swf")' in model
+          assert 'm.originalSHA256 == nil' in model
+          assert 'if let target = m.targetRevision, !target.isEmpty, target != currentRevision' in model
+          assert 'if let expected = m.targetRevision, !expected.isEmpty' in model
+          assert 'let magic = try handle.read(upToCount: 3)' in model
+          assert 'if path == "dll/SGCore.swf"' in model
+          assert 'configuredCorePath(base:' in model and 'configuredWASMPath(base:' in model
+          assert 'path == "dll/SGCore.swf"' in model
+          assert 'MobilePatchManager.permitted(relative)' in source
+          assert 'activeRoot(currentRevision: installedRevision, gameRoot: self.root)' in source
+          assert 'coreMismatch' in model
+          assert 'MobilePatchManager.install(url, currentRevision: revision, gameRoot: installedGameRoot)' in model
+          assert 'skipCRC32: false' in model and 'validateInstalledPackage(root:' in model
+          bridge=Path('Sources/GameSocketBridge.swift').read_text()
+          assert '202.189.22.79' in bridge and '202.189.22.234' not in bridge and '103.91.210.16' not in bridge
+          assert 'host:"103.91.210.16"' not in source
+          assert 'host:"202.189.22.234"' not in source
+          assert 'of: "202.189.22.234", with: GameSocketBridge.serverHost' in source
+          assert '启动器 正式版 1.08（Build 130' in model
+          from hashlib import sha256
+          icon_path=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png')
+          assert sha256(icon_path.read_bytes()).hexdigest() == '69fd6308b1b3e2b077978df1ed1bb8f464ec79681d35f2ec5cfacc0dae2c10ea'
+          appicons=json.loads(Path('Resources/Assets.xcassets/AppIcon.appiconset/Contents.json').read_text())
+          assert appicons['images'] == [{'filename':'AppIcon.png','idiom':'universal','platform':'ios','size':'1024x1024'}]
+          assert 'configuredCorePath(base:' in model and 'configuredWASMPath(base:' in model
+          assert 'require("dll/NieoCore.swf"' not in model
+          assert 'require("assets/nieo_wasm_core_bg.wasm"' not in model
+          assert '[登录地址] 已将资源包 ip.txt 更新为新服务器地址' in source
+          assert 'func leaveGame()' in bridge and 'static func shared()' in bridge
+          assert 'cmd == 10002' in bridge and 'virtualRoomPort' in bridge
+          assert 'NonoVipDailySignPanel.swf' in source and 'requestedPath' in source
+          # Regression: Destiny Wheel sends a malformed double-slash SWF URL.
+          # Only this known path is rewritten; generic unsafe paths are rejected.
+          assert 'requestedPath == "/resource//appRes/1211/WheelChoice_UI.swf"' in source
+          assert 'path = "/resource/appRes/1211/WheelChoice_UI.swf"' in source
+          assert '[命运之轮] 已修正 SWF 请求中的重复斜杠' in source
+          assert '!parts.contains(where: { $0 == ".." || $0 == "." || $0.isEmpty })' in source
+          assert 'decoded.contains("\\\\")' in source
+          assert 'GridItem(.flexible(), spacing: 4)' in swift
+          assert '32975' in source and '32975' in bridge
+          # Ruffle's load(options) overwrites global socketProxy; assert the live
+          # per-player config contains the base routing entry.
+          proxy_options=source.split('options.socketProxy=[',1)[1].split('];',1)[0]
+          assert 'port:22975' in proxy_options and '32975' in proxy_options
+          assert 'GameProtocolFramer' in bridge and 'downstreamFramer.consume' in bridge
+          assert 'GameFontPreset' not in swift and 'fontPositionPicker' not in swift
+          assert 'configuredFontURL' in source and 'NotoSansCJKsc-Regular.otf' in source
+          delta=Path('Sources/GameIncrementalUpdater.swift').read_text()
+          assert 'import ZIPFoundation' in delta and 'import CryptoKit' in delta
+          assert 'func recoverIfNeeded(gameRoot:' in delta
+          assert 'func inspect(archiveURL:' in delta and 'func install(archiveURL:' in delta
+          assert 'skipCRC32: false' in delta and 'SHA256()' in delta
+          assert 'backupRoot' in delta and 'journal.committed = true' in delta
+          assert 'GameIncrementalUpdater.recoverIfNeeded' in model
+          assert 'prepareIncrementalUpdate(_ source: URL)' in model
+          assert 'installPreparedIncrementalUpdate()' in model
+          assert 'incrementalUpdatePanel' in swift and 'showingDeltaPicker' in swift
+          assert '["zip", "srom"].contains(source.pathExtension.lowercased())' in model
+          assert '["zip", "srom"].contains(url.pathExtension.lowercased())' in delta
+          assert 'case .fullGamePackage' in delta
+          assert 'frameCapPreset = option.rawValue' in swift and 'qualityPreset = option.rawValue' in swift
+          assert swift.count('.fill(isSelected ? blue : Color.white)') >= 2
+          assert 'Text("1.06 新功能")' not in swift and 'Text("测试功能")' not in swift
+          assert 'GameIncrementalUpdater.swift' in project
+          assert 'MobilePatchManager' in model and 'func importMobilePatch(_ url: URL)' in model
+          assert 'func clearMobilePatch()' in model
+          assert 'mobilePatchRoot' in source and 'mobilePatchPanel' in swift
+          assert 'let ifNoneMatch =' in source
+          assert 'private var verifiedPathCache:' in source
+          assert 'private let maxPathEntries = 40_000' in source
+          assert 'private let pathCacheTTL: TimeInterval = 45' in source
+          assert 'verifiedPathCache[key] = VerifiedPath(' in source
+          assert 'verifiedPathCache.removeValue(forKey: key)' in source
+          assert 'ETag:' in source and '304 Not Modified' in source
+          assert 'GeometryReader { lockedGeometry in' in swift
+          assert 'ScrollView(.vertical)' in swift
+          assert 'function fit(force)' in source
+          assert 'Math.min(w/960,h/560)' in source
+          assert 'case unlimited, fps60, fps30' in swift
+          assert 'case saving, balanced, ultra' in swift
+          assert 'Toggle(isOn: $compatibilityMode)' in swift
+          assert 'input.type="email"' in source
+          assert 'input.setAttribute("inputmode","email")' in source
+          assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
+          assert 'enableMouse:function()' in source
+          assert 'function doubleClick()' in mouse and 'function rightClick()' in mouse
+          assert 'function precisePress(p,duration)' in mouse
+          assert 'function directPointerDown(ev)' in mouse
+          assert 'function directPointerUp(ev)' in mouse
+          assert 'btn("sh-mouse-double",row,"双击",doubleClick)' in mouse
+          assert 'btn("sh-mouse-right",row,"右键",rightClick)' in mouse
+          assert 'setDelayedTap:setDelayedTap' in mouse
+          assert 'ShiguangMapBridge' not in source and 'toggleMapControls' not in swift
+          assert not Path('Patches/test-smart-touch.js').exists()
+          for forbidden in ['smartHover','SmartHover','setSmartHover','smartPointer','smartTouch','ringAnchor','smartEnableTimer','__shiguangSmartHoverChoice','galaxy-navigation.js']:
+              assert forbidden not in swift+source+mouse, 'retired feature '+forbidden
+          print('PASS: test B131 original 1.08 UI and resource features, native Ruffle Metal game rendering and optional Web fallback')
+          PY_CHECK
+  build:
+    needs: static-check
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Align Ruffle Web engine with Windows microclient (0.7.1)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --retry 3 \
+            "https://github.com/ruffle-rs/ruffle/releases/download/v0.7.1/ruffle-0.7.1-web-selfhosted.zip" \
+            --output "$RUNNER_TEMP/ruffle-web.zip"
+          mkdir -p "$RUNNER_TEMP/ruffle-extracted"
+          unzip -q "$RUNNER_TEMP/ruffle-web.zip" -d "$RUNNER_TEMP/ruffle-extracted"
+          entry="$(find "$RUNNER_TEMP/ruffle-extracted" -type f -name ruffle.js -print -quit)"
+          test -n "$entry"
+          directory="$(dirname "$entry")"
+          rm -rf Resources/Ruffle
+          mkdir -p Resources/Ruffle
+          ditto "$directory" Resources/Ruffle
+          printf '%s\n' 'Ruffle web 0.7.1 (to match Windows GameEngine.exe)' > Resources/Ruffle/engine-version.txt
+          # The compatibility delta is only for the known SHA-256 of Client.swf.
+          # No game resources are modified in the user's .srom.
+          cp Patches/pvm-compat.js Resources/Ruffle/pvm-compat.js
+          cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
+          cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
+          cp Patches/touch-controls.js Resources/Ruffle/touch-controls.js
+          cp Patches/frame-cap.js Resources/Ruffle/frame-cap.js
+          test -s Resources/Ruffle/touch-controls.js
+          test -s Resources/Ruffle/frame-cap.js
+          test -s Resources/Ruffle/byte-loader-followup.b64
+          test -s Resources/Ruffle/pvm-compat.js
+          test -s Resources/Ruffle/pvm-compat.b64
+          test -f Resources/Ruffle/ruffle.js
+          test "$(find Resources/Ruffle -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
+          python3 - <<'PY_CHECK'
+          from pathlib import Path
+          p=Path('Resources/Ruffle/ruffle.js').read_text()
+          if '0.7.1' not in p:
+              raise SystemExit('Wrong Ruffle web bundle: expected version 0.7.1')
+          print('Validated Ruffle 0.7.1 web runtime, JS bytes',len(p))
+          PY_CHECK
+      - name: Bundle OFL Simplified Chinese font for Ruffle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Resources/Ruffle/fonts
+          curl --fail --location --show-error --retry 4 \
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+            --output Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          actual="$(git hash-object Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)"
+          test "$actual" = "dc15562470b4f842321894787a0d066879ccff8b"
+          curl --fail --location --show-error --retry 4 \
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE" \
+            --output Resources/Ruffle/fonts/OFL-LICENSE.txt
+          test -s Resources/Ruffle/fonts/OFL-LICENSE.txt
+          test "$(stat -f%z Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)" -gt 16000000
+          echo "Verified Noto Sans CJK SC font and OFL license"
+      - name: Set up Python for test font processing
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Adjust release CJK fallback font vertical placement
+        run: |
+          python3 -m pip install "fonttools==4.60.1"
+          python3 Patches/adjust-cjk-baseline.py Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          python3 - <<'PY_VERIFY_FONT'
+          from pathlib import Path
+          from fontTools.ttLib import TTFont
+          root=Path('Resources/Ruffle/fonts')
+          fonts=list(root.glob('*.otf'))
+          assert len(fonts)==1, f'Expected exactly one packaged fallback font, got {fonts}'
+          assert fonts[0].name=='NotoSansCJKsc-Regular.otf'
+          font=TTFont(str(fonts[0]))
+          offset=float(font['CFF '].cff.topDictIndex[0].FontMatrix[5])
+          font.close()
+          assert abs(offset-0.110)<0.000001, f'Unexpected font baseline: {offset}'
+          print('Verified ONE fallback CJK font with +110/1000 em offset')
+          PY_VERIFY_FONT
+      - name: Validate Canvas touch controls module
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check Patches/touch-controls.js
+          node --check Patches/frame-cap.js
+          node Patches/test-frame-cap.js
+          node Patches/test-direct-touch.js
+          node --check Resources/Ruffle/touch-controls.js
+          python3 - <<'PY_TOUCH'
+          from pathlib import Path
+          js=Path("Resources/Ruffle/touch-controls.js").read_text()
+          html=Path("Sources/GameServer.swift").read_text()
+          assert 'c.dispatchEvent(ev)' in js, "Pointer events must target inner Canvas"
+          assert 'window.ShiguangTouchControls' in js
+          assert '/ruffle/touch-controls.js' in html
+          assert '/ruffle/frame-cap.js' in html
+          assert 'touchControls=window.ShiguangTouchControls(player,report)' in html
+          assert 'Object.defineProperty(ev,"offsetX"' in js
+          assert 'Object.defineProperty(ev,"offsetY"' in js
+          assert 'finishPendingClick' not in js
+          assert 'if(!hover){' in js
+          assert 'function directPointerDown(ev)' in js
+          assert 'function directPointerUp(ev)' in js
+          assert 'enableMapSwipe' not in js
+          assert '/ruffle/galaxy-navigation.js' not in html
+          swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
+          assert 'ProgressView(value: launcher.importProgress, total: 1.0)' in swift
+          model=Path("Sources/LauncherModel.swift").read_text()
+          assert 'unzipProgress.fractionCompleted' in model
+          assert 'onProgress(fraction)' in model
+          assert 'LaunchDiagnostics.validateInstalledPackage(root: staging' in model
+          assert 'try "full-unzip-crc32-ok' in model
+          assert 'self.importFailureMessage' in model
+          assert 'self.isInstalledValidated' in model
+          assert 'galaxyBookmarks' not in swift
+          assert 'player.dispatchEvent(new PointerEvent(' not in html
+          # Quality choices are selected on home screen, stored in UserDefaults,
+          # and read server-side before generating a new Ruffle HTML page.
+          assert '@AppStorage(GameQualityPreset.defaultsKey)' in swift
+          assert 'ForEach(GameQualityPreset.allCases)' in swift and 'qualityPreset = option.rawValue' in swift
+          assert 'GameQualityPreset.saved' in html
+          assert 'options.quality=configuredQuality' in html
+          assert 'highDpi' not in html  # Not a documented Ruffle Web option
+          assert 'quality:configuredQuality' in html
+          assert 'let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in html
+          assert 'let tinyIcon = compatibilityModeEnabled && !isPartial' in html
+          assert 'let cacheHeader = tinyIcon' in html
+          assert 'shiguang-quality' in html
+          assert 'case saving, balanced, ultra' in swift
+          assert '@AppStorage(GameFrameCapPreset.defaultsKey)' in swift
+          assert 'ForEach(GameFrameCapPreset.allCases)' in swift and 'frameCapPreset = option.rawValue' in swift
+          assert 'GameFrameCapPreset.saved' in html
+          assert 'shiguang-max-fps' in html
+          assert 'window.ShiguangFrameCap' in html
+          assert 'options.frameRate' not in html
+          assert 'frameRate:configured' not in html
+          assert 'case unlimited, fps60, fps30' in swift
+          assert 'fpsRequest(fpsTick)' in html
+          # iOS email keyboard hint is deliberately on the existing Ruffle
+          # virtual-keyboard element; the single path prevents double input.
+          assert 'input.type="email"' in html
+          assert 'input.setAttribute("inputmode","email")' in html
+          assert 'input.setAttribute("lang","en-US")' in html
+          assert 'input.__shiguangNativeInput' in html
+          assert 'input.addEventListener("input",function(ev)' in html
+          assert 'input.addEventListener("input",function(ev)' in html
+          # Stable stage survives transient on-screen keyboard resizing.
+          assert 'function scheduleFit()' in html
+          assert 'Math.min(w/960,h/560)' in html
+          assert 'inputHasFocus()' in html
+          assert 'if(state!==last)' in html
+          assert 'dockLast=' not in html
+          print("Verified persistent three-tier quality controls and game setting wiring")
+          print("Verified separate Canvas-pointer module and HTML wiring")
+          PY_TOUCH
+      - name: Check embedded touch controls JavaScript syntax
+        shell: bash
+        run: |
+          python3 - <<'PY_CHECK_JS'
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+          source = Path("Sources/GameServer.swift").read_text(encoding="utf-8")
+          page = source.split("private func page(swfURL:", 1)[1]
+          html = page.split('return """', 1)[1].split('"""', 1)[0]
+          scripts = re.findall(r'<script(?:\s[^>]*)?>([\s\S]*?)</script>', html)
+          assert len(scripts) >= 2, "Expected inline Ruffle config and touch controls"
+          for index, script in enumerate(scripts):
+              script = script.replace(r'\(json(swfURL))', '"/Client.swf"')
+              script = script.replace(r'\(json(baseURL))', '"/"')
+              with tempfile.NamedTemporaryFile(suffix=".js", mode="w", encoding="utf-8") as out:
+                  out.write(script)
+                  out.flush()
+                  subprocess.run(["node", "--check", out.name], check=True)
+          print("Embedded JS syntax verified:", len(scripts), "scripts")
+          PY_CHECK_JS
+      - name: Test TCP fragmented and coalesced response frames
+        run: |
+          swiftc Sources/GameProtocolFramer.swift Patches/test-game-protocol-framer.swift -o "$RUNNER_TEMP/test-framer"
+          "$RUNNER_TEMP/test-framer"
+      - name: Verify incremental update ZIP fixture and source syntax
+        run: |
+          python3 Patches/test-incremental-archive.py
+          swiftc -frontend -parse Sources/GameIncrementalUpdater.swift Sources/LauncherModel.swift Sources/ShiguangLauncherApp.swift Sources/NativeRuffleController.swift
+      - name: Compile real native Rust Metal Ruffle core for iOS
+        shell: bash
+        run: |
+          bash NativeRuffle/build-static.sh
+          test -s NativeRuffle/lib/libruffle_ios.a
+      - name: Validate embedded Swift/native Rust bridge before xcodebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'shiguang_native_player_create' Sources/NativeRuffleController.swift
+          grep -Fq 'NativeRuffleController(url: nativeSWFURL' Sources/ShiguangLauncherApp.swift
+          grep -Fq 'if nativeCoreB131 {' Sources/ShiguangLauncherApp.swift
+          grep -Fq 'Library/Application Support' NativeRuffle/README-B131.md || true
+          python3 - <<'PY_NATIVE'
+          from pathlib import Path
+          s = Path("Sources/ShiguangLauncherApp.swift").read_text()
+          assert 'LauncherModel' in s and 'GameWebView' in s
+          assert 'nativeCorePicker' in s and 'showingPatchPicker' in s
+          assert 'LauncherModel.swift' in Path("ShiguangLauncher.xcodeproj/project.pbxproj").read_text()
+          print("Hybrid native and Web engine UI and resource controls present")
+          PY_NATIVE
+      - name: Build for iPhone and iPad
+        run: |
+          xcodebuild \
+            -project ShiguangLauncher.xcodeproj \
+            -scheme ShiguangLauncher \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/Payload"
+          ditto "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/ShiguangLauncher.app" \
+                "$RUNNER_TEMP/Payload/ShiguangLauncher.app"
+          cd "$RUNNER_TEMP"
+          zip -q -r ShiguangLauncher-unsigned.ipa Payload
+          cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
+      - name: Check native test B131 metadata
+        run: |
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.8'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '131'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.nativeb131'
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
+      - name: Package native Ruffle B131 test sources
+        run: |
+          git archive --format=zip --prefix=ShiguangLauncher-v1.08-b131-native-core/ --output=/tmp/ShiguangLauncher-v1.08-b131-native-core-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.08-b131-native-core-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.08-b131-native-core-source.zip | grep -Fx 'ShiguangLauncher-v1.08-b131-native-core/Sources/ShiguangLauncherApp.swift'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangLauncher-v1.08-b131-native-core-ipa
+          path: /tmp/ShiguangLauncher-unsigned.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangLauncher-v1.08-b131-native-core-source
+          path: /tmp/ShiguangLauncher-v1.08-b131-native-core-source.zip
+          if-no-files-found: error
