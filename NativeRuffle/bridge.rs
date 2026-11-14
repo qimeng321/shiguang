@@ -2,6 +2,48 @@
 //! The game's SwiftUI home screen and asset server stay in Swift; this
 //! creates a true native Rust/Metal player, never a WKWebView.
 use std::ffi::{c_char, c_void, CStr};
+use std::cell::OnceCell;
+use std::sync::OnceLock;
+
+/// B001 runs inside #[tokio::main]. In B131, SwiftUI owns UIApplicationMain,
+/// so Rust's main() is never called and there is no Tokio driver by default.
+/// Ruffle's navigator uses tokio::spawn even when fetching the first SWF.
+/// Keep one process-wide runtime alive and keep its Handle entered on the UIKit
+/// main thread for the lifetime of that thread (as #[tokio::main] does).
+static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+thread_local! {
+    static TOKIO_MAIN_THREAD_GUARD: OnceCell<tokio::runtime::EnterGuard<'static>> = const { OnceCell::new() };
+}
+
+fn ensure_native_async_runtime() -> bool {
+    if MainThreadMarker::new().is_none() {
+        eprintln!("[B131-native] UIKit bridge called off main thread");
+        return false;
+    }
+    if TOKIO_RUNTIME.get().is_none() {
+        let built = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("shiguang-native-async")
+            .enable_all()
+            .build();
+        match built {
+            Ok(runtime) => {
+                // An unlikely race only drops the redundant runtime; the
+                // winner remains installed for the lifetime of the app.
+                let _ = TOKIO_RUNTIME.set(runtime);
+            }
+            Err(e) => {
+                eprintln!("[B131-native] Tokio runtime creation failed: {e}");
+                return false;
+            }
+        }
+    }
+    let Some(runtime) = TOKIO_RUNTIME.get() else { return false; };
+    TOKIO_MAIN_THREAD_GUARD.with(|slot| {
+        slot.get_or_init(|| runtime.handle().enter());
+    });
+    true
+}
 
 use objc2::rc::Retained;
 use objc2::ClassType;
@@ -18,6 +60,9 @@ use url::Url;
 pub unsafe extern "C" fn shiguang_native_player_create(url_c: *const c_char, quality: u32) -> *mut c_void {
     if url_c.is_null() { return std::ptr::null_mut(); }
     let Some(main) = MainThreadMarker::new() else { return std::ptr::null_mut(); };
+    // MUST happen before SwiftUI requests the native PlayerView. Ruffle's
+    // first HTTP fetch may call tokio::spawn during viewDidLoad / timer tick.
+    if !ensure_native_async_runtime() { return std::ptr::null_mut(); }
     let Ok(raw) = CStr::from_ptr(url_c).to_str() else { return std::ptr::null_mut(); };
     let Ok(url) = Url::parse(raw) else { return std::ptr::null_mut(); };
     if url.scheme() != "http" || url.host_str() != Some("127.0.0.1") {
