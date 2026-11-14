@@ -12,7 +12,7 @@ struct ShiguangLauncherApp: App {
             LauncherView()
                 .environmentObject(launcher)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                    LaunchDiagnostics.log("[1.09战斗诊断] iOS 发出内存警告；近期资源：" + BattleLoadTrace.shared.snapshot())
+                    LaunchDiagnostics.log("[1.10内存警告] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
                 }
                 // Files → share/open in 拾光号 is a second route for .srom.
                 .onOpenURL { url in
@@ -110,6 +110,49 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
     }
 }
 
+
+// Select the rendering backend only for A/B diagnosis. Ruffle may fall back
+// when WebGL or Canvas cannot support a specific game feature.
+enum GameRendererPreset: String, CaseIterable, Identifiable {
+    case automatic, webgl, canvas
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .automatic: return "自动"
+        case .webgl: return "WebGL"
+        case .canvas: return "Canvas"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .automatic: return "Ruffle 默认自动选择；建议先作为对照运行"
+        case .webgl: return "尝试基础 WebGL 后端，对比 GPU 驱动和渲染稳定性"
+        case .canvas: return "尝试 Canvas 后端，速度较慢，可能出现画面差异"
+        }
+    }
+    static let defaultsKey = "shiguang.renderer110"
+    static var saved: GameRendererPreset {
+        GameRendererPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .automatic
+    }
+}
+
+// Native launcher resident size only. This does not measure WKWebView's
+// separate WebContent/GPU processes and must not be called total game RAM.
+enum NativeMemoryProbe {
+    static func report() -> String {
+        var info = mach_task_basic_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info_data_t>.size /
+                                            MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return "启动器常驻内存不可读取(内核返回\(result))" }
+        return "启动器RSS=\(info.resident_size / 1_048_576)MiB（不含WebKit独立进程）"
+    }
+}
+
 struct LauncherView: View {
     @EnvironmentObject private var launcher: LauncherModel
     @State private var showingPicker = false
@@ -124,6 +167,8 @@ struct LauncherView: View {
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.saving.rawValue
     @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.fps30.rawValue
     @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
+    @AppStorage(GameRendererPreset.defaultsKey) private var rendererPreset = GameRendererPreset.automatic.rawValue
+    @AppStorage("shiguang.battleHttpCache110") private var battleHTTPCacheEnabled = false
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -149,7 +194,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("测试版 1.09 · 战斗稳定性")
+                        Text("测试版 1.10 · 连战实验")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -167,6 +212,7 @@ struct LauncherView: View {
                         qualityPicker
                         frameCapPicker
                         compatibilityPicker
+                        battleExperimentPicker
                     }
                     .padding(.top, 23)
 
@@ -646,6 +692,50 @@ struct LauncherView: View {
         .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
     }
 
+    private var battleExperimentPicker: some View {
+        let renderer = GameRendererPreset(rawValue: rendererPreset) ?? .automatic
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack {
+                Label("连续战斗实验", systemImage: "flask")
+                    .font(.system(size: 16, weight: .bold)).foregroundStyle(ink)
+                Spacer()
+                Text("1.10 专项").font(.system(size: 11, weight: .medium)).foregroundStyle(blue)
+            }
+            HStack(spacing: 5) {
+                ForEach(GameRendererPreset.allCases) { option in
+                    let selected = rendererPreset == option.rawValue
+                    Button { rendererPreset = option.rawValue } label: {
+                        Text(option.title)
+                            .font(.system(size: 13, weight: selected ? .bold : .medium))
+                            .foregroundStyle(selected ? .white : ink)
+                            .frame(maxWidth: .infinity, minHeight: 38)
+                            .background(selected ? blue : Color.white,
+                                        in: RoundedRectangle(cornerRadius: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Ruffle 渲染器：" + option.title)
+                }
+            }
+            .padding(4)
+            .background(Color(red: 0.91, green: 0.93, blue: 0.96),
+                        in: RoundedRectangle(cornerRadius: 12))
+            Text(renderer.detail)
+                .font(.system(size: 12)).foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle(isOn: $battleHTTPCacheEnabled) {
+                Text("战斗 SWF 网页缓存实验").font(.system(size: 14, weight: .semibold))
+            }
+            .tint(green)
+            Text("默认关闭。开启后只允许部分战斗精灵/技能 SWF 使用短时 HTTP 缓存；不修改美化包，不保证 Ruffle 复用已解码对象。对照时请保持其他设置一致。")
+                .font(.system(size: 11)).foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("每次更改后重新进入游戏；日志每15秒记录启动器内存和资源累计量。")
+                .font(.system(size: 11)).foregroundStyle(subtleInk)
+        }
+        .padding(15)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18))
+    }
+
     private var compatibilityPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle(isOn: $compatibilityMode) {
@@ -954,6 +1044,10 @@ struct GameView: View {
                 LaunchDiagnostics.log("本地服务创建失败：" + error.localizedDescription)
             }
         }
+        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
+            guard server != nil else { return }
+            LaunchDiagnostics.log("[1.10定时采样] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
+        }
         .onDisappear {
             server?.leaveGame()
             server = nil
@@ -1135,7 +1229,7 @@ struct GameWebView: UIViewRepresentable {
                 } catch(e) { fail(label + '：Ruffle 状态读取失败：' + String(e).slice(0, 130)); }
               }
               window.addEventListener('DOMContentLoaded', function () {
-                status('1.09 战斗稳定性测试：原生DPR=' + String(window.__shiguangNativeDPR || '?')
+                status('1.10 战斗连续运行实验：原生DPR=' + String(window.__shiguangNativeDPR || '?')
                   + '，实际DPR=' + String(window.devicePixelRatio || '?')
                   + '，覆盖状态=' + (window.__shiguangDPRCapError || '正常'));
                 setTimeout(function () { reportPlayerState('启动5秒'); }, 5000);
@@ -1300,7 +1394,7 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            LaunchDiagnostics.log("[1.09战斗诊断] WebKit 内容进程终止；最近关键资源：" + BattleLoadTrace.shared.snapshot())
+            LaunchDiagnostics.log("[1.10崩溃快照] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
             LaunchDiagnostics.log("[严重诊断] WebKit 内容进程终止，已保留资源与诊断日志；需要手动刷新")
             onError("游戏网页进程已终止，可能存在内存压力或渲染异常。请点「重新加载游戏」重试，并导出 diagnostics.txt 排查。")
         }
