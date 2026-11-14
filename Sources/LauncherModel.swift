@@ -439,7 +439,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 B内核专版 1.13（Build 135 · Nightly 2026-11-13；字体调试中）启动；基于正式版 1.08")
+        LaunchDiagnostics.log("启动器 正式版 1.09（Build 136 · Ruffle Nightly 2026-11-13；Noto 中文字体度量修正）启动；基于正式版 1.08")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {
