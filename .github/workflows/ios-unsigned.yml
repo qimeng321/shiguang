@@ -89,7 +89,7 @@ jobs:
           assert 'permittedDirectory(prefix)' in updater
           assert 'skipCRC32: false' in updater
           assert 'journal.committed = true' in updater
-          assert 'if current > checked.targetRevision' in updater
+          assert 'currentValue > targetValue' in updater
           print('PASS: official 1.09 Build136 flexible delta: login, SGCore, versionless game resources; safety checks unchanged')
           PY_CHECK
   build:
