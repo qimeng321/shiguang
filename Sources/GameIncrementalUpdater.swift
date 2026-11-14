@@ -27,7 +27,7 @@ enum GameIncrementalError: LocalizedError {
         case .invalidArchive: return "增量包不是有效 ZIP 压缩内容，或解压、CRC32 校验失败；非 ZIP 格式的 .srom 暂不支持。"
         case .unsafeFile(let path): return "增量包包含不安全或不支持的文件：\(String(path.prefix(100)))"
         case .unsupportedSize: return "增量包超出安全限制（最多 2000 个文件、300 MB 解压体积）；完整游戏包请通过“导入美化包”安装。"
-        case .missingCore: return "这不是可识别的游戏增量包：需要 config/dll.xml 及对应的 dll/SGCore.swf 或 dll/NieoCore.swf；完整包请走“导入美化包”。"
+        case .missingCore: return "增量包不包含可更新的游戏文件；请选择包含游戏资源的 ZIP 或 SROM 包。"
         case .invalidRevision: return "无法从增量包识别有效的核心修订号。"
         case .upToDate(let revision): return "当前资源已是 \(revision)，无需重复更新。"
         case .downgrade(let from, let to): return "更新包版本 \(to) 低于现有版本 \(from)，已阻止覆盖。"
@@ -35,7 +35,7 @@ enum GameIncrementalError: LocalizedError {
         case .noSpace: return "手机可用空间不足以暂存增量文件和回滚备份。请释放存储空间后重试。"
         case .busyOrRecovery(let details): return "存在尚未完成的增量更新：\(details)"
         case .rollbackFailed(let details): return "无法完整恢复部分资源：\(details)。请保留增量备份并联系开发者。"
-        case .fullGamePackage: return "检测到完整游戏包入口（如 Client.swf / index.html）；请使用“导入美化包”，增量更新不会覆盖完整游戏包。"
+        case .fullGamePackage: return "检测到完整游戏入口 Client.swf 或根目录 index.html；请通过“导入美化包”安装，以免覆盖启动入口。"
         }
     }
 }
@@ -60,8 +60,7 @@ enum GameIncrementalUpdater {
         let paths: [String]
         let entries: [String: Entry]
         let totalBytes: UInt64
-        let targetRevision: String
-        let corePath: String
+        let targetRevision: String?
     }
 
     private static var support: URL {
@@ -128,11 +127,15 @@ enum GameIncrementalUpdater {
     static func inspect(archiveURL: URL, gameRoot: URL, entry: String) throws -> GameIncrementalPreview {
         try checkGame(gameRoot, entry: entry)
         let checked = try checkArchive(archiveURL)
-        guard let current = LaunchDiagnostics.coreRevision(root: gameRoot, entry: entry) else {
-            throw GameIncrementalError.invalidRevision
+        let current = LaunchDiagnostics.coreRevision(root: gameRoot, entry: entry) ?? "未知"
+        // Resource-only patches may have no dll.xml and are not tied to a
+        // specific revision. Same-revision patches are valid too.
+        if let target = checked.targetRevision,
+           let currentValue = UInt64(current), let targetValue = UInt64(target),
+           currentValue > targetValue {
+            throw GameIncrementalError.downgrade(current, target)
         }
-        if current == checked.targetRevision { throw GameIncrementalError.upToDate(current) }
-        if current > checked.targetRevision { throw GameIncrementalError.downgrade(current, checked.targetRevision) }
+        let target = checked.targetRevision ?? current
         let fm = FileManager.default
         var overwrite = 0
         var existingBytes: UInt64 = 0
@@ -147,7 +150,7 @@ enum GameIncrementalUpdater {
             }
         }
         return GameIncrementalPreview(currentRevision: current,
-            targetRevision: checked.targetRevision,
+            targetRevision: target,
             fileCount: checked.paths.count, overwriteCount: overwrite,
             addedCount: checked.paths.count - overwrite,
             unpackedBytes: checked.totalBytes, backupBytes: existingBytes)
@@ -185,8 +188,12 @@ enum GameIncrementalUpdater {
             guard !fm.fileExists(atPath: stage.appendingPathComponent("Client.swf").path) else {
                 throw GameIncrementalError.invalidArchive
             }
-            guard revision(from: try Data(contentsOf: stage.appendingPathComponent("config/dll.xml")), corePath: checked.corePath) == preview.targetRevision else {
-                throw GameIncrementalError.invalidRevision
+            // Only versioned deltas carry dll.xml. For resource-only updates
+            // keep the installed core revision unchanged.
+            if let target = checked.targetRevision {
+                guard revision(from: try Data(contentsOf: stage.appendingPathComponent("config/dll.xml"))) == target else {
+                    throw GameIncrementalError.invalidRevision
+                }
             }
             let records = checked.paths.map { path in Record(path: path,
                 existed: fm.fileExists(atPath: gameRoot.appendingPathComponent(path).path)) }
@@ -221,7 +228,9 @@ enum GameIncrementalUpdater {
                     }
                     if i % 50 == 0 { onProgress(0.94 + 0.05 * Double(i + 1) / Double(checked.paths.count), "正在校验安装结果") }
                 }
-                guard LaunchDiagnostics.coreRevision(root: gameRoot, entry: entry) == preview.targetRevision,
+                let installedRevision = LaunchDiagnostics.coreRevision(root: gameRoot, entry: entry)
+                let matchesRevision = checked.targetRevision == nil || installedRevision == checked.targetRevision
+                guard matchesRevision,
                       LaunchDiagnostics.validateInstalledPackage(root: gameRoot, entry: entry).isEmpty else {
                     throw GameIncrementalError.invalidGameFile("安装后核心版本或关键资源校验失败")
                 }
@@ -283,13 +292,12 @@ enum GameIncrementalUpdater {
             let path = entry.path
             // Never merge a full package into Game from the incremental entry.
             // These files belong to the full .srom importer, not the delta updater.
-            if path == "Client.swf" || path == "index.html" ||
-               path.hasPrefix("assets/") || path.hasPrefix("login/") {
+            if path == "Client.swf" || path == "index.html" {
                 throw GameIncrementalError.fullGamePackage
             }
             if entry.type == .directory {
                 let prefix = path.hasSuffix("/") ? String(path.dropLast()) : path
-                guard safeComponents(prefix), ["resource", "module", "dll", "config"].contains(String(prefix.split(separator: "/").first ?? "")) else {
+                guard safeComponents(prefix), permittedDirectory(prefix) else {
                     throw GameIncrementalError.unsafeFile(path)
                 }
                 continue
@@ -306,37 +314,44 @@ enum GameIncrementalUpdater {
             paths.append(path)
             guard paths.count <= maxFiles else { throw GameIncrementalError.unsupportedSize }
         }
-        guard let config = entries["config/dll.xml"] else { throw GameIncrementalError.missingCore }
-        guard config.uncompressedSize <= 128 * 1024 else { throw GameIncrementalError.invalidRevision }
-        var xml = Data()
-        do {
-            _ = try archive.extract(config, consumer: { bytes in xml.append(bytes) })
-        } catch { throw GameIncrementalError.invalidArchive }
-
-        // Support 0.18.x SGCore and legacy NieoCore, but only the core
-        // declared by this delta's dll.xml. Reject ambiguous core archives.
-        let allowedCores = ["dll/SGCore.swf", "dll/NieoCore.swf"]
-        let presentCores = allowedCores.filter { entries[$0] != nil }
-        guard presentCores.count == 1, let corePath = presentCores.first else {
-            throw GameIncrementalError.missingCore
+        // A valid incremental ZIP may update *only* login, module, maps,
+        // sprites, scripts or another resource. Requiring SGCore/dll.xml for
+        // every patch incorrectly rejects these ordinary delta archives.
+        guard !paths.isEmpty else { throw GameIncrementalError.missingCore }
+        var revisionValue: String? = nil
+        if let config = entries["config/dll.xml"] {
+            guard config.uncompressedSize <= 128 * 1024 else { throw GameIncrementalError.invalidRevision }
+            var xml = Data()
+            do {
+                _ = try archive.extract(config, consumer: { bytes in xml.append(bytes) })
+            } catch { throw GameIncrementalError.invalidArchive }
+            guard let target = revision(from: xml) else { throw GameIncrementalError.invalidRevision }
+            revisionValue = target
         }
-        guard let target = revision(from: xml, corePath: corePath) else {
-            throw GameIncrementalError.invalidRevision
-        }
-        LaunchDiagnostics.log("[增量更新] 识别核心=" + corePath + "，目标修订号=" + target)
+        LaunchDiagnostics.log("[增量更新] 检测到\\(paths.count)个资源文件；目标修订号=\\(revisionValue ?? "保持当前")")
         return CheckedArchive(paths: paths, entries: entries, totalBytes: totalBytes,
-                              targetRevision: target, corePath: corePath)
+                              targetRevision: revisionValue)
     }
 
-    private static func revision(from data: Data, corePath: String) -> String? {
-        guard ["dll/SGCore.swf", "dll/NieoCore.swf"].contains(corePath),
-              let xml = String(data: data, encoding: .utf8),
-              let after = xml.components(separatedBy: "ver=\"").dropFirst().first else { return nil }
+    private static func revision(from data: Data) -> String? {
+        guard let xml = String(data: data, encoding: .utf8),
+              let after = xml.components(separatedBy: "ver=\\\"").dropFirst().first else { return nil }
         let value = String(after.prefix(while: { $0.isNumber }))
-        // Retain the existing 10-digit revision requirement and verify that
-        // this exact core's XML entry includes the same revision suffix.
-        guard value.count == 10, xml.contains(corePath + "?" + value) else { return nil }
+        // The resource pack's own dll.xml carries the version. Keep basic
+        // structural validation but do not lock the updater to one core name.
+        guard (6...12).contains(value.count), UInt64(value) != nil,
+              xml.contains(".swf?" + value) else { return nil }
         return value
+    }
+
+    private static func permittedDirectory(_ path: String) -> Bool {
+        // ZIP metadata and hidden files are not part of the game. Refuse
+        // platform bundles and hidden paths even when the parent is safe.
+        let chunks = path.split(separator: "/")
+        return !chunks.isEmpty && chunks.allSatisfy {
+            !$0.hasPrefix(".") && $0 != "__MACOSX" && $0 != "Payload"
+                && !$0.lowercased().hasSuffix(".app")
+        }
     }
 
     private static func safeComponents(_ path: String) -> Bool {
@@ -348,15 +363,22 @@ enum GameIncrementalUpdater {
     }
 
     private static func permitted(_ path: String) -> Bool {
-        guard safeComponents(path) else { return false }
-        let chunks = path.split(separator: "/")
-        guard chunks.count >= 2 else { return false }
-        let parent = String(chunks[0])
-        guard ["resource", "module", "dll", "config"].contains(parent) else { return false }
+        guard safeComponents(path), permittedDirectory(path) else { return false }
+        // Do not replace the complete game's entry point through the delta
+        // importer; these are handled by the full game import workflow.
+        if path == "Client.swf" || path == "index.html" { return false }
+        // Broad game-resource extensions, not an obsolete per-folder or
+        // per-core filename whitelist. Still no executable native payloads.
         let ext = (path as NSString).pathExtension.lowercased()
-        if parent == "config" { return path == "config/dll.xml" }
-        if parent == "dll" { return path == "dll/SGCore.swf" || path == "dll/NieoCore.swf" }
-        return ["swf", "xml", "png", "jpg", "jpeg", "webp", "gif"].contains(ext)
+        let supported = Set([
+            "swf", "xml", "json", "txt", "ini", "cfg",
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg",
+            "js", "mjs", "css", "wasm", "html", "htm",
+            "mp4", "webm", "mp3", "wav", "ogg",
+            "otf", "ttf", "woff", "woff2",
+            "bin", "dat", "atlas"
+        ])
+        return supported.contains(ext)
     }
 
     private static func ensureRegularFile(_ url: URL, path: String) throws {
@@ -367,7 +389,7 @@ enum GameIncrementalUpdater {
     }
 
     private static func ensureSafeAncestors(_ root: URL, relative: String) throws {
-        guard permitted(relative) || relative == "Client.swf" else { throw GameIncrementalError.unsafeFile(relative) }
+        guard permitted(relative) else { throw GameIncrementalError.unsafeFile(relative) }
         let fm = FileManager.default
         let parentChunks = relative.split(separator: "/").dropLast()
         var part = root
