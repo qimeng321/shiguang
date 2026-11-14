@@ -77,7 +77,7 @@ jobs:
           NODE_ENV: production
         run: |
           set -euo pipefail
-          npm ci --no-audit --no-fund
+          npm ci --include=dev --no-audit --no-fund
           npm run build --workspace=ruffle-core
           npm run build --workspace=ruffle-selfhosted
 
