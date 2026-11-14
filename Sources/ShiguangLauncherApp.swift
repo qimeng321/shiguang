@@ -793,6 +793,8 @@ struct GameView: View {
     // Saved across WebView reloads; off by default for normal click speed.
     @AppStorage("shiguang.delayedTap103") private var delayedTapEnabled = false
     @AppStorage("shiguang.nativeCoreB131") private var nativeCoreB131 = true
+    @State private var nativeKeyboardVisible = false
+    @State private var nativeKeyboardText = ""
 
     // Two non-destructive game controls inspired by the compact xin计划 UI.
     // The underlying .srom remains in Application Support/Game at all times.
@@ -908,6 +910,37 @@ struct GameView: View {
                 }
                 .padding(.top, 14)
                 Spacer(minLength: 12)
+                if nativeCoreB131 && nativeKeyboardVisible {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("原生 Ruffle 输入辅助：先点击游戏里的输入框，再发送文字")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.black)
+                        TextField("用户名、密码或游戏内文字", text: $nativeKeyboardText)
+                            .font(.system(size: 15))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .padding(9)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 7))
+                        HStack(spacing: 10) {
+                            Button("发送文字") {
+                                if !NativeRuffleInput.insert(nativeKeyboardText) {
+                                    errorText = "原生播放器还没有准备好接收文字，请重新进入游戏后重试。"
+                                } else {
+                                    LaunchDiagnostics.log("[原生键盘] 已向 Flash 焦点输入框发送文字（不记录内容）")
+                                    nativeKeyboardText = ""
+                                }
+                            }
+                            Button("退格") { _ = NativeRuffleInput.control(0) }
+                            Button("回车") { _ = NativeRuffleInput.control(1) }
+                            Button("关闭") { nativeKeyboardVisible = false }
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(10)
+                    .background(.white.opacity(0.93), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.bottom, 32)
+                }
             }
             .padding(.horizontal, 18)
 
@@ -1027,7 +1060,13 @@ struct GameView: View {
     private func sendControl(_ action: String) {
         guard server != nil else { return }
         if nativeCoreB131 {
-            let message = "当前是原生 Metal 内核。网页端的精准鼠标和 JS 键盘接口尚未移植，请切回网页模式对照；原生触摸已由 UIKit 处理。"
+            if action == "toggleKeyboard" {
+                nativeKeyboardVisible.toggle()
+                collapseToolMenu()
+                LaunchDiagnostics.log("[原生键盘] " + (nativeKeyboardVisible ? "显示输入辅助" : "关闭输入辅助"))
+                return
+            }
+            let message = "当前是原生 Metal 内核。网页端精准鼠标等 JS 交互接口尚未移植；原生触摸由 UIKit 处理。可以返回首页切换网页模式对照。"
             errorText = message
             LaunchDiagnostics.log("[原生引擎] 已拦截网页特有操作：" + action)
             collapseToolMenu()
