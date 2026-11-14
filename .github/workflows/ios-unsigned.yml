@@ -15,7 +15,7 @@ on:
       - "release/shiguang-1.0.7-b128-home-icon"
       - "release/shiguang-1.0.7-b128-wheel-404fix"
       - "release/shiguang-1.0.7-b128-wheel-macos26"
-      - "test/ios-1.11-b133-battle-lifecycle"
+      - "test/ios-1.12-b134-ruffle-ab"
 
 jobs:
   static-check:
@@ -37,14 +37,14 @@ jobs:
           model = Path('Sources/LauncherModel.swift').read_text()
           project = Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
           plist = plistlib.loads(Path('Resources/Info.plist').read_bytes())
-          assert plist['CFBundleShortVersionString'] == '1.0.11'
-          assert plist['CFBundleVersion'] == '133'
-          assert plist['CFBundleDisplayName'] == '拾光号1.11测试'
-          assert 'MARKETING_VERSION = 1.0.11;' in project
-          assert 'CURRENT_PROJECT_VERSION = 133;' in project
-          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher.battlelab111;' in project
-          assert 'Text("测试版 1.11 · 生命周期诊断")' in swift
-          assert 'Build 133' in model and '基于正式版 1.08' in model
+          assert plist['CFBundleShortVersionString'] == '1.0.12'
+          assert plist['CFBundleVersion'] == '134'
+          assert plist['CFBundleDisplayName'] == '拾光号1.12测试'
+          assert 'MARKETING_VERSION = 1.0.12;' in project
+          assert 'CURRENT_PROJECT_VERSION = 134;' in project
+          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher.ruffleab112;' in project
+          assert 'Text("测试版 1.12 · Ruffle 内核 A/B")' in swift
+          assert 'Build 134' in model and '基于正式版 1.08' in model
           assert '?? .saving' in swift and '?? .fps30' in swift
           assert 'GameQualityPreset.saving.rawValue' in swift
           assert 'GameFrameCapPreset.fps30.rawValue' in swift
@@ -57,12 +57,15 @@ jobs:
           assert 'let maxTracedRequests = 500' in source
           assert 'battleHTTPCacheEnabled' in source and 'battleCacheFile' in source
           assert 'selectedRenderer' in source and 'preferredRenderer=configuredRenderer' in source
-          assert 'GameRendererPreset' in swift and 'battleExperimentPicker' in swift
-          assert '1.11定时采样' in swift and 'NativeMemoryProbe' in swift
+          assert 'RuffleEnginePreset' in swift and 'battleExperimentPicker' in swift
+          assert '1.12定时采样' in swift and 'NativeMemoryProbe' in swift
           assert 'BattleLoadTrace.shared.reset()' in source
           assert 'func markStart()' in source and 'func markEnd()' in source
-          assert '1.11网页探针' in swift and 'battleLifecycleProbe' in swift
-          assert 'wgpuWebgl = "wgpu-webgl"' in swift
+          assert '1.12网页探针' in swift and 'battleLifecycleProbe' in swift
+          assert 'case nightly = "nightly-2026-11-13"' in swift
+          assert 'RuffleNightly' in source and 'baselineRuffle' in source
+          assert 'let selectedRenderer = "automatic"' in source
+          assert 'A0000000000000000000001A' in project
           assert 'webgl, canvas' not in swift
           assert 'petfightdll.swf' in source
           assert 'let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in source
@@ -74,7 +77,7 @@ jobs:
           assert 'func clearMobilePatch()' in model
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'resource/map/1.swf' in model
-          print('PASS: independent 1.11 Build133 battle diagnostic A/B test configuration')
+          print('PASS: isolated 1.12 Build134 dual-core A/B: 0.7.1 stable and pinned 2026-11-13 nightly')
           PY_CHECK
   build:
     needs: static-check
@@ -118,6 +121,34 @@ jobs:
               raise SystemExit('Wrong Ruffle web bundle: expected version 0.7.1')
           print('Validated Ruffle 0.7.1 web runtime, JS bytes',len(p))
           PY_CHECK
+      - name: Bundle pinned Ruffle Web nightly 2026-11-13 for B comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --retry 3 \
+            "https://github.com/ruffle-rs/ruffle/releases/download/nightly-2026-11-13/ruffle-nightly-2026_11_13-web-selfhosted.zip" \
+            --output "$RUNNER_TEMP/ruffle-nightly.zip"
+          printf '%s  %s\n' "bc2d1e72a7f967822d0c2b5e2e7b62d436784da57a95eb3e5fdd4a820c992f8e" "$RUNNER_TEMP/ruffle-nightly.zip" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/ruffle-nightly-extracted"
+          unzip -q "$RUNNER_TEMP/ruffle-nightly.zip" -d "$RUNNER_TEMP/ruffle-nightly-extracted"
+          entry="$(find "$RUNNER_TEMP/ruffle-nightly-extracted" -type f -name ruffle.js -print -quit)"
+          test -n "$entry"
+          directory="$(dirname "$entry")"
+          rm -rf Resources/RuffleNightly
+          mkdir -p Resources/RuffleNightly
+          ditto "$directory" Resources/RuffleNightly
+          printf '%s\n' 'Ruffle Web nightly-2026-11-13 (SHA256 verified)' > Resources/RuffleNightly/engine-version.txt
+          # Both engines use exactly the same launcher compatibility scripts.
+          cp Patches/pvm-compat.js Resources/RuffleNightly/pvm-compat.js
+          cp Patches/pvm-compat.b64 Resources/RuffleNightly/pvm-compat.b64
+          cp Patches/byte-loader-followup.b64 Resources/RuffleNightly/byte-loader-followup.b64
+          cp Patches/touch-controls.js Resources/RuffleNightly/touch-controls.js
+          cp Patches/frame-cap.js Resources/RuffleNightly/frame-cap.js
+          test -s Resources/RuffleNightly/ruffle.js
+          test "$(find Resources/RuffleNightly -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
+          test -s Resources/RuffleNightly/pvm-compat.js
+          test -s Resources/RuffleNightly/touch-controls.js
+          echo "Pinned nightly web archive integrity and dual runtime assets checked"
       - name: Bundle OFL Simplified Chinese font for Ruffle
         shell: bash
         run: |
@@ -279,27 +310,31 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check independent 1.11 test build metadata
+      - name: Check independent 1.12 test build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.11'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '133'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.battlelab111'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.12'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '134'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.ruffleab112'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/ruffle.js"
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/RuffleNightly/ruffle.js"
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app/RuffleNightly" -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/RuffleNightly/engine-version.txt"
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package 1.11 battle stability test source ZIP
+      - name: Package 1.12 battle stability test source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.11-b133-battle-lifecycle/ --output=/tmp/ShiguangLauncher-v1.11-b133-battle-lifecycle-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.11-b133-battle-lifecycle-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.11-b133-battle-lifecycle-source.zip | grep -Fx 'ShiguangLauncher-v1.11-b133-battle-lifecycle/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.12-b134-ruffle-ab/ --output=/tmp/ShiguangLauncher-v1.12-b134-ruffle-ab-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.12-b134-ruffle-ab-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.12-b134-ruffle-ab-source.zip | grep -Fx 'ShiguangLauncher-v1.12-b134-ruffle-ab/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.11-b133-battle-lifecycle-ipa
+          name: ShiguangLauncher-v1.12-b134-ruffle-ab-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.11-b133-battle-lifecycle-source
-          path: /tmp/ShiguangLauncher-v1.11-b133-battle-lifecycle-source.zip
+          name: ShiguangLauncher-v1.12-b134-ruffle-ab-source
+          path: /tmp/ShiguangLauncher-v1.12-b134-ruffle-ab-source.zip
           if-no-files-found: error
