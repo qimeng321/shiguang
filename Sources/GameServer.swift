@@ -54,7 +54,7 @@ final class BattleLoadTrace {
         if records.count > 80 { records.removeFirst(records.count - 80) }
         if lower.hasSuffix("/petfightdll.swf") {
             moduleLoads += 1
-            messages.append("[1.11战斗阶段] PetFightDLL 传输第\(moduleLoads)次（仅表明模块请求）")
+            messages.append("[1.12战斗阶段] PetFightDLL 传输第\(moduleLoads)次（仅表明模块请求）")
         }
         // Ignore preload artwork before the battle DLL is first requested.
         if moduleLoads > 0 && lower.contains("/fightresource/pet/swf/") && status == 200 {
@@ -66,7 +66,7 @@ final class BattleLoadTrace {
             previousPetRequestUptime = now
         }
         if bytes >= 512 * 1024 && [2, 5, 10, 20, 40].contains(times) {
-            messages.append("[1.11战斗重复请求] 第\(times)次 \(String(path.prefix(110)))，此次HTTP=\(bytes)B (不代表重复解码)")
+            messages.append("[1.12战斗重复请求] 第\(times)次 \(String(path.prefix(110)))，此次HTTP=\(bytes)B (不代表重复解码)")
         }
         lock.unlock()
         for message in messages { LaunchDiagnostics.log(message) }
@@ -114,6 +114,8 @@ final class BattleLoadTrace {
 final class GameServer {
     private let root: URL
     private let ruffle: URL
+    private let baselineRuffle: URL
+    private let engineChoice: RuffleEnginePreset
     private let queue = DispatchQueue(label: "cn.shiguanghao.launcher.http")
     // Use browser-safe local ports; retry if a port is occupied.
     private static let httpPortCandidates: [UInt16] = [18765, 18766, 18767, 18768, 18769]
@@ -178,7 +180,7 @@ final class GameServer {
         if method == "GET" && (status == 200 || status == 304) {
             BattleLoadTrace.shared.record(path: path, bytes: size ?? 0, status: status)
             if lower.hasSuffix("/petfightdll.swf") {
-                LaunchDiagnostics.log("[1.11战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
+                LaunchDiagnostics.log("[1.12战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
             }
         }
         if method == "GET" && status == 200 {
@@ -221,6 +223,7 @@ final class GameServer {
 
     init(root: URL, packagedWebApp: Bool = false) throws {
         self.root = root.resolvingSymlinksInPath()
+        self.engineChoice = RuffleEnginePreset.saved
         BattleLoadTrace.shared.reset()
         self.packagedWebApp = packagedWebApp
         // 1.2 beta: snapshot patch overlay for this game session only.
@@ -238,13 +241,16 @@ final class GameServer {
             forKey: "shiguang.compatibilityMode103"
         )
         self.battleHTTPCacheEnabled = UserDefaults.standard.bool(forKey: "shiguang.battleHttpCache110")
-        BattleLoadTrace.shared.reset()
-        LaunchDiagnostics.log("[1.11战斗实验] 新游戏会话：资源统计已重置；缓存=" + (battleHTTPCacheEnabled ? "开启" : "关闭") + "；渲染选择=" + GameRendererPreset.saved.rawValue)
+        LaunchDiagnostics.log("[1.12战斗实验] 新游戏会话：资源统计已重置；缓存=" + (battleHTTPCacheEnabled ? "开启" : "关闭") + "；Ruffle A/B=" + engineChoice.rawValue + "；GPU配置=automatic")
         self.bridge = packagedWebApp ? try GameSocketBridge.shared() : nil
-        guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
-              FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path) else {
+        guard let baseline = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
+              FileManager.default.fileExists(atPath: baseline.appendingPathComponent("ruffle.js").path),
+              let assets = Bundle.main.url(forResource: engineChoice.bundleFolder, withExtension: nil),
+              FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path),
+              FileManager.default.contentsOfDirectory(atPath: assets.path).contains(where: { $0.hasSuffix(".wasm") }) else {
             throw ServerError.missingRuffle
         }
+        self.baselineRuffle = baseline.resolvingSymlinksInPath()
         self.ruffle = assets.resolvingSymlinksInPath()
         let engineInfo = assets.appendingPathComponent("engine-version.txt")
         if let text = try? String(contentsOf: engineInfo, encoding: .utf8) {
@@ -259,7 +265,7 @@ final class GameServer {
         bridge?.leaveGame()
         listener?.cancel()
         listener = nil
-        LaunchDiagnostics.log("[1.11战斗汇总] " + BattleLoadTrace.shared.summary())
+        LaunchDiagnostics.log("[1.12战斗汇总] " + BattleLoadTrace.shared.summary())
         LaunchDiagnostics.log("[页面生命周期] 游戏结束：HTTP 监听关闭、代理会话清理已请求")
     }
 
@@ -380,8 +386,11 @@ final class GameServer {
         // WKWebView cannot render Flash without a polyfill. Serve our bundled
         // Ruffle files even when the package contains its own index.html.
         if path.hasPrefix("/ruffle/") {
-            if path.hasPrefix("/ruffle/fonts/") { LaunchDiagnostics.log("[中文字体] "+String(parts[0])+" "+path) }
-            serve(relative: String(path.dropFirst(8)), below: ruffle, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
+            let isFont = path.hasPrefix("/ruffle/fonts/")
+            if isFont { LaunchDiagnostics.log("[中文字体] "+String(parts[0])+" "+path) }
+            // Identical font asset for the two experiments: only the engine
+            // JS/WASM changes. Avoid bundling the 16MB CJK font twice.
+            serve(relative: String(path.dropFirst(8)), below: isFont ? baselineRuffle : ruffle, headOnly: headOnly, rangeHeader: rangeHeader, connection: connection)
             return
         }
         if packagedWebApp && path == "/__micro/status" {
@@ -881,7 +890,7 @@ final class GameServer {
         let qualityPreset = GameQualityPreset.saved
         let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
-        let selectedRenderer = GameRendererPreset.saved.rawValue
+        let selectedRenderer = "automatic"
         // One tested fallback font, vertically adjusted; no alternate copies.
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
