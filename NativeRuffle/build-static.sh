@@ -17,6 +17,11 @@ crate-type = ["staticlib"]
 EOF
 export CARGO_INCREMENTAL=0
 export CARGO_BUILD_JOBS=4
+# Keep Rust/C native dependencies at the same minimum OS as the Swift app.
+# Otherwise assembly objects compiled with Xcode 26.6 can require iOS 26.5.
+export IPHONEOS_DEPLOYMENT_TARGET=16.0
+export CFLAGS_aarch64_apple_ios="-miphoneos-version-min=16.0"
+export CXXFLAGS_aarch64_apple_ios="-miphoneos-version-min=16.0"
 rustup toolchain install nightly --profile minimal --component rust-src --target aarch64-apple-ios
 cargo build --release --target aarch64-apple-ios --lib --locked
 OUT="$ROOT/NativeRuffle/lib"
