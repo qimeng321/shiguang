@@ -11,8 +11,15 @@ final class BattleLoadTrace {
     private var requestCount = 0
     private var totalBytes: UInt64 = 0
     private var conditionalHits = 0
+    private var moduleLoads = 0
+    private var inferredResourceWaves = 0
+    private var previousPetRequestUptime: TimeInterval = 0
+    private var manuallyMarkedBattles = 0
+    private var currentManualStart: Date?
 
-    // Counts are HTTP requests, NOT decoded Flash objects or WebKit memory.
+    // Reset for every new game launch, not just when the app process restarts.
+    // Caches can satisfy SWF loads without HTTP requests: wave counts are
+    // heuristic resource bursts, never an authoritative battle count.
     func reset() {
         lock.lock()
         defer { lock.unlock() }
@@ -21,6 +28,11 @@ final class BattleLoadTrace {
         requestCount = 0
         totalBytes = 0
         conditionalHits = 0
+        moduleLoads = 0
+        inferredResourceWaves = 0
+        previousPetRequestUptime = 0
+        manuallyMarkedBattles = 0
+        currentManualStart = nil
     }
 
     func record(path: String, bytes: UInt64, status: Int = 200) {
@@ -29,7 +41,8 @@ final class BattleLoadTrace {
               lower.contains("petfightdll.swf") ||
               lower.contains("petstorage.swf") ||
               lower.contains("worldmap.swf") else { return }
-        var message: String?
+        var messages: [String] = []
+        let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
         requestCount += 1
         totalBytes += bytes
@@ -39,13 +52,45 @@ final class BattleLoadTrace {
         records.append(String(format: "%.3f", Date().timeIntervalSince1970) +
                        " " + String(path.prefix(110)) + " (\(bytes)B HTTP\(status))")
         if records.count > 80 { records.removeFirst(records.count - 80) }
-        // Log sparse repetition landmarks for large battle assets even after
-        // the general HTTP log quota has been reached.
+        if lower.hasSuffix("/petfightdll.swf") {
+            moduleLoads += 1
+            messages.append("[1.11战斗阶段] PetFightDLL 传输第\(moduleLoads)次（仅表明模块请求）")
+        }
+        // Ignore preload artwork before the battle DLL is first requested.
+        if moduleLoads > 0 && lower.contains("/fightresource/pet/swf/") && status == 200 {
+            let gap = previousPetRequestUptime == 0 ? 0 : now - previousPetRequestUptime
+            if previousPetRequestUptime == 0 || gap >= 7 {
+                inferredResourceWaves += 1
+                messages.append("[1.11战斗阶段] 资源波次#\(inferredResourceWaves)，距上次精灵资源请求\(Int(gap))秒；首个=\(String(path.suffix(70)))；不等于准确局数")
+            }
+            previousPetRequestUptime = now
+        }
         if bytes >= 512 * 1024 && [2, 5, 10, 20, 40].contains(times) {
-            message = "[1.10战斗重复请求] 第\(times)次 \(String(path.prefix(110)))，此次HTTP=\(bytes)B (不代表重复解码)"
+            messages.append("[1.11战斗重复请求] 第\(times)次 \(String(path.prefix(110)))，此次HTTP=\(bytes)B (不代表重复解码)")
         }
         lock.unlock()
-        if let message { LaunchDiagnostics.log(message) }
+        for message in messages { LaunchDiagnostics.log(message) }
+    }
+
+    func markStart() {
+        lock.lock()
+        manuallyMarkedBattles += 1
+        let index = manuallyMarkedBattles
+        currentManualStart = Date()
+        let waves = inferredResourceWaves
+        lock.unlock()
+        LaunchDiagnostics.log("[1.11手动标记] 第\(index)局开始；此前推测资源波次\(waves)；如未按标记按钮则不能统计真实局数")
+    }
+
+    func markEnd() {
+        lock.lock()
+        let index = manuallyMarkedBattles
+        let start = currentManualStart
+        currentManualStart = nil
+        let waves = inferredResourceWaves
+        lock.unlock()
+        let duration = start.map { String(Int(Date().timeIntervalSince($0))) + "秒" } ?? "未标记开始"
+        LaunchDiagnostics.log("[1.11手动标记] 第\(index)局结束；耗时=\(duration)；推测资源波次\(waves)")
     }
 
     func summary() -> String {
@@ -56,7 +101,7 @@ final class BattleLoadTrace {
             .prefix(5)
             .map { "\(String($0.key.suffix(52)))×\($0.value)" }
             .joined(separator: ", ")
-        return "战斗相关HTTP请求=\(requestCount)，传输=\(totalBytes / 1024 / 1024)MiB，304命中=\(conditionalHits)，不同路径=\(counts.count)，重复前五=\(duplicates.isEmpty ? "无" : duplicates)"
+        return "战斗相关HTTP请求=\(requestCount)，传输=\(totalBytes / 1024 / 1024)MiB，304命中=\(conditionalHits)，不同路径=\(counts.count)，战斗DLL请求=\(moduleLoads)，资源波次(估计)=\(inferredResourceWaves)，手动标记局数=\(manuallyMarkedBattles)，重复前五=\(duplicates.isEmpty ? "无" : duplicates)"
     }
 
     func snapshot() -> String {
@@ -81,7 +126,7 @@ final class GameServer {
     private let compatibilityModeEnabled: Bool
     private let battleHTTPCacheEnabled: Bool
     private var tracedRequestCount = 0
-    private let maxTracedRequests = 1200
+    private let maxTracedRequests = 500
     private var versionGetCount = 0
     private var proceededBeyondVersion = false
     private var inspectedVersionHeader = false
@@ -133,7 +178,7 @@ final class GameServer {
         if method == "GET" && (status == 200 || status == 304) {
             BattleLoadTrace.shared.record(path: path, bytes: size ?? 0, status: status)
             if lower.hasSuffix("/petfightdll.swf") {
-                LaunchDiagnostics.log("[1.10战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
+                LaunchDiagnostics.log("[1.11战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
             }
         }
         if method == "GET" && status == 200 {
@@ -193,7 +238,8 @@ final class GameServer {
             forKey: "shiguang.compatibilityMode103"
         )
         self.battleHTTPCacheEnabled = UserDefaults.standard.bool(forKey: "shiguang.battleHttpCache110")
-        LaunchDiagnostics.log("[1.10战斗实验] 战斗资源HTTP缓存=" + (battleHTTPCacheEnabled ? "开启（实验）" : "关闭（对照）") + "；Ruffle渲染器=" + GameRendererPreset.saved.rawValue)
+        BattleLoadTrace.shared.reset()
+        LaunchDiagnostics.log("[1.11战斗实验] 新游戏会话：资源统计已重置；缓存=" + (battleHTTPCacheEnabled ? "开启" : "关闭") + "；渲染选择=" + GameRendererPreset.saved.rawValue)
         self.bridge = packagedWebApp ? try GameSocketBridge.shared() : nil
         guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path) else {
@@ -213,7 +259,7 @@ final class GameServer {
         bridge?.leaveGame()
         listener?.cancel()
         listener = nil
-        LaunchDiagnostics.log("[1.10战斗汇总] " + BattleLoadTrace.shared.summary())
+        LaunchDiagnostics.log("[1.11战斗汇总] " + BattleLoadTrace.shared.summary())
         LaunchDiagnostics.log("[页面生命周期] 游戏结束：HTTP 监听关闭、代理会话清理已请求")
     }
 
