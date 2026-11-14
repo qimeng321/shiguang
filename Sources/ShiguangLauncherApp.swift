@@ -13,7 +13,7 @@ struct ShiguangLauncherApp: App {
             LauncherView()
                 .environmentObject(launcher)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                    LaunchDiagnostics.log("[1.09内存警告] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
+                    LaunchDiagnostics.log("[B146-MEMORY-WARNING] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
                 }
                 // Files → share/open in 拾光号 is a second route for .srom.
                 .onOpenURL { url in
@@ -175,7 +175,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.09")
+                        Text("B146 · 1.09 内核监控版")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -979,9 +979,9 @@ struct GameView: View {
                 LaunchDiagnostics.log("本地服务创建失败：" + error.localizedDescription)
             }
         }
-        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
             guard server != nil else { return }
-            LaunchDiagnostics.log("[1.09定时采样] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
+            LaunchDiagnostics.log("[B146-NATIVE-SAMPLE] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
         }
         .onDisappear {
             server?.leaveGame()
