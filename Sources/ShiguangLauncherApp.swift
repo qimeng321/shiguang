@@ -13,7 +13,7 @@ struct ShiguangLauncherApp: App {
             LauncherView()
                 .environmentObject(launcher)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                    LaunchDiagnostics.log("[1.13内存警告] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
+                    LaunchDiagnostics.log("[1.09内存警告] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
                 }
                 // Files → share/open in 拾光号 is a second route for .srom.
                 .onOpenURL { url in
@@ -119,37 +119,6 @@ enum DedicatedRuffleEngine {
     static let shortDescription = "B 内核 · Ruffle Nightly 2026-11-13"
 }
 
-// Select a *bundled fallback font*, not a game-core font. User packages
-// are never modified. Changing the preset requires a fresh Ruffle page.
-enum GameFontMetricsPreset: String, CaseIterable, Identifiable {
-    case legacy = "legacy"
-    case tuned = "tuned"
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .legacy: return "原版定位"
-        case .tuned: return "度量修正"
-        }
-    }
-    var details: String {
-        switch self {
-        case .legacy: return "1.12 原有字形上移 0.11em，作为原始对照"
-        case .tuned: return "保留相同中文字形和行高，单独上移字体的排版基线 90/1000em（实验）"
-        }
-    }
-    var fontPath: String {
-        switch self {
-        case .legacy: return "/ruffle/fonts/NotoSansCJKsc-Regular.otf"
-        case .tuned: return "/ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf"
-        }
-    }
-    static let defaultsKey = "shiguang.cjkMetrics113"
-    static var saved: GameFontMetricsPreset {
-        GameFontMetricsPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .tuned
-    }
-}
-
 // Native launcher resident size only. This does not measure WKWebView's
 // separate WebContent/GPU processes and must not be called total game RAM.
 enum NativeMemoryProbe {
@@ -181,8 +150,6 @@ struct LauncherView: View {
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.saving.rawValue
     @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.fps30.rawValue
     @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
-    @AppStorage("shiguang.battleHttpCache110") private var battleHTTPCacheEnabled = false
-    @AppStorage(GameFontMetricsPreset.defaultsKey) private var fontMetricsPreset = GameFontMetricsPreset.tuned.rawValue
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -208,7 +175,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("B 专版 1.13 · 字体调试中")
+                        Text("正式版 1.09")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -226,8 +193,6 @@ struct LauncherView: View {
                         qualityPicker
                         frameCapPicker
                         compatibilityPicker
-                        fontMetricsPicker
-                        battleExperimentPicker
                     }
                     .padding(.top, 23)
 
@@ -707,71 +672,6 @@ struct LauncherView: View {
         .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
     }
 
-    private var fontMetricsPicker: some View {
-        let selected = GameFontMetricsPreset(rawValue: fontMetricsPreset) ?? .tuned
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("中文字体位置实验", systemImage: "textformat")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(ink)
-                Spacer()
-                Text("1.13 字体专项")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(blue)
-            }
-            HStack(spacing: 5) {
-                ForEach(GameFontMetricsPreset.allCases) { option in
-                    let active = fontMetricsPreset == option.rawValue
-                    Button { fontMetricsPreset = option.rawValue } label: {
-                        Text(option.title)
-                            .font(.system(size: 13, weight: active ? .bold : .medium))
-                            .foregroundStyle(active ? .white : ink)
-                            .frame(maxWidth: .infinity, minHeight: 40)
-                            .background(active ? blue : Color.white,
-                                        in: RoundedRectangle(cornerRadius: 9))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("字体定位：" + option.title)
-                }
-            }
-            .padding(4)
-            .background(Color(red: 0.91, green: 0.93, blue: 0.96),
-                        in: RoundedRectangle(cornerRadius: 12))
-            Text(selected.details)
-                .font(.system(size: 12))
-                .foregroundStyle(subtleInk)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("此设置只影响 Ruffle 可替换的后备字体；SWF 内嵌字可能不受影响。切换后需退出游戏再进入。若有裁字、错行，请切回原版定位。")
-                .font(.system(size: 11))
-                .foregroundStyle(subtleInk)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(15)
-        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18))
-    }
-
-    private var battleExperimentPicker: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("B 内核专版", systemImage: "cpu")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(ink)
-            Text("固定使用 Ruffle Web 2026-11-13 Nightly；不再提供 A/B 内核切换。")
-                .font(.system(size: 13))
-                .foregroundStyle(subtleInk)
-                .fixedSize(horizontal: false, vertical: true)
-            Toggle(isOn: $battleHTTPCacheEnabled) {
-                Text("战斗 SWF 网页缓存实验").font(.system(size: 14, weight: .semibold))
-            }
-            .tint(green)
-            Text("默认关闭。固定使用已通过 10 局测试的 B 内核；字体定位可在上方单独对照，不修改 .srom 游戏资源。")
-                .font(.system(size: 11))
-                .foregroundStyle(subtleInk)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(15)
-        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18))
-    }
-
     private var compatibilityPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle(isOn: $compatibilityMode) {
@@ -971,16 +871,7 @@ struct GameView: View {
                                     fpsEnabled.toggle()
                                     sendControl("toggleFPS")
                                 }
-                                gameTool("flag.fill", "标记本局开始") {
-                                    BattleLoadTrace.shared.markStart()
-                                    collapseToolMenu()
-                                }
-                                gameTool("checkmark.circle", "标记本局结束") {
-                                    BattleLoadTrace.shared.markEnd()
-                                    collapseToolMenu()
-                                }
-                                // Compact two-column menu; no full-width divider.
-                                gameTool("arrow.clockwise", "刷新游戏") {
+gameTool("arrow.clockwise", "刷新游戏") {
                                     collapseToolMenu()
                                     reloadGame()
                                 }
@@ -1090,7 +981,7 @@ struct GameView: View {
         }
         .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
             guard server != nil else { return }
-            LaunchDiagnostics.log("[1.13定时采样] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
+            LaunchDiagnostics.log("[1.09定时采样] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
         }
         .onDisappear {
             server?.leaveGame()
@@ -1319,7 +1210,7 @@ struct GameWebView: UIViewRepresentable {
                 } catch(e) { fail(label + '：Ruffle 状态读取失败：' + String(e).slice(0, 130)); }
               }
               window.addEventListener('DOMContentLoaded', function () {
-                status('1.13 B内核字体调试：原生DPR=' + String(window.__shiguangNativeDPR || '?')
+                status('1.09 Nightly 修正版：原生DPR=' + String(window.__shiguangNativeDPR || '?')
                   + '，实际DPR=' + String(window.devicePixelRatio || '?')
                   + '，覆盖状态=' + (window.__shiguangDPRCapError || '正常'));
                 setTimeout(function () { reportPlayerState('启动5秒'); }, 5000);
@@ -1469,7 +1360,7 @@ struct GameWebView: UIViewRepresentable {
             if details.hasPrefix("诊断：") {
                 // Keep heartbeat out of SwiftUI state updates; persist for the
                 // abrupt WKWebView termination case even if UI is unresponsive.
-                LaunchDiagnostics.log("[1.13网页探针] " + String(details.dropFirst(3)))
+                LaunchDiagnostics.log("[1.09网页探针] " + String(details.dropFirst(3)))
             }
             else if details.hasPrefix("状态：") { onStatus(String(details.dropFirst(3))) }
             else if details.hasPrefix("错误：") { onError(String(details.dropFirst(3))) }
@@ -1489,7 +1380,7 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            LaunchDiagnostics.log("[1.13崩溃快照] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
+            LaunchDiagnostics.log("[1.09崩溃快照] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
             LaunchDiagnostics.log("[严重诊断] WebKit 内容进程终止，已保留资源与诊断日志；需要手动刷新")
             onError("游戏网页进程已终止，可能存在内存压力或渲染异常。请点「重新加载游戏」重试，并导出 diagnostics.txt 排查。")
         }
