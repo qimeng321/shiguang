@@ -95,6 +95,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: rust-src
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
