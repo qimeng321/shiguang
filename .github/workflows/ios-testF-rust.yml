@@ -1,0 +1,71 @@
+name: F - Ruffle Rust resource-lifetime diagnostic (source only)
+
+on:
+  push:
+    branches:
+      - "tests/ios109-rust-lifecycle-F"
+    paths:
+      - ".github/workflows/ios-testF-rust.yml"
+      - "Patches/experiment-F/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-ruffle-rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch exact Ruffle source matching 2026-11-13 Nightly
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --filter=blob:none --branch nightly-2026-11-13 https://github.com/ruffle-rs/ruffle.git rust-ruffle
+          test "$(git -C rust-ruffle rev-parse HEAD)" = "65d984777f5acc28e18fe6c3e89d28266fc1fb75"
+          cp Patches/experiment-F/patch_ruffle_rust.py rust-ruffle/patch_ruffle_rust.py
+          (cd rust-ruffle && python3 patch_ruffle_rust.py)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-ruffle
+          key: test-F-ruffle-2026-11-13
+      - name: Install pinned wasm-bindgen CLI
+        shell: bash
+        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - name: Compile instrumented WASM and self-hosted Ruffle JS
+        shell: bash
+        working-directory: rust-ruffle/web
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build --workspace=ruffle-core
+          npm run build --workspace=ruffle-selfhosted
+      - name: Validate probe presence and package engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s rust-ruffle/web/packages/selfhosted/dist/ruffle.js
+          test "$(find rust-ruffle/web/packages/selfhosted/dist -name '*.wasm' | wc -l)" -ge 1
+          grep -q '\[F-RUST\]' rust-ruffle/core/src/player.rs
+          mkdir -p /tmp/ruffle_f
+          cp rust-ruffle/web/packages/selfhosted/dist/ruffle.js /tmp/ruffle_f/
+          cp rust-ruffle/web/packages/selfhosted/dist/*.wasm /tmp/ruffle_f/
+          echo "Ruffle nightly-2026-11-13 source sha=65d984777f5acc28e18fe6c3e89d28266fc1fb75" > /tmp/ruffle_f/F-SOURCE.txt
+          echo "Read-only F Rust probes: movie registry, characters, active loaders; no forced collection" >> /tmp/ruffle_f/F-SOURCE.txt
+          sha256sum /tmp/ruffle_f/* > /tmp/ruffle_f/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Shiguang-TestF-RuffleRust-Diagnostic-WebEngine
+          path: /tmp/ruffle_f/
+          if-no-files-found: error
