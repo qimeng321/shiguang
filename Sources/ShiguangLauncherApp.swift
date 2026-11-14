@@ -871,7 +871,7 @@ struct GameView: View {
                                     fpsEnabled.toggle()
                                     sendControl("toggleFPS")
                                 }
-gameTool("arrow.clockwise", "刷新游戏") {
+                                gameTool("arrow.clockwise", "刷新游戏") {
                                     collapseToolMenu()
                                     reloadGame()
                                 }
