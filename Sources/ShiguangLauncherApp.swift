@@ -116,7 +116,7 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
 // build pipeline, not switchable from the application UI.
 enum DedicatedRuffleEngine {
     static let tag = "nightly-2026-11-13"
-    static let shortDescription = "F1.1 登录探针 · Nightly 2026-11-13 官方构建"
+    static let shortDescription = "D参数恢复 · 自动渲染器 · DPR1.5 · Nightly 2026-11-13"
 }
 
 // Native launcher resident size only. This does not measure WKWebView's
@@ -175,7 +175,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("F1.1 登录诊断版")
+                        Text("D参数恢复测试版")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -1075,7 +1075,7 @@ struct GameWebView: UIViewRepresentable {
           var original = window.devicePixelRatio || 1;
           window.__shiguangNativeDPR = original;
           try {
-            var capped = Math.min(original, 2);
+            var capped = Math.min(original, 1.5);
             Object.defineProperty(window, "devicePixelRatio", {
               configurable: true,
               get: function () { return capped; }
