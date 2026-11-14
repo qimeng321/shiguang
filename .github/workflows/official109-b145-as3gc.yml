@@ -29,6 +29,7 @@ jobs:
           assert Path("Patches/ruffle-official109-gpu-reclaim.py").is_file()
           assert Path("Patches/b145-pr23897-as3-memory-semantics.patch").is_file()
           assert Path("Patches/b145-movie-library-wasm-metrics.py").is_file()
+          assert Path("Patches/b145-as3-gc-nightly-adapter.py").is_file()
           assert Path("Patches/force-official109-mvp.py").is_file()
           assert Path("Patches/frame-cap.js").is_file()
           assert Path("Patches/touch-controls.js").is_file()
@@ -62,6 +63,7 @@ jobs:
           python3 launcher/Patches/ruffle-official109-gpu-reclaim.py upstream
           git -C upstream apply --check ../launcher/Patches/b145-pr23897-as3-memory-semantics.patch
           git -C upstream apply ../launcher/Patches/b145-pr23897-as3-memory-semantics.patch
+          python3 launcher/Patches/b145-as3-gc-nightly-adapter.py upstream
           python3 launcher/Patches/b145-movie-library-wasm-metrics.py upstream
           grep -Fq '[B145-MEM]' upstream/core/src/library.rs
           grep -Fq 'force_full_gc' upstream/core/src/avm2.rs
