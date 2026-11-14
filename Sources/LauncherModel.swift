@@ -6,7 +6,7 @@ import ZIPFoundation
 // remain under Application Support/Game and are NEVER duplicated in Documents.
 enum LaunchDiagnostics {
     private static let fileQueue = DispatchQueue(label: "cn.shiguanghao.launcher.diagnostics")
-    private static let maxLogBytes: UInt64 = 3_000_000
+    private static let maxLogBytes: UInt64 = 4_000_000
     private static var missingResourceCount = 0
 
     static var documents: URL {
@@ -439,7 +439,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 测试版 1.10（Build 132 · 连战资源诊断/渲染对照/可选HTTP缓存）启动；基于正式版 1.08")
+        LaunchDiagnostics.log("启动器 测试版 1.11（Build 133 · 战斗资源波次/手动局数/网页心跳）启动；基于正式版 1.08")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {
