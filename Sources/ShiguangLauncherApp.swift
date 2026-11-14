@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 import UIKit
+import Darwin
 
 @main
 struct ShiguangLauncherApp: App {
