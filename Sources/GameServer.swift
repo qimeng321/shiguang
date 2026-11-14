@@ -883,7 +883,7 @@ final class GameServer {
         let qualityPreset = GameQualityPreset.saved
         let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
-        let selectedRenderer = "automatic"
+        let selectedRenderer = "webgl" // F2 only: isolate native WebGL backend vs F1.1 automatic renderer
         // One calibrated Noto CJK fallback: same CFF glyph outlines as 1.08,
         // hhea/OS2 baseline shifted 90/1000 em while line heights are preserved.
         LaunchDiagnostics.log("[正式1.09字体] Noto Sans CJK SC；字体度量修正版；字形上移0.11em、排版基线调整0.09em")
@@ -1258,6 +1258,9 @@ final class GameServer {
               japaneseMincho:["Noto Sans CJK SC"]
             };
             options.quality=configuredQuality;
+            // F2 A/B: explicit per-player preference, avoiding dependence on global config merging.
+            options.preferredRenderer="webgl";
+            report("[F2 Renderer] 首选原生 WebGL，失败时由 Ruffle 自行降级；不会改变游戏资源、Socket 或 GC 行为");
             try{
               var chk=await fetch(configuredFontURL,{method:"HEAD",cache:"no-store"});
               report("中文字体预检：HTTP "+chk.status+"，字体=Noto Sans CJK SC（度量修正）");
