@@ -1,0 +1,113 @@
+name: iOS Native Ruffle - Isolated SWF Feasibility Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "test/shiguang-ios-native-ruffle-poc"
+    paths:
+      - ".github/workflows/ios-native-ruffle-poc.yml"
+      - "Docs/Native-Ruffle-iOS-POC.md"
+
+permissions:
+  contents: read
+
+jobs:
+  native-swift-rust:
+    runs-on: macos-26-intel
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "4"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm original 1.08 remains untouched
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'MARKETING_VERSION = 1.0.8;' ShiguangLauncher.xcodeproj/project.pbxproj
+          grep -Fq 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' ShiguangLauncher.xcodeproj/project.pbxproj
+          echo "Existing Shiguang launcher untouched; native experiment is a distinct target."
+      - name: Download upstream native Ruffle iOS at a fixed commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/madsmtm/ruffle-ios.git native-ruffle
+          cd native-ruffle
+          git checkout --detach c3489324265221ff5089442797be671df14fdcdb
+          test -f Cargo.lock
+          test -f ruffle-ios.xcodeproj/project.pbxproj
+          test -f src/player_view.rs
+      - name: Give test app its own identifier and distinguishable home icon label
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('native-ruffle/ruffle-ios.xcodeproj/project.pbxproj')
+          s=p.read_text()
+          old='PRODUCT_BUNDLE_IDENTIFIER = "rs.ruffle.ruffle-ios";'
+          assert s.count(old)==2, s.count(old)
+          s=s.replace(old,'PRODUCT_BUNDLE_IDENTIFIER = "cn.shiguanghao.ruffle.nativeprobe";')
+          old='INFOPLIST_KEY_CFBundleDisplayName = Ruffle;'
+          assert s.count(old)==2
+          s=s.replace(old,'INFOPLIST_KEY_CFBundleDisplayName = "Ruffle Native Test";')
+          p.write_text(s)
+          print('Independent Bundle ID: cn.shiguanghao.ruffle.nativeprobe')
+          PY
+      - name: Install Rust nightly, rust-src and iPhone ARM64 target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --profile minimal --component rust-src --target aarch64-apple-ios
+          rustup show
+          xcodebuild -version
+      - name: Build native Ruffle for iPhone and iPad
+        working-directory: native-ruffle
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ruffle-ios.xcodeproj \
+            -scheme ruffle-ios \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$RUNNER_TEMP/NativeDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Locate compiled native binary and assemble test IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find "$RUNNER_TEMP/NativeDerivedData/Build/Products" -maxdepth 2 -type d -name '*.app' -print -quit)"
+          test -n "$app"
+          echo "App: $app"
+          mkdir -p "$RUNNER_TEMP/NativePayload/Payload"
+          ditto "$app" "$RUNNER_TEMP/NativePayload/Payload/$(basename "$app")"
+          info="$RUNNER_TEMP/NativePayload/Payload/$(basename "$app")/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$info" | grep -Fx cn.shiguanghao.ruffle.nativeprobe
+          /usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$info"
+          plutil -lint "$info"
+          cd "$RUNNER_TEMP/NativePayload"
+          zip -qr "$RUNNER_TEMP/Shiguang-Native-Ruffle-SWF-Experimental-unsigned.ipa" Payload
+          test -s "$RUNNER_TEMP/Shiguang-Native-Ruffle-SWF-Experimental-unsigned.ipa"
+          unzip -tq "$RUNNER_TEMP/Shiguang-Native-Ruffle-SWF-Experimental-unsigned.ipa"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Shiguang-Native-Ruffle-SWF-Experimental-IPA
+          path: ${{ runner.temp }}/Shiguang-Native-Ruffle-SWF-Experimental-unsigned.ipa
+          if-no-files-found: error
+      - name: Archive exact sources and build notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C native-ruffle rev-parse HEAD > "$RUNNER_TEMP/upstream-native-ref.txt"
+          cp Docs/Native-Ruffle-iOS-POC.md "$RUNNER_TEMP/README-NATIVE-TEST.md"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Shiguang-Native-Ruffle-SWF-Experimental-Build-Info
+          path: |
+            ${{ runner.temp }}/upstream-native-ref.txt
+            ${{ runner.temp }}/README-NATIVE-TEST.md
