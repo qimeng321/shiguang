@@ -1,0 +1,102 @@
+name: F - Rust Ruffle lifecycle diagnostic (standalone)
+on:
+  push:
+    branches:
+      - experiments/ruffle-rust-lifecycle-f
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ruffle-rust-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout experimental launcher scripts only
+        uses: actions/checkout@v4
+        with:
+          path: launcher
+          persist-credentials: false
+
+      - name: Checkout pinned upstream Ruffle nightly
+        uses: actions/checkout@v4
+        with:
+          repository: ruffle-rs/ruffle
+          ref: 65d984777f5acc28e18fe6c3e89d28266fc1fb75
+          path: upstream
+          persist-credentials: false
+          submodules: false
+
+      - name: Verify pinned version and apply Rust read-only diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C upstream rev-parse HEAD)" = "65d984777f5acc28e18fe6c3e89d28266fc1fb75"
+          python3 -m py_compile launcher/Experiments/RuffleF/instrument_upstream.py
+          cd upstream
+          python3 ../launcher/Experiments/RuffleF/instrument_upstream.py
+          grep -Fq '[F-Rust] frame=' core/src/player.rs
+          grep -Fq 'f_diagnostic_in_flight_count' core/src/loader.rs
+          grep -Fq '[F-Rust] native_webgl_bitmap_' render/webgl/src/lib.rs
+          git diff --stat
+
+      - name: Install stable Rust wasm toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: upstream/web/package-lock.json
+
+      - name: Set up Java for playerglobal compilation
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install wasm-bindgen and binaryen
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y binaryen pkg-config clang libclang-dev
+          cargo install --locked --version 0.2.127 wasm-bindgen-cli
+          wasm-bindgen --version
+          wasm-opt --version
+
+      - name: Build custom Ruffle Web Rust/WASM and selfhosted JS
+        shell: bash
+        working-directory: upstream/web
+        env:
+          CARGO_BUILD_JOBS: '2'
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build --workspace=ruffle-core
+          npm run build --workspace=ruffle-selfhosted
+
+      - name: Verify built Rust diagnostic engine assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist=upstream/web/packages/selfhosted/dist
+          test -s "$dist/ruffle.js"
+          test "$(find "$dist" -maxdepth 1 -type f -name '*.wasm' | wc -l)" -ge 1
+          node --check "$dist/ruffle.js"
+          sha256sum "$dist/ruffle.js" "$dist"/*.wasm
+          printf '%s\n' 'Ruffle upstream source: nightly-2026-11-13 / commit 65d984777f5acc28e18fe6c3e89d28266fc1fb75' > "$dist/F-BASELINE.txt"
+          printf '%s\n' 'Experiment F: read-only MovieLibraries/Loader/WebGL Rust instrumentation; not a fix; not tested on iOS' >> "$dist/F-BASELINE.txt"
+
+      - name: Upload custom Ruffle engine for a separate iOS test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shiguang-F-Rust-Lifecycle-Ruffle-Web-Engine
+          path: upstream/web/packages/selfhosted/dist/
+          retention-days: 7
+          if-no-files-found: error
