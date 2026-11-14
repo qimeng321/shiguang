@@ -57,7 +57,7 @@ jobs:
           assert '1.09网页探针' in swift and 'battleLifecycleProbe' in swift
           assert 'static let tag = "nightly-2026-11-13"' in swift
           assert 'baselineRuffle' not in source and 'engineChoice' not in source
-          assert 'let selectedRenderer = "automatic"' in source
+          assert 'let selectedRenderer = "webgl"' in source
           assert 'A0000000000000000000001A' not in project
           assert 'webgl, canvas' not in swift
           assert 'petfightdll.swf' in source
