@@ -15,7 +15,7 @@ on:
       - "release/shiguang-1.0.7-b128-home-icon"
       - "release/shiguang-1.0.7-b128-wheel-404fix"
       - "release/shiguang-1.0.7-b128-wheel-macos26"
-      - "test/ios-1.13-b135-ruffle-ab"
+      - "dev/ios-b-nightly-font-workbench"
 
 jobs:
   static-check:
@@ -58,6 +58,9 @@ jobs:
           assert 'battleHTTPCacheEnabled' in source and 'battleCacheFile' in source
           assert 'selectedRenderer' in source and 'preferredRenderer=configuredRenderer' in source
           assert 'DedicatedRuffleEngine' in swift and 'battleExperimentPicker' in swift
+          assert 'GameFontMetricsPreset' in swift and 'fontMetricsPicker' in swift
+          assert 'GameFontMetricsPreset.saved' in source
+          assert 'fontMetricsPreset.fontPath' in source
           assert '1.13定时采样' in swift and 'NativeMemoryProbe' in swift
           assert 'BattleLoadTrace.shared.reset()' in source
           assert 'func markStart()' in source and 'func markEnd()' in source
@@ -77,7 +80,7 @@ jobs:
           assert 'func clearMobilePatch()' in model
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'resource/map/1.swf' in model
-          print('PASS: source-only 1.13 Build135 B dedicated pinned 2026-11-13 nightly')
+          print('PASS: 1.13 Build135 B-only Nightly and safe selectable CJK font metrics presets')
           PY_CHECK
   build:
     needs: static-check
@@ -149,6 +152,29 @@ jobs:
           assert abs(offset-0.110)<0.000001, f'Unexpected font baseline: {offset}'
           print('Verified ONE fallback CJK font with +110/1000 em offset')
           PY_VERIFY_FONT
+      - name: Build conservative calibrated CJK metrics font variant
+        run: |
+          set -euo pipefail
+          python3 Patches/build-cjk-metrics-variant.py \
+            Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf \
+            Resources/Ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf
+          python3 - <<'PY_CHECK_CJK'
+          from pathlib import Path
+          from fontTools.ttLib import TTFont
+          base = TTFont('Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf')
+          tuned = TTFont('Resources/Ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf')
+          assert len(list(Path('Resources/Ruffle').rglob('*.otf'))) == 2
+          assert list(base['CFF '].cff.topDictIndex[0].FontMatrix) == list(tuned['CFF '].cff.topDictIndex[0].FontMatrix)
+          assert (base['hhea'].ascent,base['hhea'].descent) == (1160,-288)
+          assert (tuned['hhea'].ascent,tuned['hhea'].descent) == (1070,-378)
+          assert (tuned['OS/2'].sTypoAscender,tuned['OS/2'].sTypoDescender) == (790,-210)
+          assert base['hhea'].ascent-base['hhea'].descent == tuned['hhea'].ascent-tuned['hhea'].descent
+          assert base['OS/2'].sTypoAscender-base['OS/2'].sTypoDescender == tuned['OS/2'].sTypoAscender-tuned['OS/2'].sTypoDescender
+          assert base.getBestCmap()==tuned.getBestCmap(), 'Glyphs changed unexpectedly'
+          base.close()
+          tuned.close()
+          print('PASS: exactly two fonts; matching glyphs; preserved line height; upward baseline 90 units')
+          PY_CHECK_CJK
       - name: Validate Canvas touch controls module
         shell: bash
         run: |
@@ -279,7 +305,9 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '135'
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.nightlyfont113'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
-          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 2
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/fonts/NotoSansCJKsc-Regular.otf"
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf"
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/ruffle.js"
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/engine-version.txt"
