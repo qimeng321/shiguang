@@ -193,7 +193,7 @@ final class GameServer {
             forKey: "shiguang.compatibilityMode103"
         )
         self.battleHTTPCacheEnabled = UserDefaults.standard.bool(forKey: "shiguang.battleHttpCache110")
-        LaunchDiagnostics.log("[1.10战斗实验] 战斗资源HTTP缓存=" + (battleHTTPCacheEnabled ? "开启（实验）" : "关闭（对照）"))
+        LaunchDiagnostics.log("[1.10战斗实验] 战斗资源HTTP缓存=" + (battleHTTPCacheEnabled ? "开启（实验）" : "关闭（对照）") + "；Ruffle渲染器=" + GameRendererPreset.saved.rawValue)
         self.bridge = packagedWebApp ? try GameSocketBridge.shared() : nil
         guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path) else {
@@ -835,6 +835,7 @@ final class GameServer {
         let qualityPreset = GameQualityPreset.saved
         let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
+        let selectedRenderer = GameRendererPreset.saved.rawValue
         // One tested fallback font, vertically adjusted; no alternate copies.
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
@@ -844,6 +845,7 @@ final class GameServer {
         <!doctype html><html lang="zh-CN"><head>
         <meta charset="utf-8"><meta name="shiguang-quality" content="\(selectedQuality)">
         <meta name="shiguang-max-fps" content="\(selectedFrameCap)">
+        <meta name="shiguang-renderer" content="\(selectedRenderer)">
         <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
         <style>
           :root {--game-w:960px;--game-h:560px}
@@ -858,6 +860,7 @@ final class GameServer {
         <script src="/ruffle/frame-cap.js"></script>
         <script>
           var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
+          var configuredRenderer=document.querySelector('meta[name="shiguang-renderer"]').content;
           var configuredFontURL="/ruffle/fonts/NotoSansCJKsc-Regular.otf";
           window.RufflePlayer=window.RufflePlayer||{};
           window.RufflePlayer.config={
@@ -879,6 +882,7 @@ final class GameServer {
               {host:"202.189.22.79",port:22975,proxyUrl:"ws://127.0.0.1:32975"}
             ]
           };
+          if(configuredRenderer!=="automatic")window.RufflePlayer.config.preferredRenderer=configuredRenderer;
         </script><script src="/ruffle/ruffle.js"></script>
         <script src="/ruffle/pvm-compat.js"></script>
         <script src="/ruffle/touch-controls.js"></script></head>
