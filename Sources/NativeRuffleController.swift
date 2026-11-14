@@ -9,6 +9,38 @@ private func shiguang_native_player_create(
     _ url: UnsafePointer<CChar>, _ quality: UInt32
 ) -> UnsafeMutableRawPointer?
 
+@_silgen_name("shiguang_native_player_send_text")
+private func shiguang_native_player_send_text(
+    _ controller: UnsafeMutableRawPointer, _ text: UnsafePointer<CChar>
+) -> Bool
+
+@_silgen_name("shiguang_native_player_text_control")
+private func shiguang_native_player_text_control(
+    _ controller: UnsafeMutableRawPointer, _ action: UInt32
+) -> Bool
+
+/// The SwiftUI game overlay owns no second player. It targets the native
+/// controller currently hosted in its UIViewControllerRepresentable.
+enum NativeRuffleInput {
+    static weak var currentController: UIViewController?
+
+    @discardableResult
+    static func insert(_ text: String) -> Bool {
+        guard let controller = currentController else { return false }
+        return text.withCString {
+            shiguang_native_player_send_text(Unmanaged.passUnretained(controller).toOpaque(), $0)
+        }
+    }
+
+    @discardableResult
+    static func control(_ action: UInt32) -> Bool {
+        guard let controller = currentController else { return false }
+        return shiguang_native_player_text_control(
+            Unmanaged.passUnretained(controller).toOpaque(), action
+        )
+    }
+}
+
 struct NativeRuffleController: UIViewControllerRepresentable {
     let url: URL
     let quality: GameQualityPreset
@@ -33,12 +65,17 @@ struct NativeRuffleController: UIViewControllerRepresentable {
             return fallback
         }
         LaunchDiagnostics.log("[原生 Ruffle] UIKit Metal PlayerController 已建立，SWF URL：\(url.path)，画质等级：\(level)")
-        return Unmanaged<UIViewController>.fromOpaque(raw).takeRetainedValue()
+        let controller = Unmanaged<UIViewController>.fromOpaque(raw).takeRetainedValue()
+        NativeRuffleInput.currentController = controller
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 
     static func dismantleUIViewController(_ uiViewController: UIViewController, coordinator: ()) {
+        if NativeRuffleInput.currentController === uiViewController {
+            NativeRuffleInput.currentController = nil
+        }
         LaunchDiagnostics.log("[原生 Ruffle] 退出播放器，交由 UIKit 释放 PlayerController")
     }
 }
