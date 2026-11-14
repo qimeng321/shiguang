@@ -90,7 +90,8 @@ fn import_archive(source: &Path) -> Result<(), String> {
         })?;
         if total > MAX_UNPACKED_BYTES { return Err("解压体积超过 16GiB 安全限制".into()); }
         let mut done = 0u64;
-        for i in 0..zip.len() {
+        let file_count = zip.len();
+        for i in 0..file_count {
             let mut entry = zip.by_index(i).map_err(|e| format!("读取文件 #{i} 失败: {e}"))?;
             let rel = entry.enclosed_name().ok_or_else(|| format!("发现非法相对路径: {}", entry.name()))?.to_path_buf();
             if rel.as_os_str().is_empty() { continue; }
@@ -111,7 +112,7 @@ fn import_archive(source: &Path) -> Result<(), String> {
                 io::copy(&mut entry, &mut out).map_err(|e| format!("解压写入失败 {}: {e}", out_path.display()))?;
                 done = done.saturating_add(entry.size());
             }
-            if i % 64 == 0 || i + 1 == zip.len() {
+            if i % 64 == 0 || i + 1 == file_count {
                 set_percent(if total > 0 { ((done.saturating_mul(90) / total) as usize).min(90) } else { 90 });
             }
         }
