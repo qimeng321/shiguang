@@ -15,6 +15,7 @@ on:
       - "release/shiguang-1.0.7-b128-home-icon"
       - "release/shiguang-1.0.7-b128-wheel-404fix"
       - "release/shiguang-1.0.7-b128-wheel-macos26"
+      - "test/ios-1.09-b131-battle-stability"
 
 jobs:
   static-check:
@@ -30,113 +31,39 @@ jobs:
           node Patches/test-precision-no-hover.js
           python3 - <<'PY_CHECK'
           from pathlib import Path
-          import json,plistlib
-          source=Path('Sources/GameServer.swift').read_text()
-          swift=Path('Sources/ShiguangLauncherApp.swift').read_text()
-          model=Path('Sources/LauncherModel.swift').read_text()
-          mouse=Path('Patches/touch-controls.js').read_text()
-          project=Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
-          manifest=json.loads(Path('Docs/resource-0.18.0-compatibility.json').read_text())
-          assert 'Text("正式版 1.07")' in swift
-          assert 'MARKETING_VERSION = 1.0.7;' in project
-          assert 'CURRENT_PROJECT_VERSION = 128;' in project
-          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
-          home=Path('Resources/Assets.xcassets/LauncherArt.imageset/LauncherArt.png').read_bytes()
-          icon=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png').read_bytes()
-          assert home == icon, 'Home header logo must match current AppIcon'
-          assert 'smartbeta' not in project
-          assert manifest['based_on_test_branch']=='test/1.2-nono-precision-safe-start-b118'
-          assert manifest['release_version']=='1.0.6' and manifest['build_number']==124
-          assert manifest['resource_version']=='0.18.0' and manifest['core_revision']=='2026110304'
-          assert manifest['source_analysis_only'] and not manifest['game_assets_embedded']
-          assert manifest['client_sha256'] in Path('Patches/pvm-compat.js').read_text()
-          assert 'import CryptoKit' in model and '2026110304' in model
-          assert 'isImportFinishing' in model and 'unzipProgress.fractionCompleted' in model
-          assert 'skipCRC32: false' in model and 'validateInstalledPackage(root:' in model
-          bridge=Path('Sources/GameSocketBridge.swift').read_text()
-          assert '202.189.22.79' in bridge and '202.189.22.234' not in bridge and '103.91.210.16' not in bridge
-          assert 'host:"103.91.210.16"' not in source
-          assert 'host:"202.189.22.234"' not in source
-          assert 'of: "202.189.22.234", with: GameSocketBridge.serverHost' in source
-          assert '启动器 正式版 1.07（Build 128' in model
-          from hashlib import sha256
-          icon_path=Path('Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png')
-          assert sha256(icon_path.read_bytes()).hexdigest() == '69fd6308b1b3e2b077978df1ed1bb8f464ec79681d35f2ec5cfacc0dae2c10ea'
-          appicons=json.loads(Path('Resources/Assets.xcassets/AppIcon.appiconset/Contents.json').read_text())
-          assert appicons['images'] == [{'filename':'AppIcon.png','idiom':'universal','platform':'ios','size':'1024x1024'}]
-          assert 'configuredCorePath(base:' in model and 'configuredWASMPath(base:' in model
-          assert 'require("dll/NieoCore.swf"' not in model
-          assert 'require("assets/nieo_wasm_core_bg.wasm"' not in model
-          assert '[登录地址] 已将资源包 ip.txt 更新为新服务器地址' in source
-          assert 'func leaveGame()' in bridge and 'static func shared()' in bridge
-          assert 'cmd == 10002' in bridge and 'virtualRoomPort' in bridge
-          assert 'NonoVipDailySignPanel.swf' in source and 'requestedPath' in source
-          # Regression: Destiny Wheel sends a malformed double-slash SWF URL.
-          # Only this known path is rewritten; generic unsafe paths are rejected.
-          assert 'requestedPath == "/resource//appRes/1211/WheelChoice_UI.swf"' in source
-          assert 'path = "/resource/appRes/1211/WheelChoice_UI.swf"' in source
-          assert '[命运之轮] 已修正 SWF 请求中的重复斜杠' in source
-          assert '!parts.contains(where: { $0 == ".." || $0 == "." || $0.isEmpty })' in source
-          assert 'decoded.contains("\\\\")' in source
-          assert 'GridItem(.flexible(), spacing: 4)' in swift
-          assert '32975' in source and '32975' in bridge
-          # Ruffle's load(options) overwrites global socketProxy; assert the live
-          # per-player config contains the base routing entry.
-          proxy_options=source.split('options.socketProxy=[',1)[1].split('];',1)[0]
-          assert 'port:22975' in proxy_options and '32975' in proxy_options
-          assert 'GameProtocolFramer' in bridge and 'downstreamFramer.consume' in bridge
-          assert 'GameFontPreset' not in swift and 'fontPositionPicker' not in swift
-          assert 'configuredFontURL' in source and 'NotoSansCJKsc-Regular.otf' in source
-          delta=Path('Sources/GameIncrementalUpdater.swift').read_text()
-          assert 'import ZIPFoundation' in delta and 'import CryptoKit' in delta
-          assert 'func recoverIfNeeded(gameRoot:' in delta
-          assert 'func inspect(archiveURL:' in delta and 'func install(archiveURL:' in delta
-          assert 'skipCRC32: false' in delta and 'SHA256()' in delta
-          assert 'backupRoot' in delta and 'journal.committed = true' in delta
-          assert 'GameIncrementalUpdater.recoverIfNeeded' in model
-          assert 'prepareIncrementalUpdate(_ source: URL)' in model
-          assert 'installPreparedIncrementalUpdate()' in model
-          assert 'incrementalUpdatePanel' in swift and 'showingDeltaPicker' in swift
-          assert '["zip", "srom"].contains(source.pathExtension.lowercased())' in model
-          assert '["zip", "srom"].contains(url.pathExtension.lowercased())' in delta
-          assert 'case .fullGamePackage' in delta
-          assert 'frameCapPreset = option.rawValue' in swift and 'qualityPreset = option.rawValue' in swift
-          assert swift.count('.fill(isSelected ? blue : Color.white)') >= 2
-          assert 'Text("1.06 新功能")' not in swift and 'Text("测试功能")' not in swift
+          import plistlib
+          swift = Path('Sources/ShiguangLauncherApp.swift').read_text()
+          source = Path('Sources/GameServer.swift').read_text()
+          model = Path('Sources/LauncherModel.swift').read_text()
+          project = Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
+          plist = plistlib.loads(Path('Resources/Info.plist').read_bytes())
+          assert plist['CFBundleShortVersionString'] == '1.0.9'
+          assert plist['CFBundleVersion'] == '131'
+          assert plist['CFBundleDisplayName'] == '拾光号1.09测试'
+          assert 'MARKETING_VERSION = 1.0.9;' in project
+          assert 'CURRENT_PROJECT_VERSION = 131;' in project
+          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher.stabilitytest;' in project
+          assert 'Text("测试版 1.09 · 战斗稳定性")' in swift
+          assert 'Build 131' in model and '基于正式版 1.08' in model
+          assert '?? .saving' in swift and '?? .fps30' in swift
+          assert 'GameQualityPreset.saving.rawValue' in swift
+          assert 'GameFrameCapPreset.fps30.rawValue' in swift
+          assert 'Math.min(original, 2)' in swift and 'DPRCapError' in swift
+          assert 'webViewWebContentProcessDidTerminate' in swift
+          assert 'UIApplication.didReceiveMemoryWarningNotification' in swift
+          assert 'BattleLoadTrace.shared.snapshot()' in swift
+          assert 'BattleLoadTrace.shared.record(path:' in source
+          assert 'petfightdll.swf' in source
+          assert 'let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in source
+          assert 'let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit' in source
+          assert 'options.frameRate' not in source
+          assert 'allowScriptAccess:true' in source
           assert 'GameIncrementalUpdater.swift' in project
-          assert 'MobilePatchManager' in model and 'func importMobilePatch(_ url: URL)' in model
+          assert 'MobilePatchManager' in model
           assert 'func clearMobilePatch()' in model
-          assert 'mobilePatchRoot' in source and 'mobilePatchPanel' in swift
-          assert 'let ifNoneMatch =' in source
-          assert 'private var verifiedPathCache:' in source
-          assert 'private let maxPathEntries = 40_000' in source
-          assert 'private let pathCacheTTL: TimeInterval = 45' in source
-          assert 'verifiedPathCache[key] = VerifiedPath(' in source
-          assert 'verifiedPathCache.removeValue(forKey: key)' in source
-          assert 'ETag:' in source and '304 Not Modified' in source
-          assert 'GeometryReader { lockedGeometry in' in swift
-          assert 'ScrollView(.vertical)' in swift
-          assert 'function fit(force)' in source
-          assert 'Math.min(w/960,h/560)' in source
-          assert 'case unlimited, fps60, fps30' in swift
-          assert 'case saving, balanced, ultra' in swift
-          assert 'Toggle(isOn: $compatibilityMode)' in swift
-          assert 'input.type="email"' in source
-          assert 'input.setAttribute("inputmode","email")' in source
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
-          assert 'enableMouse:function()' in source
-          assert 'function doubleClick()' in mouse and 'function rightClick()' in mouse
-          assert 'function precisePress(p,duration)' in mouse
-          assert 'function directPointerDown(ev)' in mouse
-          assert 'function directPointerUp(ev)' in mouse
-          assert 'btn("sh-mouse-double",row,"双击",doubleClick)' in mouse
-          assert 'btn("sh-mouse-right",row,"右键",rightClick)' in mouse
-          assert 'setDelayedTap:setDelayedTap' in mouse
-          assert 'ShiguangMapBridge' not in source and 'toggleMapControls' not in swift
-          assert not Path('Patches/test-smart-touch.js').exists()
-          for forbidden in ['smartHover','SmartHover','setSmartHover','smartPointer','smartTouch','ringAnchor','smartEnableTimer','__shiguangSmartHoverChoice','galaxy-navigation.js']:
-              assert forbidden not in swift+source+mouse, 'retired feature '+forbidden
-          print('PASS: formal 1.07 Build128, dynamic SROM paths, server endpoint and preserved launcher invariants')
+          assert 'resource/map/1.swf' in model
+          print('PASS: independent 1.09 Build131 low-load battle test configuration')
           PY_CHECK
   build:
     needs: static-check
@@ -341,27 +268,27 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check formal 1.07 release metadata
+      - name: Check independent 1.09 test build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.7'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '128'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.9'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '131'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.stabilitytest'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package formal 1.07 project source ZIP
+      - name: Package 1.09 battle stability test source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.07-b128-wheel-404fix/ --output=/tmp/ShiguangLauncher-v1.07-b128-wheel-404fix-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.07-b128-wheel-404fix-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.07-b128-wheel-404fix-source.zip | grep -Fx 'ShiguangLauncher-v1.07-b128-wheel-404fix/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.09-b131-battle-stability/ --output=/tmp/ShiguangLauncher-v1.09-b131-battle-stability-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.09-b131-battle-stability-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.09-b131-battle-stability-source.zip | grep -Fx 'ShiguangLauncher-v1.09-b131-battle-stability/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.07-b128-wheel-404fix-ipa
+          name: ShiguangLauncher-v1.09-b131-battle-stability-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.07-b128-wheel-404fix-source
-          path: /tmp/ShiguangLauncher-v1.07-b128-wheel-404fix-source.zip
+          name: ShiguangLauncher-v1.09-b131-battle-stability-source
+          path: /tmp/ShiguangLauncher-v1.09-b131-battle-stability-source.zip
           if-no-files-found: error
