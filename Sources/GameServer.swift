@@ -247,7 +247,7 @@ final class GameServer {
               FileManager.default.fileExists(atPath: baseline.appendingPathComponent("ruffle.js").path),
               let assets = Bundle.main.url(forResource: engineChoice.bundleFolder, withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path),
-              FileManager.default.contentsOfDirectory(atPath: assets.path).contains(where: { $0.hasSuffix(".wasm") }) else {
+              ((try? FileManager.default.contentsOfDirectory(atPath: assets.path)) ?? []).contains(where: { $0.hasSuffix(".wasm") }) else {
             throw ServerError.missingRuffle
         }
         self.baselineRuffle = baseline.resolvingSymlinksInPath()
