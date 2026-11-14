@@ -63,7 +63,7 @@ jobs:
           assert 'func markStart()' in source and 'func markEnd()' in source
           assert '1.12网页探针' in swift and 'battleLifecycleProbe' in swift
           assert 'case nightly = "nightly-2026-11-13"' in swift
-          assert 'RuffleNightly' in source and 'baselineRuffle' in source
+          assert 'RuffleNightly' in swift and 'baselineRuffle' in source
           assert 'let selectedRenderer = "automatic"' in source
           assert 'A0000000000000000000001A' in project
           assert 'webgl, canvas' not in swift
