@@ -116,7 +116,7 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
 // build pipeline, not switchable from the application UI.
 enum DedicatedRuffleEngine {
     static let tag = "nightly-2026-11-13"
-    static let shortDescription = "F1 基线测试 · Ruffle Nightly 2026-11-13 官方构建"
+    static let shortDescription = "F1.1 登录探针 · Nightly 2026-11-13 官方构建"
 }
 
 // Native launcher resident size only. This does not measure WKWebView's
@@ -175,7 +175,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("F1 内核测试版")
+                        Text("F1.1 登录诊断版")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
