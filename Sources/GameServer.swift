@@ -909,6 +909,35 @@ final class GameServer {
         </style>
         <script src="/ruffle/frame-cap.js"></script>
         <script>
+          // F1.1: observe only the loopback WebSocket lifecycle, never frames or credentials.
+          (function(){
+            try {
+              if(window.__shiguangF11WebSocketProbe) return;
+              var NativeWS=window.WebSocket;
+              if(!NativeWS || typeof Proxy!=="function" || typeof Reflect!=="object") return;
+              window.__shiguangF11WebSocketProbe=true;
+              function probeLog(s) {
+                try { window.webkit.messageHandlers.gameDiagnostics.postMessage("状态：[F1.1 Socket] "+s); } catch(_){}
+              }
+              window.WebSocket=new Proxy(NativeWS,{construct:function(target,args,newTarget){
+                var url=String(args&&args.length?args[0]:"");
+                var local=url.indexOf("ws://127.0.0.1:32973")===0||
+                          url.indexOf("ws://127.0.0.1:32974")===0||
+                          url.indexOf("ws://127.0.0.1:32975")===0;
+                if(local)probeLog("建立本地代理请求："+url.slice(0,27));
+                var socket=Reflect.construct(target,args,newTarget);
+                if(local){
+                  socket.addEventListener("open",function(){probeLog("本地代理连接已打开")});
+                  socket.addEventListener("error",function(){probeLog("本地代理连接错误")});
+                  socket.addEventListener("close",function(e){probeLog("本地代理连接关闭，code="+String(e.code))});
+                }
+                return socket;
+              }});
+              probeLog("已安装安全监听（不读取账号、密码或传输内容）");
+            }catch(e){
+              try{window.webkit.messageHandlers.gameDiagnostics.postMessage("状态：[F1.1 Socket] 监听不可用："+String(e).slice(0,100))}catch(_){}
+            }
+          })();
           var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
           var configuredRenderer=document.querySelector('meta[name="shiguang-renderer"]').content;
           var configuredFontURL="/ruffle/fonts/NotoSansCJKsc-Regular.otf";
@@ -929,7 +958,10 @@ final class GameServer {
             socketProxy:[
               {host:"202.189.22.79",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
               {host:"202.189.22.79",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
-              {host:"202.189.22.79",port:22975,proxyUrl:"ws://127.0.0.1:32975"}
+              {host:"202.189.22.79",port:22975,proxyUrl:"ws://127.0.0.1:32975"},
+              // Old endpoint aliases for checking whether Login.swf ignores the rewritten ip.txt.
+              {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"202.189.22.234",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
             ]
           };
           if(configuredRenderer!=="automatic")window.RufflePlayer.config.preferredRenderer=configuredRenderer;
@@ -1239,8 +1271,12 @@ final class GameServer {
               {host:"202.189.22.79",port:22974,proxyUrl:"ws://127.0.0.1:32974"},
               {host:"202.189.22.79",port:22975,proxyUrl:"ws://127.0.0.1:32975"},
               {host:"127.0.0.1",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
-              {host:"localhost",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
+              {host:"localhost",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              // F1.1: aliases for two historical login addresses; other routing remains unchanged.
+              {host:"103.91.210.16",port:22973,proxyUrl:"ws://127.0.0.1:32973"},
+              {host:"202.189.22.234",port:22973,proxyUrl:"ws://127.0.0.1:32973"}
             ];
+            report("[F1.1 Socket] 映射表已设置（当前服务器、两个历史地址与 localhost）。若无本地 WebSocket 请求，说明连接尚未交给代理");
             await player.ruffle().load(options);
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
