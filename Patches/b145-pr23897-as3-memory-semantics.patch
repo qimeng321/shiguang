@@ -1,28 +1,3 @@
-diff --git a/core/src/avm2.rs b/core/src/avm2.rs
---- a/core/src/avm2.rs
-+++ b/core/src/avm2.rs
-@@ -191,6 +191,12 @@ pub struct Avm2<'gc> {
-     pub debug_output: bool,
- 
-     pub optimizer_enabled: bool,
-+
-+    /// Set to `true` by `flash.system.System.gc()`. Read and cleared by
-+    /// `Player::update` after each frame's incremental GC pass; when set,
-+    /// a full collection cycle is performed.
-+    #[collect(require_static)]
-+    pub force_full_gc: std::cell::Cell<bool>,
- }
- 
- impl<'gc> Avm2<'gc> {
-@@ -241,6 +247,8 @@ impl<'gc> Avm2<'gc> {
-             debug_output: false,
- 
-             optimizer_enabled: true,
-+
-+            force_full_gc: std::cell::Cell::new(false),
-         }
-     }
- 
 diff --git a/core/src/avm2/events.rs b/core/src/avm2/events.rs
 --- a/core/src/avm2/events.rs
 +++ b/core/src/avm2/events.rs
@@ -246,46 +221,6 @@ diff --git a/core/src/avm2/globals/flash/events/event_dispatcher.rs b/core/src/a
  
      Avm2::register_broadcast_listener(activation.context, this, event_type);
  
-diff --git a/core/src/avm2/globals/flash/system/System.as b/core/src/avm2/globals/flash/system/System.as
---- a/core/src/avm2/globals/flash/system/System.as
-+++ b/core/src/avm2/globals/flash/system/System.as
-@@ -4,7 +4,7 @@ package flash.system {
-         import __ruffle__.stub_method;
-         import __ruffle__.stub_getter;
- 
--        public static function gc():void {}
-+        public static native function gc():void;
- 
-         public static function pauseForGCIfCollectionImminent(imminence:Number = 0.75):void {
-             stub_method("flash.system.System", "pauseForGCIfCollectionImminent");
-diff --git a/core/src/avm2/globals/flash/system/system.rs b/core/src/avm2/globals/flash/system/system.rs
---- a/core/src/avm2/globals/flash/system/system.rs
-+++ b/core/src/avm2/globals/flash/system/system.rs
-@@ -9,6 +9,24 @@ use crate::avm2::value::Value;
- use crate::avm2_stub_method;
- use ruffle_common::sandbox::SandboxType;
- 
-+/// Implements `flash.system.System.gc` method.
-+///
-+/// In Flash Player this is a debug-mode hint; release builds ignore it.
-+/// In Ruffle, the call sets the `Avm2::force_full_gc` flag; `Player::update`
-+/// reads the flag and runs a full `gc-arena finish_cycle` after the current
-+/// update completes. This promotes `System.gc()` to a first-class trigger
-+/// for full collection, usable both by diagnostic tooling and by application
-+/// code that wants to drain weak references and reclaim slot space at
-+/// well-defined points (typically after teardown of a large UI subtree).
-+pub fn gc<'gc>(
-+    activation: &mut Activation<'_, 'gc>,
-+    _this: Value<'gc>,
-+    _args: FunctionArgs<'_, 'gc>,
-+) -> Result<Value<'gc>, Error<'gc>> {
-+    activation.context.avm2.force_full_gc.set(true);
-+    Ok(Value::Undefined)
-+}
-+
- /// Implements `flash.system.System.setClipboard` method
- pub fn set_clipboard<'gc>(
-     activation: &mut Activation<'_, 'gc>,
 diff --git a/core/src/avm2/globals/flash/utils/Dictionary.as b/core/src/avm2/globals/flash/utils/Dictionary.as
 --- a/core/src/avm2/globals/flash/utils/Dictionary.as
 +++ b/core/src/avm2/globals/flash/utils/Dictionary.as
@@ -626,31 +561,3 @@ diff --git a/core/src/avm2/object/dictionary_object.rs b/core/src/avm2/object/di
 +        Ok(Value::Undefined)
      }
  }
-diff --git a/core/src/player.rs b/core/src/player.rs
---- a/core/src/player.rs
-+++ b/core/src/player.rs
-@@ -2452,6 +2452,24 @@ impl Player {
-         // GC
-         self.gc_arena.borrow_mut().collect_debt();
- 
-+        // If AS3 called `flash.system.System.gc()` since the previous update,
-+        // run a full collection cycle now. The flag is set by
-+        // `flash::system::system::gc` and cleared here. The incremental
-+        // `collect_debt()` above is paced on a per-frame budget and does not,
-+        // by itself, drain weak references and dead handler shells quickly
-+        // enough for workloads that discard thousands of long-lived objects
-+        // in bursts; the explicit full cycle requested by AS3 closes that
-+        // gap.
-+        let force_full_gc = self.gc_arena.borrow().mutate(|_, root| {
-+            let data = root.data.borrow();
-+            let flag = data.avm2.force_full_gc.get();
-+            data.avm2.force_full_gc.set(false);
-+            flag
-+        });
-+        if force_full_gc {
-+            self.gc_arena.borrow_mut().finish_cycle();
-+        }
-+
-         rval
-     }
- 
