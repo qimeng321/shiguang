@@ -15,7 +15,7 @@ on:
       - "release/shiguang-1.0.7-b128-home-icon"
       - "release/shiguang-1.0.7-b128-wheel-404fix"
       - "release/shiguang-1.0.7-b128-wheel-macos26"
-      - "release/shiguang-1.0.9-b136-nightly-font"
+      - "release/shiguang-1.0.9-b136-sgcore-delta-fix"
 
 jobs:
   static-check:
@@ -81,7 +81,13 @@ jobs:
           assert 'func clearMobilePatch()' in model
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'resource/map/1.swf' in model
-          print('PASS: official 1.09 Build136: pinned B Nightly, one metrics-corrected font, original production bundle ID')
+          updater = Path('Sources/GameIncrementalUpdater.swift').read_text()
+          assert 'let allowedCores = ["dll/SGCore.swf", "dll/NieoCore.swf"]' in updater
+          assert 'corePath: checked.corePath' in updater
+          assert 'skipCRC32: false' in updater
+          assert 'journal.committed = true' in updater
+          assert 'if current > checked.targetRevision' in updater
+          print('PASS: official 1.09 Build136 SGCore delta hotfix: pinned B Nightly, tuned CJK font, production bundle unchanged')
           PY_CHECK
   build:
     needs: static-check
@@ -336,7 +342,7 @@ jobs:
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package official 1.09 source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.09-b136-nightly-font/ --output=/tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip HEAD
+          git archive --format=zip --prefix=ShiguangLauncher-v1.09-b136-sgcore-delta-fix/ --output=/tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip HEAD
           unzip -tq /tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip
           unzip -Z -1 /tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip | grep -Fx 'ShiguangLauncher-v1.09-b136-nightly-font/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
