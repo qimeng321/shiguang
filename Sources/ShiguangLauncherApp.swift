@@ -1415,7 +1415,7 @@ struct GameWebView: UIViewRepresentable {
             let minMB = memory.min()
             let maxMB = memory.max()
             let currentMB = latest.wasmMiB
-            let measured = "终止前最后样本距今\\(age)秒；采样数=\\(b146Samples.count)；当前WASM=\\(currentMB.map(String.init) ?? "不可用")MiB；最近3分钟WASM范围=\\(minMB.map(String.init) ?? "不可用")–\\(maxMB.map(String.init) ?? "不可用")MiB；最后计时器间隔=\\(latest.lagMs)ms；WebGL丢失=\\(b146LostContextCount)；最后事件=\\(b146LastEvent)"
+            let measured = "终止前最后样本距今\(age)秒；采样数=\(b146Samples.count)；当前WASM=\(currentMB.map(String.init) ?? "不可用")MiB；最近3分钟WASM范围=\(minMB.map(String.init) ?? "不可用")–\(maxMB.map(String.init) ?? "不可用")MiB；最后计时器间隔=\(latest.lagMs)ms；WebGL丢失=\(b146LostContextCount)；最后事件=\(b146LastEvent)"
             let notes: String
             if b146LostContextCount > 0 {
                 notes = "观察到 WebGL 上下文丢失；优先调查 GPU/渲染链路，但无法证明这是进程终止的直接原因。"
