@@ -27,7 +27,7 @@ enum GameIncrementalError: LocalizedError {
         case .invalidArchive: return "增量包不是有效 ZIP 压缩内容，或解压、CRC32 校验失败；非 ZIP 格式的 .srom 暂不支持。"
         case .unsafeFile(let path): return "增量包包含不安全或不支持的文件：\(String(path.prefix(100)))"
         case .unsupportedSize: return "增量包超出安全限制（最多 2000 个文件、300 MB 解压体积）；完整游戏包请通过“导入美化包”安装。"
-        case .missingCore: return "这不是可识别的游戏增量包：缺少 config/dll.xml 或 dll/NieoCore.swf；完整包请走“导入美化包”。"
+        case .missingCore: return "这不是可识别的游戏增量包：需要 config/dll.xml 及对应的 dll/SGCore.swf 或 dll/NieoCore.swf；完整包请走“导入美化包”。"
         case .invalidRevision: return "无法从增量包识别有效的核心修订号。"
         case .upToDate(let revision): return "当前资源已是 \(revision)，无需重复更新。"
         case .downgrade(let from, let to): return "更新包版本 \(to) 低于现有版本 \(from)，已阻止覆盖。"
@@ -61,6 +61,7 @@ enum GameIncrementalUpdater {
         let entries: [String: Entry]
         let totalBytes: UInt64
         let targetRevision: String
+        let corePath: String
     }
 
     private static var support: URL {
@@ -184,7 +185,7 @@ enum GameIncrementalUpdater {
             guard !fm.fileExists(atPath: stage.appendingPathComponent("Client.swf").path) else {
                 throw GameIncrementalError.invalidArchive
             }
-            guard revision(from: try Data(contentsOf: stage.appendingPathComponent("config/dll.xml"))) == preview.targetRevision else {
+            guard revision(from: try Data(contentsOf: stage.appendingPathComponent("config/dll.xml")), corePath: checked.corePath) == preview.targetRevision else {
                 throw GameIncrementalError.invalidRevision
             }
             let records = checked.paths.map { path in Record(path: path,
@@ -305,24 +306,36 @@ enum GameIncrementalUpdater {
             paths.append(path)
             guard paths.count <= maxFiles else { throw GameIncrementalError.unsupportedSize }
         }
-        guard entries["config/dll.xml"] != nil, entries["dll/NieoCore.swf"] != nil else {
-            throw GameIncrementalError.missingCore
-        }
-        let item = entries["config/dll.xml"]!
-        guard item.uncompressedSize <= 128 * 1024 else { throw GameIncrementalError.invalidRevision }
+        guard let config = entries["config/dll.xml"] else { throw GameIncrementalError.missingCore }
+        guard config.uncompressedSize <= 128 * 1024 else { throw GameIncrementalError.invalidRevision }
         var xml = Data()
         do {
-            _ = try archive.extract(item, consumer: { bytes in xml.append(bytes) })
+            _ = try archive.extract(config, consumer: { bytes in xml.append(bytes) })
         } catch { throw GameIncrementalError.invalidArchive }
-        guard let target = revision(from: xml) else { throw GameIncrementalError.invalidRevision }
-        return CheckedArchive(paths: paths, entries: entries, totalBytes: totalBytes, targetRevision: target)
+
+        // Support 0.18.x SGCore and legacy NieoCore, but only the core
+        // declared by this delta's dll.xml. Reject ambiguous core archives.
+        let allowedCores = ["dll/SGCore.swf", "dll/NieoCore.swf"]
+        let presentCores = allowedCores.filter { entries[$0] != nil }
+        guard presentCores.count == 1, let corePath = presentCores.first else {
+            throw GameIncrementalError.missingCore
+        }
+        guard let target = revision(from: xml, corePath: corePath) else {
+            throw GameIncrementalError.invalidRevision
+        }
+        LaunchDiagnostics.log("[增量更新] 识别核心=" + corePath + "，目标修订号=" + target)
+        return CheckedArchive(paths: paths, entries: entries, totalBytes: totalBytes,
+                              targetRevision: target, corePath: corePath)
     }
 
-    private static func revision(from data: Data) -> String? {
-        guard let xml = String(data: data, encoding: .utf8),
+    private static func revision(from data: Data, corePath: String) -> String? {
+        guard ["dll/SGCore.swf", "dll/NieoCore.swf"].contains(corePath),
+              let xml = String(data: data, encoding: .utf8),
               let after = xml.components(separatedBy: "ver=\"").dropFirst().first else { return nil }
         let value = String(after.prefix(while: { $0.isNumber }))
-        guard value.count == 10, xml.contains("NieoCore.swf?" + value) else { return nil }
+        // Retain the existing 10-digit revision requirement and verify that
+        // this exact core's XML entry includes the same revision suffix.
+        guard value.count == 10, xml.contains(corePath + "?" + value) else { return nil }
         return value
     }
 
@@ -342,7 +355,7 @@ enum GameIncrementalUpdater {
         guard ["resource", "module", "dll", "config"].contains(parent) else { return false }
         let ext = (path as NSString).pathExtension.lowercased()
         if parent == "config" { return path == "config/dll.xml" }
-        if parent == "dll" { return path == "dll/NieoCore.swf" }
+        if parent == "dll" { return path == "dll/SGCore.swf" || path == "dll/NieoCore.swf" }
         return ["swf", "xml", "png", "jpg", "jpeg", "webp", "gif"].contains(ext)
     }
 
