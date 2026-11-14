@@ -345,16 +345,16 @@ jobs:
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package official 1.09 source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.09-b136-flexible-delta/ --output=/tmp/ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source.zip | grep -Fx 'ShiguangLauncher-v1.09-b136-sgcore-delta-fix/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.09-b136-flexible-delta/ --output=/tmp/ShiguangLauncher-v1.09-b136-flexible-delta-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.09-b136-flexible-delta-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.09-b136-flexible-delta-source.zip | grep -Fx 'ShiguangLauncher-v1.09-b136-flexible-delta/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.09-b136-sgcore-delta-fix-ipa
+          name: ShiguangLauncher-v1.09-b136-flexible-delta-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source
-          path: /tmp/ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source.zip
+          name: ShiguangLauncher-v1.09-b136-flexible-delta-source
+          path: /tmp/ShiguangLauncher-v1.09-b136-flexible-delta-source.zip
           if-no-files-found: error
