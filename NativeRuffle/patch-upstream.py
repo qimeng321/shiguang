@@ -88,7 +88,7 @@ replace("src/library_controller.rs",
         "            self.launch_shiguang_game();\n"
         "        }\n")
 replace("src/library_controller.rs",
-        "            &NSArray::from_slice(&[ns_string!(RUF_UTI), ns_string!(SWF_UTI)]),\n"
+        "            &NSArray::from_slice(&[ns_string!(RUF_UTI), ns_string!(SWF_UTI)]),\n",
         "            &NSArray::from_slice(&[ns_string!(RUF_UTI), ns_string!(SWF_UTI), ns_string!(\"public.data\")]),\n")
 replace("src/library_controller.rs",
         "            UIDocumentPickerMode::Open,\n",
