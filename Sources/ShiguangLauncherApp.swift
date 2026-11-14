@@ -13,7 +13,7 @@ struct ShiguangLauncherApp: App {
             LauncherView()
                 .environmentObject(launcher)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                    LaunchDiagnostics.log("[1.11内存警告] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
+                    LaunchDiagnostics.log("[1.12内存警告] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
                 }
                 // Files → share/open in 拾光号 is a second route for .srom.
                 .onOpenURL { url in
@@ -112,27 +112,34 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
 }
 
 
-// Select the rendering backend only for A/B diagnosis. Ruffle may fall back
-// when WebGL or Canvas cannot support a specific game feature.
-enum GameRendererPreset: String, CaseIterable, Identifiable {
-    case automatic
-    case wgpuWebgl = "wgpu-webgl"
+// In 1.12 both engines use identical viewport, socket proxies, quality and
+// game resources. The alternate is explicitly experimental and fully offline.
+enum RuffleEnginePreset: String, CaseIterable, Identifiable {
+    case stable = "stable-0.7.1"
+    case nightly = "nightly-2026-11-13"
+
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .automatic: return "自动"
-        case .wgpuWebgl: return "WGPU-WebGL"
+        case .stable: return "A · 0.7.1"
+        case .nightly: return "B · 11月13日 Nightly"
         }
     }
-    var detail: String {
+    var explanation: String {
         switch self {
-        case .automatic: return "沿用 1.09/1.10 可进入地图的默认渲染路径"
-        case .wgpuWebgl: return "显式优先使用功能较完整的 WGPU-WebGL；自动模式也可能已选用它，作为配置核对，不保证不同的渲染结果"
+        case .stable: return "现有 0.7.1：与 1.11 一致，用于基准对照"
+        case .nightly: return "Ruffle Web 2026-11-13 夜间构建：可能改善内存/渲染，也可能不兼容登录或地图"
         }
     }
-    static let defaultsKey = "shiguang.renderer111"
-    static var saved: GameRendererPreset {
-        GameRendererPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .automatic
+    var bundleFolder: String {
+        switch self {
+        case .stable: return "Ruffle"
+        case .nightly: return "RuffleNightly"
+        }
+    }
+    static let defaultsKey = "shiguang.engine112"
+    static var saved: RuffleEnginePreset {
+        RuffleEnginePreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .stable
     }
 }
 
@@ -167,7 +174,7 @@ struct LauncherView: View {
     @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.saving.rawValue
     @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.fps30.rawValue
     @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
-    @AppStorage(GameRendererPreset.defaultsKey) private var rendererPreset = GameRendererPreset.automatic.rawValue
+    @AppStorage(RuffleEnginePreset.defaultsKey) private var enginePreset = RuffleEnginePreset.stable.rawValue
     @AppStorage("shiguang.battleHttpCache110") private var battleHTTPCacheEnabled = false
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
@@ -194,7 +201,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("测试版 1.11 · 生命周期诊断")
+                        Text("测试版 1.12 · Ruffle 内核 A/B")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -693,43 +700,43 @@ struct LauncherView: View {
     }
 
     private var battleExperimentPicker: some View {
-        let renderer = GameRendererPreset(rawValue: rendererPreset) ?? .automatic
+        let selected = RuffleEnginePreset(rawValue: enginePreset) ?? .stable
         return VStack(alignment: .leading, spacing: 11) {
             HStack {
-                Label("连续战斗实验", systemImage: "flask")
+                Label("Ruffle 内核对照", systemImage: "cpu")
                     .font(.system(size: 16, weight: .bold)).foregroundStyle(ink)
                 Spacer()
-                Text("1.11 专项").font(.system(size: 11, weight: .medium)).foregroundStyle(blue)
+                Text("1.12 专项").font(.system(size: 11, weight: .medium)).foregroundStyle(blue)
             }
             HStack(spacing: 5) {
-                ForEach(GameRendererPreset.allCases) { option in
-                    let selected = rendererPreset == option.rawValue
-                    Button { rendererPreset = option.rawValue } label: {
+                ForEach(RuffleEnginePreset.allCases) { option in
+                    let active = enginePreset == option.rawValue
+                    Button { enginePreset = option.rawValue } label: {
                         Text(option.title)
-                            .font(.system(size: 13, weight: selected ? .bold : .medium))
-                            .foregroundStyle(selected ? .white : ink)
-                            .frame(maxWidth: .infinity, minHeight: 38)
-                            .background(selected ? blue : Color.white,
+                            .font(.system(size: 12, weight: active ? .bold : .medium))
+                            .foregroundStyle(active ? .white : ink)
+                            .frame(maxWidth: .infinity, minHeight: 42)
+                            .background(active ? blue : Color.white,
                                         in: RoundedRectangle(cornerRadius: 9))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Ruffle 渲染器：" + option.title)
+                    .accessibilityLabel("Ruffle 内核：" + option.title)
                 }
             }
             .padding(4)
             .background(Color(red: 0.91, green: 0.93, blue: 0.96),
                         in: RoundedRectangle(cornerRadius: 12))
-            Text(renderer.detail)
+            Text(selected.explanation)
                 .font(.system(size: 12)).foregroundStyle(subtleInk)
                 .fixedSize(horizontal: false, vertical: true)
             Toggle(isOn: $battleHTTPCacheEnabled) {
                 Text("战斗 SWF 网页缓存实验").font(.system(size: 14, weight: .semibold))
             }
             .tint(green)
-            Text("默认关闭。开启后只允许部分战斗精灵/技能 SWF 使用短时 HTTP 缓存；不修改美化包，不保证 Ruffle 复用已解码对象。对照时请保持其他设置一致。")
+            Text("对照测试建议关闭缓存、保持 30 FPS 与相同画质；切换内核后需退出游戏再重新进入。两套内核均内置，切换不需要下载，也不会修改导入的资源包。")
                 .font(.system(size: 11)).foregroundStyle(subtleInk)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("WebGL/Canvas 在 1.10 中不能正常进地图，已移除。每次更改后重新进入游戏；右上角菜单可手动标记开战/结束，以校对日志的资源波次。")
+            Text("可在游戏右上角标记每局开始和结束；失败后导出 diagnostics.txt，并注意内核版本行。")
                 .font(.system(size: 11)).foregroundStyle(subtleInk)
         }
         .padding(15)
@@ -1054,7 +1061,7 @@ struct GameView: View {
         }
         .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
             guard server != nil else { return }
-            LaunchDiagnostics.log("[1.11定时采样] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
+            LaunchDiagnostics.log("[1.12定时采样] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
         }
         .onDisappear {
             server?.leaveGame()
@@ -1283,7 +1290,7 @@ struct GameWebView: UIViewRepresentable {
                 } catch(e) { fail(label + '：Ruffle 状态读取失败：' + String(e).slice(0, 130)); }
               }
               window.addEventListener('DOMContentLoaded', function () {
-                status('1.11 战斗生命周期诊断：原生DPR=' + String(window.__shiguangNativeDPR || '?')
+                status('1.12 双内核对照诊断：原生DPR=' + String(window.__shiguangNativeDPR || '?')
                   + '，实际DPR=' + String(window.devicePixelRatio || '?')
                   + '，覆盖状态=' + (window.__shiguangDPRCapError || '正常'));
                 setTimeout(function () { reportPlayerState('启动5秒'); }, 5000);
@@ -1433,7 +1440,7 @@ struct GameWebView: UIViewRepresentable {
             if details.hasPrefix("诊断：") {
                 // Keep heartbeat out of SwiftUI state updates; persist for the
                 // abrupt WKWebView termination case even if UI is unresponsive.
-                LaunchDiagnostics.log("[1.11网页探针] " + String(details.dropFirst(3)))
+                LaunchDiagnostics.log("[1.12网页探针] " + String(details.dropFirst(3)))
             }
             else if details.hasPrefix("状态：") { onStatus(String(details.dropFirst(3))) }
             else if details.hasPrefix("错误：") { onError(String(details.dropFirst(3))) }
@@ -1453,7 +1460,7 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            LaunchDiagnostics.log("[1.11崩溃快照] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
+            LaunchDiagnostics.log("[1.12崩溃快照] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
             LaunchDiagnostics.log("[严重诊断] WebKit 内容进程终止，已保留资源与诊断日志；需要手动刷新")
             onError("游戏网页进程已终止，可能存在内存压力或渲染异常。请点「重新加载游戏」重试，并导出 diagnostics.txt 排查。")
         }
