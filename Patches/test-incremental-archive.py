@@ -58,8 +58,8 @@ with tempfile.TemporaryDirectory() as temp:
             xml = f'<taomee><ext><item path="{core_path}?{revision}" ver="{revision}" /></ext></taomee>'
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("config/dll.xml", xml)
-                archive.writestr(core_path, b"FWS" + b"\\x00" * 64)
-                archive.writestr("resource/map/999.swf", b"FWS" + b"\\x00" * 64)
+                archive.writestr(core_path, b"FWS" + b"\x00" * 64)
+                archive.writestr("resource/map/999.swf", b"FWS" + b"\x00" * 64)
             with zipfile.ZipFile(path) as archive:
                 names = set(archive.namelist())
                 assert len(names) == 3 and "Client.swf" not in names
@@ -67,12 +67,12 @@ with tempfile.TemporaryDirectory() as temp:
                 assert archive.testzip() is None
                 loaded = archive.read("config/dll.xml").decode("utf-8")
                 assert f'{core_path}?{revision}' in loaded
-                assert re.search(r'ver="\\d{10}"', loaded)
+                assert re.search(r'ver="\d{10}"', loaded)
     # Complete game packs and unrelated native resources must not pass
     # through the incremental (partial-merge) importer.
     full_path = Path(temp) / "full.srom"
     with zipfile.ZipFile(full_path, "w") as archive:
-        archive.writestr("Client.swf", b"FWS" + b"\\x00" * 64)
+        archive.writestr("Client.swf", b"FWS" + b"\x00" * 64)
         archive.writestr("index.html", "<html></html>")
     with zipfile.ZipFile(full_path) as archive:
         assert "Client.swf" in archive.namelist()
