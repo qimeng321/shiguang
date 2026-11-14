@@ -32,6 +32,9 @@ replace("src/library_controller.rs",
         "use std::cell::OnceCell;\n",
         "use std::cell::OnceCell;\nuse std::path::{Path, PathBuf};\nuse std::sync::OnceLock;\n")
 replace("src/library_controller.rs",
+        "use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass as _, Message};\n",
+        "use objc2::{define_class, msg_send, sel, AllocAnyThread, DefinedClass as _, Message};\n")
+replace("src/library_controller.rs",
         "    ns_string, MainThreadMarker, NSArray, NSBundle, NSCoder, NSIndexPath, NSInteger, NSObject,\n",
         "    ns_string, MainThreadMarker, NSArray, NSBundle, NSCoder, NSIndexPath, NSInteger, NSObject,\n"
         "    NSRunLoop, NSRunLoopCommonModes, NSTimer,\n")
