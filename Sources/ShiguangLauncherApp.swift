@@ -119,6 +119,37 @@ enum DedicatedRuffleEngine {
     static let shortDescription = "B 内核 · Ruffle Nightly 2026-11-13"
 }
 
+// Select a *bundled fallback font*, not a game-core font. User packages
+// are never modified. Changing the preset requires a fresh Ruffle page.
+enum GameFontMetricsPreset: String, CaseIterable, Identifiable {
+    case legacy = "legacy"
+    case tuned = "tuned"
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .legacy: return "原版定位"
+        case .tuned: return "度量修正"
+        }
+    }
+    var details: String {
+        switch self {
+        case .legacy: return "1.12 原有字形上移 0.11em，作为原始对照"
+        case .tuned: return "保留相同中文字形和行高，单独上移字体的排版基线 90/1000em（实验）"
+        }
+    }
+    var fontPath: String {
+        switch self {
+        case .legacy: return "/ruffle/fonts/NotoSansCJKsc-Regular.otf"
+        case .tuned: return "/ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf"
+        }
+    }
+    static let defaultsKey = "shiguang.cjkMetrics113"
+    static var saved: GameFontMetricsPreset {
+        GameFontMetricsPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .tuned
+    }
+}
+
 // Native launcher resident size only. This does not measure WKWebView's
 // separate WebContent/GPU processes and must not be called total game RAM.
 enum NativeMemoryProbe {
@@ -151,6 +182,7 @@ struct LauncherView: View {
     @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.fps30.rawValue
     @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
     @AppStorage("shiguang.battleHttpCache110") private var battleHTTPCacheEnabled = false
+    @AppStorage(GameFontMetricsPreset.defaultsKey) private var fontMetricsPreset = GameFontMetricsPreset.tuned.rawValue
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
     private let subtleInk = Color(red: 0.42, green: 0.48, blue: 0.60)
@@ -194,6 +226,7 @@ struct LauncherView: View {
                         qualityPicker
                         frameCapPicker
                         compatibilityPicker
+                        fontMetricsPicker
                         battleExperimentPicker
                     }
                     .padding(.top, 23)
@@ -674,6 +707,49 @@ struct LauncherView: View {
         .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(blue.opacity(0.10), lineWidth: 1))
     }
 
+    private var fontMetricsPicker: some View {
+        let selected = GameFontMetricsPreset(rawValue: fontMetricsPreset) ?? .tuned
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("中文字体位置实验", systemImage: "textformat")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(ink)
+                Spacer()
+                Text("1.13 字体专项")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(blue)
+            }
+            HStack(spacing: 5) {
+                ForEach(GameFontMetricsPreset.allCases) { option in
+                    let active = fontMetricsPreset == option.rawValue
+                    Button { fontMetricsPreset = option.rawValue } label: {
+                        Text(option.title)
+                            .font(.system(size: 13, weight: active ? .bold : .medium))
+                            .foregroundStyle(active ? .white : ink)
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .background(active ? blue : Color.white,
+                                        in: RoundedRectangle(cornerRadius: 9))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("字体定位：" + option.title)
+                }
+            }
+            .padding(4)
+            .background(Color(red: 0.91, green: 0.93, blue: 0.96),
+                        in: RoundedRectangle(cornerRadius: 12))
+            Text(selected.details)
+                .font(.system(size: 12))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("此设置只影响 Ruffle 可替换的后备字体；SWF 内嵌字可能不受影响。切换后需退出游戏再进入。若有裁字、错行，请切回原版定位。")
+                .font(.system(size: 11))
+                .foregroundStyle(subtleInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(15)
+        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 18))
+    }
+
     private var battleExperimentPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("B 内核专版", systemImage: "cpu")
@@ -687,7 +763,7 @@ struct LauncherView: View {
                 Text("战斗 SWF 网页缓存实验").font(.system(size: 14, weight: .semibold))
             }
             .tint(green)
-            Text("默认关闭。先保留 1.12 的中文字体参数，等待真机字体截图确认问题；不会修改 .srom 游戏资源或内核版本。")
+            Text("默认关闭。固定使用已通过 10 局测试的 B 内核；字体定位可在上方单独对照，不修改 .srom 游戏资源。")
                 .font(.system(size: 11))
                 .foregroundStyle(subtleInk)
                 .fixedSize(horizontal: false, vertical: true)
