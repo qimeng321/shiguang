@@ -1089,6 +1089,17 @@ struct GameWebView: UIViewRepresentable {
         configuration.userContentController.addUserScript(WKUserScript(
             source: dprCapScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController.add(context.coordinator, name: "gameDiagnostics")
+        // B146 MUST be installed in the page world before ruffle.js begins
+        // instantiating WASM. Preserve the exact original graphics pipeline.
+        if let probeURL = Bundle.main.url(forResource: "b146-full-monitor",
+                                          withExtension: "js", subdirectory: "Ruffle"),
+           let probeJS = try? String(contentsOf: probeURL, encoding: .utf8) {
+            configuration.userContentController.addUserScript(WKUserScript(
+                source: probeJS, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            LaunchDiagnostics.log("[B146] 已注入全链路探针：WASM 内存、WebGL、JS 卡顿、异常、画布与资源计数；每5秒落盘")
+        } else {
+            LaunchDiagnostics.log("[B146-ERROR] 监控脚本缺失；WASM 内存无法测量，请检查 IPA 资源")
+        }
         // Read-only graphics and main-thread responsiveness diagnostics. Do
         // not intercept WebGL getContext, free live Flash objects, or modify
         // the game's own timers; record observations at low frequency.
@@ -1348,6 +1359,79 @@ struct GameWebView: UIViewRepresentable {
         var lastControlGeneration = 0
         var lastDelayedTapEnabled = false
         private var navigationCount = 0
+
+        // These samples are maintained in the native launcher, NOT the WebKit
+        // content process. They survive WKWebView termination and are also
+        // persisted to diagnostics.txt as soon as each sample is received.
+        private struct B146Sample {
+            let time: Date
+            let wasmMiB: Int?
+            let lagMs: Int
+            let contextLoss: Int
+            let longTasks: Int
+            let uptimeSec: Int
+        }
+        private var b146Samples: [B146Sample] = []
+        private var b146SawWasm = false
+        private var b146LostContextCount = 0
+        private var b146LastEvent = "无"
+        private func captureB146(_ payload: String) {
+            guard let data = payload.data(using: .utf8),
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let eventType = object["type"] as? String else {
+                LaunchDiagnostics.log("[B146-MONITOR-ERROR] 监控消息解析失败")
+                return
+            }
+            if eventType == "sample" {
+                let wasm = object["wasmMiB"] as? Int
+                let lag = object["delayMs"] as? Int ?? 0
+                let lost = object["webglContextLost"] as? Int ?? 0
+                let long = object["longTasks"] as? Int ?? 0
+                let uptime = object["uptimeSec"] as? Int ?? 0
+                b146SawWasm = b146SawWasm || (wasm != nil)
+                b146LostContextCount = max(b146LostContextCount, lost)
+                b146Samples.append(B146Sample(time: Date(), wasmMiB: wasm, lagMs: lag,
+                                              contextLoss: lost, longTasks: long, uptimeSec: uptime))
+                if b146Samples.count > 180 { b146Samples.removeFirst(b146Samples.count - 180) }
+                LaunchDiagnostics.log("[B146-SAMPLE] " + payload)
+            } else {
+                b146LastEvent = eventType
+                if eventType == "webgl-context-lost" {
+                    b146LostContextCount += 1
+                }
+                LaunchDiagnostics.log("[B146-EVENT] " + payload)
+            }
+        }
+
+        private func b146TerminationAssessment() -> String {
+            guard let latest = b146Samples.last else {
+                return "无法归因：终止前未收到 B146 样本，需检查监控脚本注入、WebKit 启动时间或进程提前退出。"
+            }
+            let age = Int(Date().timeIntervalSince(latest.time))
+            let lastThreeMinutes = b146Samples.filter {
+                Date().timeIntervalSince($0.time) <= 180
+            }
+            let memory = lastThreeMinutes.compactMap { $0.wasmMiB }
+            let minMB = memory.min()
+            let maxMB = memory.max()
+            let currentMB = latest.wasmMiB
+            let measured = "终止前最后样本距今\\(age)秒；采样数=\\(b146Samples.count)；当前WASM=\\(currentMB.map(String.init) ?? "不可用")MiB；最近3分钟WASM范围=\\(minMB.map(String.init) ?? "不可用")–\\(maxMB.map(String.init) ?? "不可用")MiB；最后计时器间隔=\\(latest.lagMs)ms；WebGL丢失=\\(b146LostContextCount)；最后事件=\\(b146LastEvent)"
+            let notes: String
+            if b146LostContextCount > 0 {
+                notes = "观察到 WebGL 上下文丢失；优先调查 GPU/渲染链路，但无法证明这是进程终止的直接原因。"
+            } else if memory.count >= 4, let first = memory.first, let last = memory.last,
+                      last - first >= 64 {
+                notes = "观察到 WASM 线性内存明显增长（最近3分钟增加至少64MiB）；优先排查 SWF/AS3 资源长期保留和 WASM 分配压力，仍需系统 Jetsam 证据确认终止原因。"
+            } else if !b146SawWasm {
+                notes = "未捕获 WASM Memory 导出；监控链路不完整，不能据此排除内存问题。"
+            } else if latest.lagMs > 12000 {
+                notes = "最后样本前 JS 定时器明显延迟；可能存在主线程阻塞或系统节流，需要结合可见性和系统报告判断。"
+            } else {
+                notes = "可测 WASM 内存未呈现足以直接归因的增长；仍可能是 WebKit/GPU 原生内存压力、Jetsam 或引擎异常。仅凭 WKWebView 通知无法判断真正原因。"
+            }
+            return measured + "；判断：" + notes
+        }
+
         let onStatus: (String) -> Void
         let onError: (String) -> Void
         init(onStatus: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
@@ -1357,7 +1441,12 @@ struct GameWebView: UIViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
             guard let details = message.body as? String else { return }
-            if details.hasPrefix("诊断：") {
+            if details.hasPrefix("B146:") {
+                // Store structured metrics in native storage BEFORE the game
+                // content process can be terminated. No UI-state updates.
+                captureB146(String(details.dropFirst(5)))
+            }
+            else if details.hasPrefix("诊断：") {
                 // Keep heartbeat out of SwiftUI state updates; persist for the
                 // abrupt WKWebView termination case even if UI is unresponsive.
                 LaunchDiagnostics.log("[1.09网页探针] " + String(details.dropFirst(3)))
@@ -1380,9 +1469,11 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            LaunchDiagnostics.log("[1.09崩溃快照] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
-            LaunchDiagnostics.log("[严重诊断] WebKit 内容进程终止，已保留资源与诊断日志；需要手动刷新")
-            onError("游戏网页进程已终止，可能存在内存压力或渲染异常。请点「重新加载游戏」重试，并导出 diagnostics.txt 排查。")
+            LaunchDiagnostics.log("[B146-TERMINATION] WebKit 内容进程已终止（系统原因在公开 API 中不可读取）")
+            LaunchDiagnostics.log("[B146-ASSESSMENT] " + b146TerminationAssessment())
+            LaunchDiagnostics.log("[B146-NATIVE] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
+            LaunchDiagnostics.log("[B146-GUIDANCE] 如果 WASM 变化无法解释崩溃，请提供 iOS 设置-隐私与安全性-分析与改进-分析数据中的 JetsamEvent 或 WebKit 相关报告；无系统报告不能断言 OOM。")
+            onError("网页进程已终止。B146 已保存最近的内存样本和自动判断，请导出 diagnostics.txt；具体终止原因可能需要 JetsamEvent 报告。")
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             let value = lastDelayedTapEnabled ? "true" : "false"
