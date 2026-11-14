@@ -66,7 +66,7 @@ final class BattleLoadTrace {
             previousPetRequestUptime = now
         }
         if bytes >= 512 * 1024 && [2, 5, 10, 20, 40].contains(times) {
-            messages.append("[1.13战斗重复请求] 第\(times)次 \(String(path.prefix(110)))，此次HTTP=\(bytes)B (不代表重复解码)")
+            messages.append("[1.09战斗重复请求] 第\(times)次 \(String(path.prefix(110)))，此次HTTP=\(bytes)B (不代表重复解码)")
         }
         lock.unlock()
         for message in messages { LaunchDiagnostics.log(message) }
@@ -178,7 +178,7 @@ final class GameServer {
         if method == "GET" && (status == 200 || status == 304) {
             BattleLoadTrace.shared.record(path: path, bytes: size ?? 0, status: status)
             if lower.hasSuffix("/petfightdll.swf") {
-                LaunchDiagnostics.log("[1.13战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
+                LaunchDiagnostics.log("[1.09战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
             }
         }
         if method == "GET" && status == 200 {
@@ -237,8 +237,8 @@ final class GameServer {
         self.compatibilityModeEnabled = UserDefaults.standard.bool(
             forKey: "shiguang.compatibilityMode103"
         )
-        self.battleHTTPCacheEnabled = UserDefaults.standard.bool(forKey: "shiguang.battleHttpCache110")
-        LaunchDiagnostics.log("[1.13 B专版] 新游戏会话：资源统计已重置；缓存=" + (battleHTTPCacheEnabled ? "开启" : "关闭") + "；Ruffle Nightly 2026-11-13；GPU配置=automatic")
+        self.battleHTTPCacheEnabled = false // experimental cache remains disabled in official build
+        LaunchDiagnostics.log("[正式1.09] Ruffle Nightly 2026-11-13；缓存关闭；默认 GPU 配置=automatic")
         self.bridge = packagedWebApp ? try GameSocketBridge.shared() : nil
         guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path),
@@ -259,7 +259,7 @@ final class GameServer {
         bridge?.leaveGame()
         listener?.cancel()
         listener = nil
-        LaunchDiagnostics.log("[1.13战斗汇总] " + BattleLoadTrace.shared.summary())
+        LaunchDiagnostics.log("[1.09战斗汇总] " + BattleLoadTrace.shared.summary())
         LaunchDiagnostics.log("[页面生命周期] 游戏结束：HTTP 监听关闭、代理会话清理已请求")
     }
 
@@ -884,9 +884,9 @@ final class GameServer {
         let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
         let selectedRenderer = "automatic"
-        let fontMetricsPreset = GameFontMetricsPreset.saved
-        LaunchDiagnostics.log("[1.13字体定位] " + fontMetricsPreset.title + "；路径=" + fontMetricsPreset.fontPath)
-        // Both CJK OTFs share the same glyphs and original matrix; only ascent/descent differ.
+        // One calibrated Noto CJK fallback: same CFF glyph outlines as 1.08,
+        // hhea/OS2 baseline shifted 90/1000 em while line heights are preserved.
+        LaunchDiagnostics.log("[正式1.09字体] Noto Sans CJK SC；字体度量修正版；字形上移0.11em、排版基线调整0.09em")
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
             return String(String(data: data, encoding: .utf8)!.dropFirst().dropLast())
@@ -911,7 +911,7 @@ final class GameServer {
         <script>
           var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
           var configuredRenderer=document.querySelector('meta[name="shiguang-renderer"]').content;
-          var configuredFontURL=\(json(fontMetricsPreset.fontPath));
+          var configuredFontURL="/ruffle/fonts/NotoSansCJKsc-Regular.otf";
           window.RufflePlayer=window.RufflePlayer||{};
           window.RufflePlayer.config={
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
@@ -1228,7 +1228,7 @@ final class GameServer {
             options.quality=configuredQuality;
             try{
               var chk=await fetch(configuredFontURL,{method:"HEAD",cache:"no-store"});
-              report("中文字体预检：HTTP "+chk.status+"，模式="+\(json(fontMetricsPreset.rawValue))+"，字体=Noto Sans CJK SC");
+              report("中文字体预检：HTTP "+chk.status+"，字体=Noto Sans CJK SC（度量修正）");
             }catch(fontError){
               report("中文字体预检失败："+String(fontError).slice(0,140));
             }
