@@ -116,7 +116,7 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
 // build pipeline, not switchable from the application UI.
 enum DedicatedRuffleEngine {
     static let tag = "nightly-2026-11-13"
-    static let shortDescription = "B141 强制兼容版 WASM · Ruffle PR22908 内存实验 · DPR1.5"
+    static let shortDescription = "B142 GPU资源按需加载与卸载回收 · PR22908 GC · MVP WASM · DPR1.5"
 }
 
 // Native launcher resident size only. This does not measure WKWebView's
@@ -175,7 +175,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("B141 MVP兼容测试")
+                        Text("B142 内存修复版")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
