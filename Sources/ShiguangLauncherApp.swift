@@ -11,6 +11,9 @@ struct ShiguangLauncherApp: App {
         WindowGroup {
             LauncherView()
                 .environmentObject(launcher)
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                    LaunchDiagnostics.log("[1.09战斗诊断] iOS 发出内存警告；近期资源：" + BattleLoadTrace.shared.snapshot())
+                }
                 // Files → share/open in 拾光号 is a second route for .srom.
                 .onOpenURL { url in
                     if url.pathExtension.lowercased() == "sgpatch" { launcher.importMobilePatch(url) }
@@ -72,7 +75,7 @@ enum GameQualityPreset: String, CaseIterable, Identifiable {
     }
     static let defaultsKey = "shiguang.qualityPreset"
     static var saved: GameQualityPreset {
-        GameQualityPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .balanced
+        GameQualityPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .saving
     }
 }
 
@@ -103,7 +106,7 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
     }
     static let defaultsKey = "shiguang.maxFrameRate"
     static var saved: GameFrameCapPreset {
-        GameFrameCapPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .unlimited
+        GameFrameCapPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .fps30
     }
 }
 
@@ -118,8 +121,8 @@ struct LauncherView: View {
     @State private var showingDeltaLocalFiles = false
     @State private var showingPatchClearConfirmation = false
     @State private var showingGame = false
-    @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.balanced.rawValue
-    @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.unlimited.rawValue
+    @AppStorage(GameQualityPreset.defaultsKey) private var qualityPreset = GameQualityPreset.saving.rawValue
+    @AppStorage(GameFrameCapPreset.defaultsKey) private var frameCapPreset = GameFrameCapPreset.fps30.rawValue
     @AppStorage("shiguang.compatibilityMode103") private var compatibilityMode = false
 
     private let ink = Color(red: 0.11, green: 0.16, blue: 0.30)
@@ -146,7 +149,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("正式版 1.08")
+                        Text("测试版 1.09 · 战斗稳定性")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -1036,6 +1039,26 @@ struct GameWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
+        // Test-only: reduce Ruffle's backing-store scaling on Retina displays.
+        // Preserve CSS viewport and pointer coordinates; failure is logged.
+        let dprCapScript = """
+        (function () {
+          var original = window.devicePixelRatio || 1;
+          window.__shiguangNativeDPR = original;
+          try {
+            var capped = Math.min(original, 2);
+            Object.defineProperty(window, "devicePixelRatio", {
+              configurable: true,
+              get: function () { return capped; }
+            });
+          } catch (error) {
+            window.__shiguangDPRCapError = String(error).slice(0, 120);
+          }
+          window.__shiguangEffectiveDPR = window.devicePixelRatio || 1;
+        })();
+        """
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: dprCapScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController.add(context.coordinator, name: "gameDiagnostics")
         let diagnostics = #"""
             (function () {
@@ -1112,6 +1135,9 @@ struct GameWebView: UIViewRepresentable {
                 } catch(e) { fail(label + '：Ruffle 状态读取失败：' + String(e).slice(0, 130)); }
               }
               window.addEventListener('DOMContentLoaded', function () {
+                status('1.09 战斗稳定性测试：原生DPR=' + String(window.__shiguangNativeDPR || '?')
+                  + '，实际DPR=' + String(window.devicePixelRatio || '?')
+                  + '，覆盖状态=' + (window.__shiguangDPRCapError || '正常'));
                 setTimeout(function () { reportPlayerState('启动5秒'); }, 5000);
                 setTimeout(function () { reportPlayerState('启动20秒'); }, 20000);
                 // Verify the actual Ruffle host position on iPad: this catches
@@ -1274,6 +1300,7 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            LaunchDiagnostics.log("[1.09战斗诊断] WebKit 内容进程终止；最近关键资源：" + BattleLoadTrace.shared.snapshot())
             LaunchDiagnostics.log("[严重诊断] WebKit 内容进程终止，已保留资源与诊断日志；需要手动刷新")
             onError("游戏网页进程已终止，可能存在内存压力或渲染异常。请点「重新加载游戏」重试，并导出 diagnostics.txt 排查。")
         }
