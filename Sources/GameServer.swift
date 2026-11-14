@@ -1,6 +1,40 @@
 import Foundation
 import Network
 
+// Bounded, thread-safe record of battle-related requests for WebKit crash diagnosis.
+// Store only resource paths and sizes, never game packets or login information.
+final class BattleLoadTrace {
+    static let shared = BattleLoadTrace()
+    private let lock = NSLock()
+    private var records: [String] = []
+
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        records.removeAll(keepingCapacity: true)
+    }
+
+    func record(path: String, bytes: UInt64) {
+        let lower = path.lowercased()
+        guard lower.contains("fightresource/") ||
+              lower.contains("petfightdll.swf") ||
+              lower.contains("petstorage.swf") ||
+              lower.contains("worldmap.swf") else { return }
+        let entry = String(format: "%.3f", Date().timeIntervalSince1970) +
+                    " " + String(path.prefix(110)) + " (" + String(bytes) + "B)"
+        lock.lock()
+        records.append(entry)
+        if records.count > 24 { records.removeFirst(records.count - 24) }
+        lock.unlock()
+    }
+
+    func snapshot() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return records.isEmpty ? "无战斗资源记录" : records.suffix(12).joined(separator: " | ")
+    }
+}
+
 final class GameServer {
     private let root: URL
     private let ruffle: URL
@@ -65,6 +99,12 @@ final class GameServer {
     private func traceRequest(_ method: String, _ path: String, status: Int, size: UInt64? = nil) {
         let lower = path.lowercased()
         if method == "GET" && status == 200 {
+            BattleLoadTrace.shared.record(path: path, bytes: size ?? 0)
+            if lower.hasSuffix("/petfightdll.swf") {
+                LaunchDiagnostics.log("[1.09战斗诊断] 战斗主模块开始响应：\(path)；传输字节=\(size ?? 0)")
+            }
+        }
+        if method == "GET" && status == 200 {
             if lower == "/version.swf" {
                 versionGetCount += 1
                 LaunchDiagnostics.log("PVM 版本初始化：实际请求 version.swf，第 \(versionGetCount) 次")
@@ -104,6 +144,7 @@ final class GameServer {
 
     init(root: URL, packagedWebApp: Bool = false) throws {
         self.root = root.resolvingSymlinksInPath()
+        BattleLoadTrace.shared.reset()
         self.packagedWebApp = packagedWebApp
         // 1.2 beta: snapshot patch overlay for this game session only.
         // Do NOT alter the original Application Support/Game files.
@@ -1106,7 +1147,7 @@ final class GameServer {
             prepareKeyboard();
             if(!enteredGame)setDockVisible(true,"登录输入栏自动显示");
             report("画质选择：quality="+configuredQuality+"；兼容模式="+(configuredQuality==="low"?"开启":"关闭")+"；帧回调调度上限="+(frameLimiter&&frameLimiter.limit?frameLimiter.limit+" FPS":"不限制")
-              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"；GPU 后端自动选择");
+              +"；SWF 原始帧率保留；屏幕 DPR="+String(window.devicePixelRatio||1)+"（原生="+String(window.__shiguangNativeDPR||window.devicePixelRatio||1)+"）；GPU 后端自动选择");
             message.style.display="none";
           }catch(e){message.textContent="启动失败："+e;report("Ruffle 初始化或载入异常："+String(e).slice(0,220))}
         })();
