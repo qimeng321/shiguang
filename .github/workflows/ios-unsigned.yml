@@ -313,12 +313,29 @@ jobs:
           swiftc -frontend -parse Sources/GameIncrementalUpdater.swift Sources/LauncherModel.swift Sources/ShiguangLauncherApp.swift
       - name: Build for iPhone and iPad
         run: |
+          set -euo pipefail
+          # Xcode's shared SwiftPM checkout cache can be corrupted on macOS
+          # runners. Keep all ZIPFoundation clones in this build's isolated
+          # work directory and retry only package-resolution I/O.
+          for attempt in 1 2 3; do
+            if xcodebuild \
+              -resolvePackageDependencies \
+              -project ShiguangLauncher.xcodeproj \
+              -scheme ShiguangLauncher \
+              -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            rm -rf "$RUNNER_TEMP/SourcePackages"
+            sleep 5
+          done
           xcodebuild \
             -project ShiguangLauncher.xcodeproj \
             -scheme ShiguangLauncher \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
             CODE_SIGNING_ALLOWED=NO \
             build
       - name: Package unsigned IPA
