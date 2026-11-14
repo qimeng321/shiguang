@@ -237,8 +237,8 @@ final class GameServer {
         self.compatibilityModeEnabled = UserDefaults.standard.bool(
             forKey: "shiguang.compatibilityMode103"
         )
-        self.battleHTTPCacheEnabled = false // experimental cache remains disabled in official build
-        LaunchDiagnostics.log("[正式1.09] Ruffle Nightly 2026-11-13；缓存关闭；默认 GPU 配置=automatic")
+        self.battleHTTPCacheEnabled = true // Test C only: existing bounded battle SWF HTTP cache
+        LaunchDiagnostics.log("[实验C] 原版1.09 + Ruffle Nightly 2026-11-13；战斗资源HTTP缓存=开启（精灵/技能，≤2.5MB）；其余网络及GPU配置不变")
         self.bridge = packagedWebApp ? try GameSocketBridge.shared() : nil
         guard let assets = Bundle.main.url(forResource: "Ruffle", withExtension: nil),
               FileManager.default.fileExists(atPath: assets.appendingPathComponent("ruffle.js").path),
