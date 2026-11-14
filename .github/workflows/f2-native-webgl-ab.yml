@@ -1,0 +1,350 @@
+name: F2 - Native WebGL renderer A/B (unsigned IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "tests/ruffle-f2-native-webgl-ab"
+
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm FPS and keyboard/layout test invariants
+        run: |
+          node --check Patches/frame-cap.js
+          node --check Patches/touch-controls.js
+          node Patches/test-frame-cap.js
+          node Patches/test-direct-touch.js
+          node Patches/test-precision-no-hover.js
+          python3 - <<'PY_CHECK'
+          from pathlib import Path
+          import plistlib
+          swift = Path('Sources/ShiguangLauncherApp.swift').read_text()
+          source = Path('Sources/GameServer.swift').read_text()
+          model = Path('Sources/LauncherModel.swift').read_text()
+          project = Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
+          plist = plistlib.loads(Path('Resources/Info.plist').read_bytes())
+          assert plist['CFBundleShortVersionString'] == '1.0.9'
+          assert plist['CFBundleVersion'] == '136'
+          assert plist['CFBundleDisplayName'] == '拾光号启动器'
+          assert 'MARKETING_VERSION = 1.0.9;' in project
+          assert 'CURRENT_PROJECT_VERSION = 136;' in project
+          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' in project
+          assert 'Text("F2 WebGL测试版")' in swift
+          assert 'Build 136' in model and '基于正式版 1.08' in model
+          assert '?? .saving' in swift and '?? .fps30' in swift
+          assert 'GameQualityPreset.saving.rawValue' in swift
+          assert 'GameFrameCapPreset.fps30.rawValue' in swift
+          assert 'Math.min(original, 2)' in swift and 'DPRCapError' in swift
+          assert 'webViewWebContentProcessDidTerminate' in swift
+          assert 'UIApplication.didReceiveMemoryWarningNotification' in swift
+          assert 'BattleLoadTrace.shared.snapshot()' in swift
+          assert 'BattleLoadTrace.shared.record(path:' in source
+          assert 'func summary() -> String' in source
+          assert 'let maxTracedRequests = 500' in source
+          assert 'battleHTTPCacheEnabled' in source and 'battleCacheFile' in source
+          assert 'selectedRenderer' in source and 'preferredRenderer=configuredRenderer' in source
+          assert 'DedicatedRuffleEngine' in swift
+          assert 'battleExperimentPicker' not in swift and 'fontMetricsPicker' not in swift
+          assert 'GameFontMetricsPreset' not in swift and 'GameFontMetricsPreset' not in source
+          assert 'var configuredFontURL="/ruffle/fonts/NotoSansCJKsc-Regular.otf";' in source
+          assert 'self.battleHTTPCacheEnabled = true' in source
+          assert '1.09定时采样' in swift and 'NativeMemoryProbe' in swift
+          assert 'BattleLoadTrace.shared.reset()' in source
+          assert 'func markStart()' in source and 'func markEnd()' in source
+          assert '1.09网页探针' in swift and 'battleLifecycleProbe' in swift
+          assert 'static let tag = "nightly-2026-11-13"' in swift
+          assert 'baselineRuffle' not in source and 'engineChoice' not in source
+          assert 'let selectedRenderer = "automatic"' in source
+          assert 'A0000000000000000000001A' not in project
+          assert 'webgl, canvas' not in swift
+          assert 'petfightdll.swf' in source
+          assert 'let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in source
+          assert 'let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit' in source
+          assert 'options.frameRate' not in source
+          assert 'allowScriptAccess:true' in source
+          assert 'GameIncrementalUpdater.swift' in project
+          assert 'MobilePatchManager' in model
+          assert 'func clearMobilePatch()' in model
+          assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
+          assert 'resource/map/1.swf' in model
+          assert '[F1.1 Socket]' in source and '__shiguangF11WebSocketProbe' in source
+          assert 'host:"103.91.210.16"' in source and 'host:"202.189.22.234"' in source
+          assert 'let selectedRenderer = "webgl"' in source and 'options.preferredRenderer="webgl";' in source
+          assert '[F2 Renderer]' in source and 'options.quality=configuredQuality;' in source
+          print('PASS: F2 native WebGL A/B, no Rust WASM changes, socket diagnostics retained')
+          PY_CHECK
+  build:
+    needs: static-check
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use SHA256-pinned Ruffle Nightly 2026-11-13 as sole engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --retry 3 \
+            "https://github.com/ruffle-rs/ruffle/releases/download/nightly-2026-11-13/ruffle-nightly-2026_11_13-web-selfhosted.zip" \
+            --output "$RUNNER_TEMP/ruffle-nightly.zip"
+          printf '%s  %s\n' "bc2d1e72a7f967822d0c2b5e2e7b62d436784da57a95eb3e5fdd4a820c992f8e" "$RUNNER_TEMP/ruffle-nightly.zip" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/ruffle-nightly-extracted"
+          unzip -q "$RUNNER_TEMP/ruffle-nightly.zip" -d "$RUNNER_TEMP/ruffle-nightly-extracted"
+          entry="$(find "$RUNNER_TEMP/ruffle-nightly-extracted" -type f -name ruffle.js -print -quit)"
+          test -n "$entry"
+          directory="$(dirname "$entry")"
+          rm -rf Resources/Ruffle
+          mkdir -p Resources/Ruffle
+          ditto "$directory" Resources/Ruffle
+          printf '%s\n' 'F2 NATIVE WEBGL A/B | upstream official Ruffle nightly-2026-11-13 (SHA256 verified) | no custom Rust instrumentation | source branch tests/ruffle-f2-native-webgl-ab' > Resources/Ruffle/engine-version.txt
+          # Preserve the same launcher compatibility scripts from the successful B experiment.
+          cp Patches/pvm-compat.js Resources/Ruffle/pvm-compat.js
+          cp Patches/pvm-compat.b64 Resources/Ruffle/pvm-compat.b64
+          cp Patches/byte-loader-followup.b64 Resources/Ruffle/byte-loader-followup.b64
+          cp Patches/touch-controls.js Resources/Ruffle/touch-controls.js
+          cp Patches/frame-cap.js Resources/Ruffle/frame-cap.js
+          test -s Resources/Ruffle/ruffle.js
+          test "$(find Resources/Ruffle -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
+          test -s Resources/Ruffle/pvm-compat.js
+          test -s Resources/Ruffle/touch-controls.js
+          echo "Pinned nightly web archive integrity checked; sole Ruffle engine"
+      - name: Bundle OFL Simplified Chinese font for Ruffle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p Resources/Ruffle/fonts
+          curl --fail --location --show-error --retry 4 \
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf" \
+            --output Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          actual="$(git hash-object Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)"
+          test "$actual" = "dc15562470b4f842321894787a0d066879ccff8b"
+          curl --fail --location --show-error --retry 4 \
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE" \
+            --output Resources/Ruffle/fonts/OFL-LICENSE.txt
+          test -s Resources/Ruffle/fonts/OFL-LICENSE.txt
+          test "$(stat -f%z Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf)" -gt 16000000
+          echo "Verified Noto Sans CJK SC font and OFL license"
+      - name: Set up Python for test font processing
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Adjust release CJK fallback font vertical placement
+        run: |
+          python3 -m pip install "fonttools==4.60.1"
+          python3 Patches/adjust-cjk-baseline.py Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          python3 - <<'PY_VERIFY_FONT'
+          from pathlib import Path
+          from fontTools.ttLib import TTFont
+          root=Path('Resources/Ruffle/fonts')
+          fonts=list(root.glob('*.otf'))
+          assert len(fonts)==1, f'Expected exactly one packaged fallback font, got {fonts}'
+          assert fonts[0].name=='NotoSansCJKsc-Regular.otf'
+          font=TTFont(str(fonts[0]))
+          offset=float(font['CFF '].cff.topDictIndex[0].FontMatrix[5])
+          font.close()
+          assert abs(offset-0.110)<0.000001, f'Unexpected font baseline: {offset}'
+          print('Verified ONE fallback CJK font with +110/1000 em offset')
+          PY_VERIFY_FONT
+      - name: Produce one calibrated CJK font for official release
+        run: |
+          set -euo pipefail
+          python3 Patches/build-cjk-metrics-variant.py \
+            Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf \
+            Resources/Ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf
+          python3 - <<'PY_CHECK_CJK'
+          from pathlib import Path
+          from fontTools.ttLib import TTFont
+          base = TTFont('Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf')
+          tuned = TTFont('Resources/Ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf')
+          assert len(list(Path('Resources/Ruffle').rglob('*.otf'))) == 2
+          assert list(base['CFF '].cff.topDictIndex[0].FontMatrix) == list(tuned['CFF '].cff.topDictIndex[0].FontMatrix)
+          assert (base['hhea'].ascent,base['hhea'].descent) == (1160,-288)
+          assert (tuned['hhea'].ascent,tuned['hhea'].descent) == (1070,-378)
+          assert (tuned['OS/2'].sTypoAscender,tuned['OS/2'].sTypoDescender) == (790,-210)
+          assert base['hhea'].ascent-base['hhea'].descent == tuned['hhea'].ascent-tuned['hhea'].descent
+          assert base['OS/2'].sTypoAscender-base['OS/2'].sTypoDescender == tuned['OS/2'].sTypoAscender-tuned['OS/2'].sTypoDescender
+          assert base.getBestCmap()==tuned.getBestCmap(), 'Glyphs changed unexpectedly'
+          base.close()
+          tuned.close()
+          print('PASS: original and tuned fonts have identical glyphs; tuned baseline +90/1000 units')
+          PY_CHECK_CJK
+          # Replace the trial fallback with the tuned font and do not ship a
+          # redundant 16+ MB experimental alternate in the official build.
+          mv Resources/Ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf Resources/Ruffle/fonts/NotoSansCJKsc-Regular.otf
+          rmdir Resources/Ruffle/fonts-tuned
+          python3 - <<'PY_VERIFY_SHIPPING_FONT'
+          from pathlib import Path
+          from fontTools.ttLib import TTFont
+          files = list(Path('Resources/Ruffle').rglob('*.otf'))
+          assert len(files) == 1, f'Expected only one release font, got: {files}'
+          f = TTFont(str(files[0]))
+          assert f['hhea'].ascent == 1070 and f['hhea'].descent == -378
+          assert (f['OS/2'].sTypoAscender, f['OS/2'].sTypoDescender) == (790, -210)
+          assert abs(float(f['CFF '].cff.topDictIndex[0].FontMatrix[5])-0.110)<0.000001
+          f.close()
+          print('PASS: single calibrated release CJK font in standard resource path')
+          PY_VERIFY_SHIPPING_FONT
+      - name: Validate Canvas touch controls module
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check Patches/touch-controls.js
+          node --check Patches/frame-cap.js
+          node Patches/test-frame-cap.js
+          node Patches/test-direct-touch.js
+          node --check Resources/Ruffle/touch-controls.js
+          python3 - <<'PY_TOUCH'
+          from pathlib import Path
+          js=Path("Resources/Ruffle/touch-controls.js").read_text()
+          html=Path("Sources/GameServer.swift").read_text()
+          assert 'c.dispatchEvent(ev)' in js, "Pointer events must target inner Canvas"
+          assert 'window.ShiguangTouchControls' in js
+          assert '/ruffle/touch-controls.js' in html
+          assert '/ruffle/frame-cap.js' in html
+          assert 'touchControls=window.ShiguangTouchControls(player,report)' in html
+          assert 'Object.defineProperty(ev,"offsetX"' in js
+          assert 'Object.defineProperty(ev,"offsetY"' in js
+          assert 'finishPendingClick' not in js
+          assert 'if(!hover){' in js
+          assert 'function directPointerDown(ev)' in js
+          assert 'function directPointerUp(ev)' in js
+          assert 'enableMapSwipe' not in js
+          assert '/ruffle/galaxy-navigation.js' not in html
+          swift=Path("Sources/ShiguangLauncherApp.swift").read_text()
+          assert 'ProgressView(value: launcher.importProgress, total: 1.0)' in swift
+          model=Path("Sources/LauncherModel.swift").read_text()
+          assert 'unzipProgress.fractionCompleted' in model
+          assert 'onProgress(fraction)' in model
+          assert 'LaunchDiagnostics.validateInstalledPackage(root: staging' in model
+          assert 'try "full-unzip-crc32-ok' in model
+          assert 'self.importFailureMessage' in model
+          assert 'self.isInstalledValidated' in model
+          assert 'galaxyBookmarks' not in swift
+          assert 'player.dispatchEvent(new PointerEvent(' not in html
+          # Quality choices are selected on home screen, stored in UserDefaults,
+          # and read server-side before generating a new Ruffle HTML page.
+          assert '@AppStorage(GameQualityPreset.defaultsKey)' in swift
+          assert 'ForEach(GameQualityPreset.allCases)' in swift and 'qualityPreset = option.rawValue' in swift
+          assert 'GameQualityPreset.saved' in html
+          assert 'options.quality=configuredQuality' in html
+          assert 'highDpi' not in html  # Not a documented Ruffle Web option
+          assert 'quality:configuredQuality' in html
+          assert 'let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in html
+          assert 'let tinyIcon = compatibilityModeEnabled && !isPartial' in html
+          assert 'let cacheHeader = cacheable' in html
+          assert 'shiguang-quality' in html
+          assert 'case saving, balanced, ultra' in swift
+          assert '@AppStorage(GameFrameCapPreset.defaultsKey)' in swift
+          assert 'ForEach(GameFrameCapPreset.allCases)' in swift and 'frameCapPreset = option.rawValue' in swift
+          assert 'GameFrameCapPreset.saved' in html
+          assert 'shiguang-max-fps' in html
+          assert 'window.ShiguangFrameCap' in html
+          assert 'options.frameRate' not in html
+          assert 'frameRate:configured' not in html
+          assert 'case unlimited, fps60, fps30' in swift
+          assert 'fpsRequest(fpsTick)' in html
+          # iOS email keyboard hint is deliberately on the existing Ruffle
+          # virtual-keyboard element; the single path prevents double input.
+          assert 'input.type="email"' in html
+          assert 'input.setAttribute("inputmode","email")' in html
+          assert 'input.setAttribute("lang","en-US")' in html
+          assert 'input.__shiguangNativeInput' in html
+          assert 'input.addEventListener("input",function(ev)' in html
+          assert 'input.addEventListener("input",function(ev)' in html
+          # Stable stage survives transient on-screen keyboard resizing.
+          assert 'function scheduleFit()' in html
+          assert 'Math.min(w/960,h/560)' in html
+          assert 'inputHasFocus()' in html
+          assert 'if(state!==last)' in html
+          assert 'dockLast=' not in html
+          print("Verified persistent three-tier quality controls and game setting wiring")
+          print("Verified separate Canvas-pointer module and HTML wiring")
+          PY_TOUCH
+      - name: Check embedded touch controls JavaScript syntax
+        shell: bash
+        run: |
+          python3 - <<'PY_CHECK_JS'
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+          source = Path("Sources/GameServer.swift").read_text(encoding="utf-8")
+          page = source.split("private func page(swfURL:", 1)[1]
+          html = page.split('return """', 1)[1].split('"""', 1)[0]
+          scripts = re.findall(r'<script(?:\s[^>]*)?>([\s\S]*?)</script>', html)
+          assert len(scripts) >= 2, "Expected inline Ruffle config and touch controls"
+          for index, script in enumerate(scripts):
+              script = script.replace(r'\(json(swfURL))', '"/Client.swf"')
+              script = script.replace(r'\(json(baseURL))', '"/"')
+              script = script.replace(r'\(json(fontMetricsPreset.fontPath))', '"/ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf"')
+              script = script.replace(r'\(json(fontMetricsPreset.rawValue))', '"tuned"')
+              with tempfile.NamedTemporaryFile(suffix=".js", mode="w", encoding="utf-8") as out:
+                  out.write(script)
+                  out.flush()
+                  subprocess.run(["node", "--check", out.name], check=True)
+          print("Embedded JS syntax verified:", len(scripts), "scripts")
+          PY_CHECK_JS
+      - name: Verify unchanged TCP framer test syntax (runtime regression covered by Build134)
+        run: |
+          # 1.09 modifies only the UI/font pipeline. Build134 already executed
+          # the complete TCP frame behavior test with this identical source.
+          # Avoid a hung stand-alone swiftc executable on this macOS image.
+          swiftc -frontend -parse Sources/GameProtocolFramer.swift Patches/test-game-protocol-framer.swift
+      - name: Verify incremental update ZIP fixture and source syntax
+        run: |
+          python3 Patches/test-incremental-archive.py
+          swiftc -frontend -parse Sources/GameIncrementalUpdater.swift Sources/LauncherModel.swift Sources/ShiguangLauncherApp.swift
+      - name: Build for iPhone and iPad
+        run: |
+          xcodebuild \
+            -project ShiguangLauncher.xcodeproj \
+            -scheme ShiguangLauncher \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            CODE_SIGNING_ALLOWED=NO \
+            PRODUCT_BUNDLE_IDENTIFIER=cn.shiguanghao.launcher.f1 \
+            build
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/Payload"
+          ditto "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/ShiguangLauncher.app" \
+                "$RUNNER_TEMP/Payload/ShiguangLauncher.app"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName 拾光号F2测试' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 138' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist"
+          cd "$RUNNER_TEMP"
+          zip -q -r ShiguangLauncher-unsigned.ipa Payload
+          cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
+      - name: Check official 1.09 metadata and single calibrated font
+        run: |
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.9'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '138'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.f1'
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/fonts/NotoSansCJKsc-Regular.otf"
+          test ! -d "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/fonts-tuned"
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/ruffle.js"
+          test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/engine-version.txt"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '拾光号F2测试'
+          grep -Fq 'F2 NATIVE WEBGL A/B' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle/engine-version.txt"
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Ruffle" -maxdepth 1 -name '*.wasm' | wc -l | tr -d ' ')" -ge 1
+          test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
+      - name: Package official 1.09 source ZIP
+        run: |
+          git archive --format=zip --prefix=ShiguangLauncher-F2-native-webgl-ab/ --output=/tmp/ShiguangLauncher-F2-native-webgl-ab-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-F2-native-webgl-ab-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-F2-native-webgl-ab-source.zip | grep -Fx 'ShiguangLauncher-F2-native-webgl-ab/Sources/ShiguangLauncherApp.swift'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangLauncher-F2-native-webgl-ab-ipa
+          path: /tmp/ShiguangLauncher-unsigned.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangLauncher-F2-native-webgl-ab-source
+          path: /tmp/ShiguangLauncher-F2-native-webgl-ab-source.zip
+          if-no-files-found: error
