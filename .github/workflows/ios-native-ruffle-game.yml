@@ -1,0 +1,104 @@
+name: Shiguang Native Ruffle Game B001
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "test/shiguang-ios-native-game-b001"
+    paths:
+      - ".github/workflows/ios-native-ruffle-game.yml"
+      - "NativeRuffle/**"
+      - "Docs/Native-Ruffle-Shiguang-B001.md"
+
+permissions:
+  contents: read
+
+jobs:
+  native-game:
+    runs-on: macos-26-intel
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "4"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify normal iOS 1.08 remains unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'MARKETING_VERSION = 1.0.8;' ShiguangLauncher.xcodeproj/project.pbxproj
+          grep -Fq 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher;' ShiguangLauncher.xcodeproj/project.pbxproj
+          python3 -m py_compile NativeRuffle/patch-upstream.py
+          grep -Fq 'pub fn begin_import(' NativeRuffle/src/shiguang_game.rs
+          grep -Fq 'pub fn start_server(' NativeRuffle/src/shiguang_game.rs
+          grep -Fq 'GAME_URL: &str' NativeRuffle/src/shiguang_game.rs
+      - name: Clone fixed upstream native Ruffle
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/madsmtm/ruffle-ios.git native-ruffle
+          git -C native-ruffle checkout --detach c3489324265221ff5089442797be671df14fdcdb
+          git -C native-ruffle rev-parse HEAD
+      - name: Apply Shiguang Native Game patches to upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 NativeRuffle/patch-upstream.py
+          grep -Fq 'cn.shiguanghao.nativegame.test' native-ruffle/ruffle-ios.xcodeproj/project.pbxproj
+          grep -Fq 'mod shiguang_game;' native-ruffle/src/lib.rs
+          grep -Fq 'pub fn installed()' native-ruffle/src/shiguang_game.rs
+      - name: Install Rust nightly and iOS ARM64 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --profile minimal --component rust-src --target aarch64-apple-ios
+          rustup show
+          xcodebuild -version
+      - name: Compile native Rust Ruffle game test for iPhone/iPad
+        shell: bash
+        working-directory: native-ruffle
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ruffle-ios.xcodeproj \
+            -scheme ruffle-ios \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$RUNNER_TEMP/NativeGameBuild" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Build an independent unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find "$RUNNER_TEMP/NativeGameBuild/Build/Products" -maxdepth 2 -type d -name '*.app' -print -quit)"
+          test -n "$app"
+          mkdir -p "$RUNNER_TEMP/ShiguangNativeGame/Payload"
+          ditto "$app" "$RUNNER_TEMP/ShiguangNativeGame/Payload/$(basename "$app")"
+          info="$RUNNER_TEMP/ShiguangNativeGame/Payload/$(basename "$app")/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$info" | grep -Fx cn.shiguanghao.nativegame.test
+          /usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$info"
+          plutil -lint "$info"
+          cd "$RUNNER_TEMP/ShiguangNativeGame"
+          zip -qr "$RUNNER_TEMP/ShiguangNativeRuffleGame-B001-unsigned.ipa" Payload
+          unzip -tq "$RUNNER_TEMP/ShiguangNativeRuffleGame-B001-unsigned.ipa"
+          test -s "$RUNNER_TEMP/ShiguangNativeRuffleGame-B001-unsigned.ipa"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangNativeRuffleGame-B001-unsigned-IPA
+          path: ${{ runner.temp }}/ShiguangNativeRuffleGame-B001-unsigned.ipa
+          if-no-files-found: error
+      - name: Package exact modified native source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf native-ruffle/.git native-ruffle/target
+          zip -qr "$RUNNER_TEMP/ShiguangNativeRuffleGame-B001-source.zip" native-ruffle NativeRuffle Docs/Native-Ruffle-Shiguang-B001.md -x '*/__pycache__/*'
+          unzip -tq "$RUNNER_TEMP/ShiguangNativeRuffleGame-B001-source.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShiguangNativeRuffleGame-B001-modified-source
+          path: ${{ runner.temp }}/ShiguangNativeRuffleGame-B001-source.zip
+          if-no-files-found: error
