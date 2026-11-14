@@ -439,7 +439,7 @@ final class LauncherModel: ObservableObject {
 
     init() {
         LaunchDiagnostics.prepare()
-        LaunchDiagnostics.log("启动器 测试版 1.11（Build 133 · 战斗资源波次/手动局数/网页心跳）启动；基于正式版 1.08")
+        LaunchDiagnostics.log("启动器 测试版 1.12（Build 134 · Ruffle 0.7.1 / 2026-11-13 Nightly 内核对照）启动；基于正式版 1.08")
         do {
             try GameIncrementalUpdater.recoverIfNeeded(gameRoot: Self.savedGameRoot)
         } catch {
