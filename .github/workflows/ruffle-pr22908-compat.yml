@@ -1,0 +1,81 @@
+name: Research - PR22908 on pinned Ruffle nightly (no IPA)
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "experiments/ruffle-pr22908-compat-20261113"
+
+permissions:
+  contents: read
+
+jobs:
+  check-pr-22908:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: launcher
+          persist-credentials: false
+
+      - name: Checkout exact D recovery Ruffle baseline
+        uses: actions/checkout@v4
+        with:
+          repository: ruffle-rs/ruffle
+          ref: 65d984777f5acc28e18fe6c3e89d28266fc1fb75
+          path: upstream
+          persist-credentials: false
+
+      - name: Fetch exact PR22908 snapshot and check patch applicability
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p findings
+          {
+            echo 'Research only. Does not modify app release or build IPA.'
+            echo 'Pinned Ruffle: 65d984777f5acc28e18fe6c3e89d28266fc1fb75 (nightly-2026-11-13)'
+            echo 'PR: https://github.com/ruffle-rs/ruffle/pull/22908'
+            echo 'PR snapshot head: 1e30e1fff3237f5d9aeabe4c4b66d05cb6f2585d'
+            echo 'PR upstream base: f2d2d4d98773d1371390426a3315a1a30d859f74'
+            echo 'Note: PR is unmerged and modifies ~74 source files.'
+          } > findings/summary.txt
+          cd upstream
+          test "$(git rev-parse HEAD)" = "65d984777f5acc28e18fe6c3e89d28266fc1fb75"
+          git fetch -q --no-tags --depth 1 origin f2d2d4d98773d1371390426a3315a1a30d859f74
+          git fetch -q --no-tags --depth 1 origin refs/pull/22908/head
+          head="$(git rev-parse FETCH_HEAD)"
+          printf 'Fetched PR head: %s\n' "$head" >> ../findings/summary.txt
+          test "$head" = "1e30e1fff3237f5d9aeabe4c4b66d05cb6f2585d"
+          git diff --binary f2d2d4d98773d1371390426a3315a1a30d859f74 "$head" > ../findings/pr22908.patch
+          git diff --name-only f2d2d4d98773d1371390426a3315a1a30d859f74 "$head" > ../findings/changed-files.txt
+          echo "PR changed file count: $(wc -l < ../findings/changed-files.txt)" >> ../findings/summary.txt
+          if git apply --check ../findings/pr22908.patch > ../findings/apply-check.txt 2>&1; then
+            echo 'RESULT: CLEAN_PATCH_APPLY' >> ../findings/summary.txt
+            git apply ../findings/pr22908.patch
+            echo 'RESULT: Code patch applied. Syntax/compile still unverified.' >> ../findings/summary.txt
+            touch ../findings/applied.clean
+          else
+            echo 'RESULT: PATCH_CONFLICTS_ON_PINNED_NIGHTLY' >> ../findings/summary.txt
+            echo 'No code change applied. Manual source-level port is required.' >> ../findings/summary.txt
+            grep -E '(error:|patch failed|does not apply|already exists|No such file)' ../findings/apply-check.txt | head -80 >> ../findings/summary.txt || true
+          fi
+          cat ../findings/summary.txt
+
+      - name: Compile Ruffle core if PR patch applies cleanly
+        if: hashFiles('findings/applied.clean') != ''
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cd upstream
+          cargo check --locked -p ruffle_core 2>&1 | tee ../findings/cargo-check.txt
+          echo 'RESULT: cargo check passed' >> ../findings/summary.txt
+
+      - name: Upload reproducible compatibility report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PR22908-vs-Nightly20261113-source-compatibility-report
+          path: findings/
+          retention-days: 14
+          if-no-files-found: error
