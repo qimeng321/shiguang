@@ -267,6 +267,8 @@ jobs:
           for index, script in enumerate(scripts):
               script = script.replace(r'\(json(swfURL))', '"/Client.swf"')
               script = script.replace(r'\(json(baseURL))', '"/"')
+              script = script.replace(r'\(json(fontMetricsPreset.fontPath))', '"/ruffle/fonts-tuned/NotoSansCJKsc-Regular.otf"')
+              script = script.replace(r'\(json(fontMetricsPreset.rawValue))', '"tuned"')
               with tempfile.NamedTemporaryFile(suffix=".js", mode="w", encoding="utf-8") as out:
                   out.write(script)
                   out.flush()
