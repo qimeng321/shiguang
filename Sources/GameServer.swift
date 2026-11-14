@@ -884,7 +884,9 @@ final class GameServer {
         let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality
         let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit
         let selectedRenderer = "automatic"
-        // One tested fallback font, vertically adjusted; no alternate copies.
+        let fontMetricsPreset = GameFontMetricsPreset.saved
+        LaunchDiagnostics.log("[1.13字体定位] " + fontMetricsPreset.title + "；路径=" + fontMetricsPreset.fontPath)
+        // Both CJK OTFs share the same glyphs and original matrix; only ascent/descent differ.
         func json(_ value: String) -> String {
             let data = try! JSONSerialization.data(withJSONObject: [value], options: [.fragmentsAllowed])
             return String(String(data: data, encoding: .utf8)!.dropFirst().dropLast())
@@ -909,7 +911,7 @@ final class GameServer {
         <script>
           var configuredQuality=document.querySelector('meta[name="shiguang-quality"]').content;
           var configuredRenderer=document.querySelector('meta[name="shiguang-renderer"]').content;
-          var configuredFontURL="/ruffle/fonts/NotoSansCJKsc-Regular.otf";
+          var configuredFontURL=\(json(fontMetricsPreset.fontPath));
           window.RufflePlayer=window.RufflePlayer||{};
           window.RufflePlayer.config={
             autoplay:"on",unmuteOverlay:"hidden",splashScreen:false,
@@ -1226,7 +1228,7 @@ final class GameServer {
             options.quality=configuredQuality;
             try{
               var chk=await fetch(configuredFontURL,{method:"HEAD",cache:"no-store"});
-              report("中文字体预检：HTTP "+chk.status+"，正式单字体 Noto Sans CJK SC");
+              report("中文字体预检：HTTP "+chk.status+"，模式="+\(json(fontMetricsPreset.rawValue))+"，字体=Noto Sans CJK SC");
             }catch(fontError){
               report("中文字体预检失败："+String(fontError).slice(0,140));
             }
