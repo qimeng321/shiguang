@@ -44,3 +44,38 @@ pub unsafe extern "C" fn shiguang_native_player_create(url_c: *const c_char, qua
     std::mem::forget(player);
     ptr
 }
+
+
+/// Dispatch text from a real iOS on-screen keyboard to Flash's focused text field.
+/// No keyboard content is transmitted to the game server by the bridge; Ruffle
+/// itself handles Flash input and the game may then send it as normal.
+#[no_mangle]
+pub unsafe extern "C" fn shiguang_native_player_send_text(
+    opaque: *mut c_void, utf8: *const c_char,
+) -> bool {
+    if opaque.is_null() || utf8.is_null() { return false; }
+    let Ok(text) = CStr::from_ptr(utf8).to_str() else { return false; };
+    let controller = &*(opaque as *const crate::PlayerController);
+    let mut player = controller.player_lock();
+    for codepoint in text.chars() {
+        player.handle_event(ruffle_core::events::PlayerEvent::TextInput { codepoint });
+    }
+    true
+}
+
+/// 0 = Backspace; 1 = Enter. Used by the simple iOS keyboard bridge.
+#[no_mangle]
+pub unsafe extern "C" fn shiguang_native_player_text_control(
+    opaque: *mut c_void, action: u32,
+) -> bool {
+    if opaque.is_null() { return false; }
+    use ruffle_core::events::{PlayerEvent, TextControlCode};
+    let code = match action {
+        0 => TextControlCode::Backspace,
+        1 => TextControlCode::Enter,
+        _ => return false,
+    };
+    let controller = &*(opaque as *const crate::PlayerController);
+    controller.player_lock().handle_event(PlayerEvent::TextControl { code });
+    true
+}
