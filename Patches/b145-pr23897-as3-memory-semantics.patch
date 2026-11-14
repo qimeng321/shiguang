@@ -1,0 +1,656 @@
+diff --git a/core/src/avm2.rs b/core/src/avm2.rs
+--- a/core/src/avm2.rs
++++ b/core/src/avm2.rs
+@@ -191,6 +191,12 @@ pub struct Avm2<'gc> {
+     pub debug_output: bool,
+ 
+     pub optimizer_enabled: bool,
++
++    /// Set to `true` by `flash.system.System.gc()`. Read and cleared by
++    /// `Player::update` after each frame's incremental GC pass; when set,
++    /// a full collection cycle is performed.
++    #[collect(require_static)]
++    pub force_full_gc: std::cell::Cell<bool>,
+ }
+ 
+ impl<'gc> Avm2<'gc> {
+@@ -241,6 +247,8 @@ impl<'gc> Avm2<'gc> {
+             debug_output: false,
+ 
+             optimizer_enabled: true,
++
++            force_full_gc: std::cell::Cell::new(false),
+         }
+     }
+ 
+diff --git a/core/src/avm2/events.rs b/core/src/avm2/events.rs
+--- a/core/src/avm2/events.rs
++++ b/core/src/avm2/events.rs
+@@ -4,11 +4,11 @@ use crate::avm2::Avm2;
+ use crate::avm2::activation::Activation;
+ use crate::avm2::function::FunctionArgs;
+ use crate::avm2::globals::slots::flash_events_event_dispatcher as slots;
+-use crate::avm2::object::{EventObject, FunctionObject, Object, TObject as _};
++use crate::avm2::object::{EventObject, FunctionObject, FunctionObjectWeak, Object, TObject as _};
+ use crate::display_object::TDisplayObject;
+ use crate::string::AvmString;
+ use fnv::FnvHashMap;
+-use gc_arena::Collect;
++use gc_arena::{Collect, Gc, GcWeak, Mutation};
+ use std::collections::BTreeMap;
+ use std::hash::{Hash, Hasher};
+ 
+@@ -214,14 +214,37 @@ impl<'gc> DispatchList<'gc> {
+     /// more than one priority (since we can't enforce that with clever-er data
+     /// structure selection). If an event handler already exists, it will not
+     /// be added again, and this function will silently fail.
++    ///
++    /// When `use_weak_reference` is true, the dispatch list holds a weak
++    /// reference to the handler — letting it (and anything captured by it)
++    /// be collected when the only references are weak. Matches Flash's
++    /// `addEventListener(..., useWeakReference=true)` behavior.
++    ///
++    /// Before adding the new handler, dead weak entries for the same event
++    /// name are pruned. The other prune path inside `iter_event_handlers`
++    /// fires only when the dispatcher actually dispatches that event;
++    /// long-lived event sources whose subscribers register but rarely
++    /// receive the event would otherwise accumulate one dead weak entry
++    /// per discarded listener indefinitely. The add-time prune cost is
++    /// O(N) over the existing entries for the same event, trivial
++    /// relative to the unbounded growth it prevents.
+     pub fn add_event_listener(
+         &mut self,
++        mc: &Mutation<'gc>,
+         event: AvmString<'gc>,
+         priority: i32,
+         handler: FunctionObject<'gc>,
+         use_capture: bool,
++        use_weak_reference: bool,
+     ) {
+-        let new_handler = EventHandler::new(handler, use_capture);
++        // Lazy weak cleanup for this event name. See doc above.
++        if let Some(event_sheaf) = self.0.get_mut(&event) {
++            for set in event_sheaf.values_mut() {
++                set.retain(|eh| eh.handler.upgrade(mc).is_some());
++            }
++        }
++
++        let new_handler = EventHandler::new(handler, use_capture, use_weak_reference);
+ 
+         if let Some(event_sheaf) = self.get_event(event) {
+             for other_set in event_sheaf.values() {
+@@ -238,14 +261,17 @@ impl<'gc> DispatchList<'gc> {
+     /// Remove an event handler from this dispatch list.
+     ///
+     /// Any listener that has the same handler and capture-phase flag will be
+-    /// removed from any priority in the list.
++    /// removed from any priority in the list. Matches against both strong and
++    /// weak registrations of the same handler (pointer identity).
+     pub fn remove_event_listener(
+         &mut self,
+         event: AvmString<'gc>,
+         handler: FunctionObject<'gc>,
+         use_capture: bool,
+     ) {
+-        let old_handler = EventHandler::new(handler, use_capture);
++        // `use_weak_reference` is irrelevant for matching: `HandlerRef::as_ptr`
++        // yields the same identity for Strong and Weak of the same allocation.
++        let old_handler = EventHandler::new(handler, use_capture, false);
+ 
+         for set in self.get_event_mut(event).values_mut() {
+             if let Some(pos) = set.iter().position(|h| *h == old_handler) {
+@@ -275,17 +301,29 @@ impl<'gc> DispatchList<'gc> {
+     /// `use_capture` indicates if you want handlers that execute during the
+     /// capture phase, or handlers that execute during the bubble and target
+     /// phases.
++    ///
++    /// Weak handlers whose target has already been garbage collected are
++    /// transparently pruned from the dispatch list as a side effect.
+     pub fn iter_event_handlers<'a>(
+         &'a mut self,
++        mc: &'a Mutation<'gc>,
+         event: AvmString<'gc>,
+         use_capture: bool,
+     ) -> impl 'a + Iterator<Item = FunctionObject<'gc>> {
+-        self.get_event_mut(event)
++        // Prune dead weak listeners before iterating. Keeps DispatchList from
++        // growing unbounded when Flex (or other code) registers many weak
++        // listeners over the lifetime of a long-lived event source.
++        let bucket = self.get_event_mut(event);
++        for set in bucket.values_mut() {
++            set.retain(|eh| eh.handler.upgrade(mc).is_some());
++        }
++
++        bucket
+             .iter()
+             .rev()
+             .flat_map(|(_p, v)| v.iter())
+             .filter(move |eh| eh.use_capture == use_capture)
+-            .map(|eh| eh.handler)
++            .filter_map(move |eh| eh.handler.upgrade(mc))
+     }
+ }
+ 
+@@ -295,12 +333,51 @@ impl Default for DispatchList<'_> {
+     }
+ }
+ 
++/// A reference to an event handler, either strong (default) or weak
++/// (when `useWeakReference=true` is passed to `addEventListener`).
++///
++/// Weak listener references are required by frameworks whose binding system
++/// subscribes short-lived observers to long-lived event sources. The Flex
++/// SDK's `mx.binding.PropertyWatcher`, for example, registers every
++/// `propertyChange` listener as weak so the watcher (and its enclosing
++/// document) is not retained by every singleton it subscribes to. Treating
++/// those references as strong creates an unbounded retention chain across
++/// the lifetime of those singletons.
++#[derive(Clone, Collect)]
++#[collect(no_drop)]
++enum HandlerRef<'gc> {
++    Strong(FunctionObject<'gc>),
++    Weak(FunctionObjectWeak<'gc>),
++}
++
++impl<'gc> HandlerRef<'gc> {
++    /// Stable pointer identity for the underlying allocation. Both Strong and
++    /// Weak variants for the same function yield the same value, so a listener
++    /// registered weak can still be removed via `removeEventListener` (which
++    /// always calls in with a strong FunctionObject).
++    fn as_ptr(&self) -> *const () {
++        match self {
++            HandlerRef::Strong(f) => Gc::as_ptr(f.0).cast(),
++            HandlerRef::Weak(w) => GcWeak::as_ptr(w.0).cast(),
++        }
++    }
++
++    /// Upgrade to a callable FunctionObject. Returns None if the listener was
++    /// weak and the underlying object has been collected.
++    fn upgrade(&self, mc: &Mutation<'gc>) -> Option<FunctionObject<'gc>> {
++        match self {
++            HandlerRef::Strong(f) => Some(*f),
++            HandlerRef::Weak(w) => w.0.upgrade(mc).map(FunctionObject),
++        }
++    }
++}
++
+ /// A single instance of an event handler.
+ #[derive(Clone, Collect)]
+ #[collect(no_drop)]
+ struct EventHandler<'gc> {
+     /// The event handler to call.
+-    handler: FunctionObject<'gc>,
++    handler: HandlerRef<'gc>,
+ 
+     /// Indicates if this handler should only be called for capturing events
+     /// (when `true`), or if it should only be called for bubbling and
+@@ -309,7 +386,12 @@ struct EventHandler<'gc> {
+ }
+ 
+ impl<'gc> EventHandler<'gc> {
+-    fn new(handler: FunctionObject<'gc>, use_capture: bool) -> Self {
++    fn new(handler: FunctionObject<'gc>, use_capture: bool, use_weak_reference: bool) -> Self {
++        let handler = if use_weak_reference {
++            HandlerRef::Weak(FunctionObjectWeak(Gc::downgrade(handler.0)))
++        } else {
++            HandlerRef::Strong(handler)
++        };
+         Self {
+             handler,
+             use_capture,
+@@ -329,7 +411,7 @@ impl Eq for EventHandler<'_> {}
+ impl Hash for EventHandler<'_> {
+     fn hash<H: Hasher>(&self, state: &mut H) {
+         self.use_capture.hash(state);
+-        self.handler.as_ptr().hash(state);
++        (self.handler.as_ptr() as usize).hash(state);
+     }
+ }
+ 
+@@ -383,10 +465,11 @@ fn dispatch_event_to_target<'gc>(
+     let name = evtmut.event_type();
+     let use_capture = evtmut.phase() == EventPhase::Capturing;
+ 
++    let mc = activation.gc();
+     let handlers: Vec<FunctionObject<'gc>> = dispatch_list
+-        .as_dispatch_mut(activation.gc())
++        .as_dispatch_mut(mc)
+         .expect("Internal dispatch list is missing during dispatch!")
+-        .iter_event_handlers(name, use_capture)
++        .iter_event_handlers(mc, name, use_capture)
+         .collect();
+ 
+     if !handlers.is_empty() {
+diff --git a/core/src/avm2/globals/flash/events/event_dispatcher.rs b/core/src/avm2/globals/flash/events/event_dispatcher.rs
+--- a/core/src/avm2/globals/flash/events/event_dispatcher.rs
++++ b/core/src/avm2/globals/flash/events/event_dispatcher.rs
+@@ -38,12 +38,19 @@ pub fn add_event_listener<'gc>(
+     let listener = args.get_function(activation, 1, "listener")?;
+     let use_capture = args.get_bool(2);
+     let priority = args.get_i32(3);
++    let use_weak_reference = args.get_bool(4);
+ 
+-    //TODO: If we ever get weak GC references, we should respect `useWeakReference`.
+     dispatch_list
+         .as_dispatch_mut(activation.gc())
+         .expect("Internal properties should have what I put in them")
+-        .add_event_listener(event_type, priority, listener, use_capture);
++        .add_event_listener(
++            activation.gc(),
++            event_type,
++            priority,
++            listener,
++            use_capture,
++            use_weak_reference,
++        );
+ 
+     Avm2::register_broadcast_listener(activation.context, this, event_type);
+ 
+diff --git a/core/src/avm2/globals/flash/system/System.as b/core/src/avm2/globals/flash/system/System.as
+--- a/core/src/avm2/globals/flash/system/System.as
++++ b/core/src/avm2/globals/flash/system/System.as
+@@ -4,7 +4,7 @@ package flash.system {
+         import __ruffle__.stub_method;
+         import __ruffle__.stub_getter;
+ 
+-        public static function gc():void {}
++        public static native function gc():void;
+ 
+         public static function pauseForGCIfCollectionImminent(imminence:Number = 0.75):void {
+             stub_method("flash.system.System", "pauseForGCIfCollectionImminent");
+diff --git a/core/src/avm2/globals/flash/system/system.rs b/core/src/avm2/globals/flash/system/system.rs
+--- a/core/src/avm2/globals/flash/system/system.rs
++++ b/core/src/avm2/globals/flash/system/system.rs
+@@ -9,6 +9,24 @@ use crate::avm2::value::Value;
+ use crate::avm2_stub_method;
+ use ruffle_common::sandbox::SandboxType;
+ 
++/// Implements `flash.system.System.gc` method.
++///
++/// In Flash Player this is a debug-mode hint; release builds ignore it.
++/// In Ruffle, the call sets the `Avm2::force_full_gc` flag; `Player::update`
++/// reads the flag and runs a full `gc-arena finish_cycle` after the current
++/// update completes. This promotes `System.gc()` to a first-class trigger
++/// for full collection, usable both by diagnostic tooling and by application
++/// code that wants to drain weak references and reclaim slot space at
++/// well-defined points (typically after teardown of a large UI subtree).
++pub fn gc<'gc>(
++    activation: &mut Activation<'_, 'gc>,
++    _this: Value<'gc>,
++    _args: FunctionArgs<'_, 'gc>,
++) -> Result<Value<'gc>, Error<'gc>> {
++    activation.context.avm2.force_full_gc.set(true);
++    Ok(Value::Undefined)
++}
++
+ /// Implements `flash.system.System.setClipboard` method
+ pub fn set_clipboard<'gc>(
+     activation: &mut Activation<'_, 'gc>,
+diff --git a/core/src/avm2/globals/flash/utils/Dictionary.as b/core/src/avm2/globals/flash/utils/Dictionary.as
+--- a/core/src/avm2/globals/flash/utils/Dictionary.as
++++ b/core/src/avm2/globals/flash/utils/Dictionary.as
+@@ -1,17 +1,15 @@
+ package flash.utils {
+-    import __ruffle__.stub_constructor;
+-
+     [Ruffle(InstanceAllocator)]
++    [Ruffle(CustomConstructor)]
+     public dynamic class Dictionary {
+         prototype.toJSON = function(r:String):* {
+             return "Dictionary";
+         };
+         prototype.setPropertyIsEnumerable("toJSON", false);
+ 
+         public function Dictionary(weakKeys:Boolean = false) {
+-            if (weakKeys) {
+-                stub_constructor("flash.utils.Dictionary", "with weak keys");
+-            }
++            // Dispatched to dictionary_constructor in Rust via
++            // [Ruffle(CustomConstructor)]. This AS-defined method does nothing.
+         }
+     }
+ }
+diff --git a/core/src/avm2/globals/flash/utils/dictionary.rs b/core/src/avm2/globals/flash/utils/dictionary.rs
+--- a/core/src/avm2/globals/flash/utils/dictionary.rs
++++ b/core/src/avm2/globals/flash/utils/dictionary.rs
+@@ -1 +1,35 @@
++//! `flash.utils.Dictionary` native methods
++
+ pub use crate::avm2::object::dictionary_allocator;
++
++use crate::avm2::Error;
++use crate::avm2::activation::Activation;
++use crate::avm2::function::FunctionArgs;
++use crate::avm2::object::DictionaryObject;
++use crate::avm2::parameters::ParametersExt;
++use crate::avm2::value::Value;
++
++/// Custom constructor for `flash.utils.Dictionary`.
++///
++/// Reads the `weakKeys` argument and instantiates a `DictionaryObject`
++/// with the corresponding flag set. This is the only place the
++/// weak-keys flag is set on a fresh dictionary — the AS3 constructor
++/// body is empty (the `[Ruffle(CustomConstructor)]` metadata routes
++/// `new flash.utils.Dictionary(weakKeys)` here directly).
++pub fn dictionary_constructor<'gc>(
++    activation: &mut Activation<'_, 'gc>,
++    args: FunctionArgs<'_, 'gc>,
++) -> Result<Value<'gc>, Error<'gc>> {
++    // Custom constructors receive the raw `new` arguments (unpadded), so
++    // `new Dictionary()` passes an empty slice; `get_optional` bounds-checks
++    // where `get_value` would panic. Mirrors the original `args.first()`.
++    let weak_keys = args
++        .get_optional(0)
++        .map(|v| v.coerce_to_boolean())
++        .unwrap_or(false);
++
++    let class = activation.avm2().classes().dictionary;
++    let dict = DictionaryObject::new(class, weak_keys, activation);
++
++    Ok(dict.into())
++}
+diff --git a/core/src/avm2/object/dictionary_object.rs b/core/src/avm2/object/dictionary_object.rs
+--- a/core/src/avm2/object/dictionary_object.rs
++++ b/core/src/avm2/object/dictionary_object.rs
+@@ -8,24 +8,54 @@ use crate::avm2::object::{ClassObject, Object, TObject};
+ use crate::avm2::value::Value;
+ use crate::string::AvmString;
+ use core::fmt;
++use gc_arena::barrier::unlock;
++use gc_arena::lock::RefLock;
+ use gc_arena::{Collect, Gc, GcWeak, Mutation};
+ use ruffle_common::utils::HasPrefixField;
++use std::cell::Cell;
+ 
+ /// A class instance allocator that allocates Dictionary objects.
+ pub fn dictionary_allocator<'gc>(
+     class: ClassObject<'gc>,
+     activation: &mut Activation<'_, 'gc>,
+ ) -> Result<Object<'gc>, Error<'gc>> {
+-    let base = ScriptObjectData::new(class);
++    Ok(DictionaryObject::new(class, false, activation).into())
++}
+ 
+-    Ok(DictionaryObject(Gc::new(activation.gc(), DictionaryObjectData { base })).into())
++impl<'gc> DictionaryObject<'gc> {
++    /// Allocate a fresh Dictionary instance.
++    /// Used both by the default allocator (weak_keys=false) and by the
++    /// `[Ruffle(CustomConstructor)]` handler (weak_keys reflecting the
++    /// `weakKeys` argument).
++    pub fn new(
++        class: ClassObject<'gc>,
++        weak_keys: bool,
++        activation: &mut Activation<'_, 'gc>,
++    ) -> Self {
++        let base = ScriptObjectData::new(class);
++        DictionaryObject(Gc::new(
++            activation.gc(),
++            DictionaryObjectData {
++                base,
++                weak_keys: Cell::new(weak_keys),
++                weak_entries: RefLock::new(Vec::new()),
++            },
++        ))
++    }
+ }
+ 
+ /// An object that allows associations between objects and values.
+ ///
+ /// This is implemented by way of "object space", parallel to the property
+ /// space that ordinary properties live in. This space has no namespaces, and
+ /// keys are objects instead of strings.
++///
++/// When constructed with `new Dictionary(true)`, object keys are held weakly:
++/// entries are transparently dropped when the only references to the key
++/// are the ones inside this dictionary. This matches Flash's documented
++/// behavior and is required by framework code that maintains object→value
++/// caches (renderer-per-item mappings, watcher-per-source registries) and
++/// must not extend the lifetime of the key objects.
+ #[derive(Clone, Collect, Copy)]
+ #[collect(no_drop)]
+ pub struct DictionaryObject<'gc>(pub Gc<'gc, DictionaryObjectData<'gc>>);
+@@ -46,13 +76,47 @@ impl fmt::Debug for DictionaryObject<'_> {
+ #[collect(no_drop)]
+ #[repr(C, align(8))]
+ pub struct DictionaryObjectData<'gc> {
+-    /// Base script object
++    /// Base script object. When weak_keys is false, object keys live here.
+     base: ScriptObjectData<'gc>,
++
++    /// `true` when constructed with `weakKeys=true`. Set once at
++    /// construction by `DictionaryObject::new` from the AS3 constructor
++    /// argument; immutable afterwards (matches Flash semantics).
++    #[collect(require_static)]
++    weak_keys: Cell<bool>,
++
++    /// Object-keyed entries when `weak_keys` is true. A linear `Vec` rather
++    /// than a hashtable: weak pointers become unhashable when their target
++    /// is collected, and typical weak-keyed Dictionary use is a small cache
++    /// (tens of entries), so linear scan beats maintaining a hashtable of
++    /// `GcWeak` keys.
++    weak_entries: RefLock<Vec<WeakEntry<'gc>>>,
++}
++
++#[derive(Clone, Collect)]
++#[collect(no_drop)]
++struct WeakEntry<'gc> {
++    /// Weak reference to the key object. When `upgrade(mc)` returns `None`,
++    /// the entry is considered dead and is dropped at the next mutating
++    /// access on the dictionary.
++    key: crate::avm2::object::WeakObject<'gc>,
++    value: Value<'gc>,
+ }
+ 
+ impl<'gc> DictionaryObject<'gc> {
+     /// Retrieve a value in the dictionary's object space.
+     pub fn get_property_by_object(self, name: Object<'gc>) -> Value<'gc> {
++        if self.0.weak_keys.get() {
++            let entries = self.0.weak_entries.borrow();
++            for e in entries.iter() {
++                // Pointer identity is enough: as_ptr() is stable for the
++                // allocation, and matches the strong-key behavior.
++                if std::ptr::eq(e.key.as_ptr(), name.as_ptr()) {
++                    return e.value;
++                }
++            }
++            return Value::Undefined;
++        }
+         self.base()
+             .values()
+             .get(&DynamicKey::Object(name))
+@@ -61,18 +125,69 @@ impl<'gc> DictionaryObject<'gc> {
+     }
+ 
+     /// Set a value in the dictionary's object space.
++    ///
++    /// For `weakKeys=true`, this also drops entries whose keys are no
++    /// longer reachable, combining the drop with the pointer-equality
++    /// scan that is already needed to detect an existing entry to
++    /// replace (single pass). Without this drop, the values associated
++    /// with collected keys would be retained indefinitely; code that
++    /// populates a weak-keyed Dictionary as a write-mostly cache (only
++    /// insertions, no iteration) accumulates them unbounded. Adobe
++    /// Flash Player drops dead-key entries via its weak GC; `gc-arena`
++    /// does not, so the explicit drop here is required to match the
++    /// documented Flash semantics.
+     pub fn set_property_by_object(self, name: Object<'gc>, value: Value<'gc>, mc: &Mutation<'gc>) {
++        if self.0.weak_keys.get() {
++            let mut entries =
++                unlock!(Gc::write(mc, self.0), DictionaryObjectData, weak_entries).borrow_mut();
++            // Single pass: drop dead-key entries while looking for an existing
++            // entry to replace. Both operations were already O(N) in isolation;
++            // combining costs no extra walks.
++            let mut found = false;
++            entries.retain_mut(|e| {
++                if e.key.upgrade(mc).is_none() {
++                    return false; // dead key — drop entry, freeing value
++                }
++                if !found && std::ptr::eq(e.key.as_ptr(), name.as_ptr()) {
++                    e.value = value;
++                    found = true;
++                }
++                true
++            });
++            if !found {
++                entries.push(WeakEntry {
++                    key: name.downgrade(),
++                    value,
++                });
++            }
++            return;
++        }
+         self.base()
+             .values_mut(mc)
+             .insert(DynamicKey::Object(name), value);
+     }
+ 
+     /// Delete a value from the dictionary's object space.
+     pub fn delete_property_by_object(self, name: Object<'gc>, mc: &Mutation<'gc>) {
++        if self.0.weak_keys.get() {
++            let mut entries =
++                unlock!(Gc::write(mc, self.0), DictionaryObjectData, weak_entries).borrow_mut();
++            entries.retain(|e| !std::ptr::eq(e.key.as_ptr(), name.as_ptr()));
++            return;
++        }
+         self.base().values_mut(mc).remove(&DynamicKey::Object(name));
+     }
+ 
+     pub fn has_property_by_object(self, name: Object<'gc>) -> bool {
++        if self.0.weak_keys.get() {
++            let entries = self.0.weak_entries.borrow();
++            for e in entries.iter() {
++                if std::ptr::eq(e.key.as_ptr(), name.as_ptr()) {
++                    return true;
++                }
++            }
++            return false;
++        }
+         self.base().values().contains_key(&DynamicKey::Object(name))
+     }
+ }
+@@ -92,15 +207,91 @@ impl<'gc> TObject<'gc> for DictionaryObject<'gc> {
+     ) {
+     }
+ 
++    fn get_next_enumerant(
++        self,
++        last_index: u32,
++        activation: &mut Activation<'_, 'gc>,
++    ) -> Result<u32, Error<'gc>> {
++        if !self.0.weak_keys.get() {
++            return Ok(self.base().get_next_enumerant(last_index));
++        }
++        // Weak path: a weak-keyed Dictionary still admits non-object keys
++        // (literal strings/numbers), which are stored in the base values map
++        // — only object keys go in `weak_entries`. Enumeration walks the
++        // base first, then `weak_entries`. The two phases are distinguished
++        // by the index range: indices in `1..=base_count` address the base
++        // (returned verbatim by `base.get_next_enumerant`); indices in
++        // `base_count+1..=base_count+weak_entries.len()` address weak
++        // entries (1-based position within the vec = `index - base_count`).
++        let base_count = self.base().values().len() as u32;
++        if last_index <= base_count {
++            let next_in_base = self.base().get_next_enumerant(last_index);
++            if next_in_base != 0 {
++                return Ok(next_in_base);
++            }
++        }
++        let weak_start = last_index.saturating_sub(base_count) as usize;
++        let entries = self.0.weak_entries.borrow();
++        let mc = activation.gc();
++        for i in weak_start..entries.len() {
++            if entries[i].key.upgrade(mc).is_some() {
++                return Ok(base_count + (i as u32) + 1);
++            }
++        }
++        Ok(0)
++    }
++
++    fn get_enumerant_name(
++        self,
++        index: u32,
++        activation: &mut Activation<'_, 'gc>,
++    ) -> Result<Value<'gc>, Error<'gc>> {
++        if !self.0.weak_keys.get() {
++            return Ok(self.base().get_enumerant_name(index).unwrap_or(Value::Null));
++        }
++        let base_count = self.base().values().len() as u32;
++        if index <= base_count {
++            return Ok(self.base().get_enumerant_name(index).unwrap_or(Value::Null));
++        }
++        let weak_idx = (index - base_count - 1) as usize;
++        let entries = self.0.weak_entries.borrow();
++        let mc = activation.gc();
++        if let Some(e) = entries.get(weak_idx)
++            && let Some(obj) = e.key.upgrade(mc)
++        {
++            return Ok(Value::Object(obj));
++        }
++        Ok(Value::Null)
++    }
++
+     fn get_enumerant_value(
+         self,
+         index: u32,
+-        _activation: &mut Activation<'_, 'gc>,
++        activation: &mut Activation<'_, 'gc>,
+     ) -> Result<Value<'gc>, Error<'gc>> {
+-        Ok(*self
+-            .base()
+-            .values()
+-            .value_at(index as usize)
+-            .unwrap_or(&Value::Undefined))
++        if !self.0.weak_keys.get() {
++            return Ok(*self
++                .base()
++                .values()
++                .value_at(index as usize)
++                .unwrap_or(&Value::Undefined));
++        }
++        let base_count = self.base().values().len() as u32;
++        if index <= base_count {
++            return Ok(*self
++                .base()
++                .values()
++                .value_at(index as usize)
++                .unwrap_or(&Value::Undefined));
++        }
++        let weak_idx = (index - base_count - 1) as usize;
++        let entries = self.0.weak_entries.borrow();
++        let mc = activation.gc();
++        if let Some(e) = entries.get(weak_idx)
++            && e.key.upgrade(mc).is_some()
++        {
++            return Ok(e.value);
++        }
++        Ok(Value::Undefined)
+     }
+ }
+diff --git a/core/src/player.rs b/core/src/player.rs
+--- a/core/src/player.rs
++++ b/core/src/player.rs
+@@ -2452,6 +2452,24 @@ impl Player {
+         // GC
+         self.gc_arena.borrow_mut().collect_debt();
+ 
++        // If AS3 called `flash.system.System.gc()` since the previous update,
++        // run a full collection cycle now. The flag is set by
++        // `flash::system::system::gc` and cleared here. The incremental
++        // `collect_debt()` above is paced on a per-frame budget and does not,
++        // by itself, drain weak references and dead handler shells quickly
++        // enough for workloads that discard thousands of long-lived objects
++        // in bursts; the explicit full cycle requested by AS3 closes that
++        // gap.
++        let force_full_gc = self.gc_arena.borrow().mutate(|_, root| {
++            let data = root.data.borrow();
++            let flag = data.avm2.force_full_gc.get();
++            data.avm2.force_full_gc.set(false);
++            flag
++        });
++        if force_full_gc {
++            self.gc_arena.borrow_mut().finish_cycle();
++        }
++
+         rval
+     }
+ 
