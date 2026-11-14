@@ -1144,18 +1144,21 @@ struct GameWebView: UIViewRepresentable {
               function fail(message) { report('错误：' + message); }
               // Forward a bounded subset of Ruffle warnings/errors to the shared log.
               // This is a diagnostic build; do not forward arbitrary console messages.
-              var consoleCount = 0;
+              var consoleCount = 0, b145MemoryCount = 0;
               ['warn', 'error'].forEach(function (level) {
                 var original = console[level];
                 console[level] = function () {
-                  if (consoleCount < 60) {
-                    var detail = Array.prototype.slice.call(arguments, 0, 4).map(function (value) {
-                      try { return String(value).slice(0, 240); } catch (_) { return '[不可显示]'; }
-                    }).join(' ');
-                    if (/ruffle|avm2|flash|stub|wasm|error|failed|unsupported|exception|bytearray|loader|pvm|version|zlib|inflate|uncompress|警告|失败/i.test(detail)) {
-                      consoleCount++;
-                      report('运行日志[' + level + ']：' + detail.slice(0, 420));
-                    }
+                  var detail = Array.prototype.slice.call(arguments, 0, 4).map(function (value) {
+                    try { return String(value).slice(0, 240); } catch (_) { return '[不可显示]'; }
+                  }).join(' ');
+                  // The library/GPU/WASM telemetry has a separate limit, so
+                  // unrelated warnings cannot prevent observing memory growth.
+                  if (detail.indexOf('[B145-MEM]') >= 0) {
+                    if (b145MemoryCount++ < 300) report('内核内存：' + detail.slice(0, 420));
+                  } else if (consoleCount < 60 &&
+                    /ruffle|avm2|flash|stub|wasm|error|failed|unsupported|exception|bytearray|loader|pvm|version|zlib|inflate|uncompress|警告|失败/i.test(detail)) {
+                    consoleCount++;
+                    report('运行日志[' + level + ']：' + detail.slice(0, 420));
                   }
                   return original.apply(console, arguments);
                 };
