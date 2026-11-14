@@ -228,6 +228,14 @@ fn serve(mut s: TcpStream) -> io::Result<()> {
     }
     let target = parts[1].split('?').next().unwrap_or("/");
     let decoded = percent_encoding::percent_decode_str(target).decode_utf8_lossy();
+    // The current game bundle sometimes lacks ip.txt; native sockets connect
+    // directly to the live host (unlike the browser's WebSocket proxy).
+    if decoded == "/ip.txt" {
+        let text = "202.189.22.79:22973";
+        write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n", text.len())?;
+        if method == "GET" { s.write_all(text.as_bytes())?; }
+        return Ok(());
+    }
     let path = Path::new(decoded.trim_start_matches('/'));
     if decoded.contains('\\') || path.components().any(|c| !matches!(c, Component::Normal(_))) {
         write_error(&s, "403 Forbidden", "invalid path");
