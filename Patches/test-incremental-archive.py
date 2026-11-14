@@ -17,7 +17,6 @@ for requirement in (
     "guard entry.type == .file",
     "SHA256()",
     "case .downgrade",
-    "case .upToDate",
     "case .unsafeFile",
     "case .fullGamePackage",
     "let sorted = checked.paths.filter",
@@ -38,46 +37,70 @@ assert "importMobilePatch" in model
 assert 'Text("1.06 新功能")' not in app and 'Text("测试功能")' not in app
 assert app.count(".fill(isSelected ? blue : Color.white)") >= 2
 
-# Confirm both supported core names are included in *each* code-path:
-# archive recognition, exact matching XML target revision, and safe rollback.
-assert 'let allowedCores = ["dll/SGCore.swf", "dll/NieoCore.swf"]' in source
-assert 'entries["config/dll.xml"]' in source
-assert 'presentCores.count == 1' in source
-assert 'xml.contains(corePath + "?" + value)' in source
-assert 'let corePath: String' in source
-assert 'corePath: checked.corePath' in source
-assert 'path == "dll/SGCore.swf" || path == "dll/NieoCore.swf"' in source
-assert 'guard value.count == 10' in source
-assert 'if current > checked.targetRevision' in source
+# Flexibility requirements: login modules, SGCore and unrelated assets can
+# co-exist in a delta, including same-revision and resource-only packages.
+for fragment in (
+    'path == "Client.swf" || path == "index.html"',
+    'if let config = entries["config/dll.xml"]',
+    'let target = checked.targetRevision ?? current',
+    'if let target = checked.targetRevision',
+    'let installedRevision = LaunchDiagnostics.coreRevision',
+    'guard !paths.isEmpty',
+    'permittedDirectory(prefix)',
+    '"swf", "xml", "json"',
+    '"js", "mjs", "css", "wasm"',
+    'skipCRC32: false',
+):
+    assert fragment in source, fragment
+assert 'path.hasPrefix("login/")' not in source
+assert 'path.hasPrefix("assets/")' not in source
+assert 'presentCores.count == 1' not in source
+assert 'if current == checked.targetRevision' not in source
+assert 'corePath: checked.corePath' not in source
+assert 'journal.committed = true' in source
+assert 'if path == "Client.swf" || path == "index.html"' in source
+assert 'entry.type == .file' in source
+assert '&& !$0.lowercased().hasSuffix(".app")' in source
+
+def fixture(path, files):
+    with zipfile.ZipFile(path, "w") as archive:
+        for filename, contents in files.items():
+            archive.writestr(filename, contents)
+    with zipfile.ZipFile(path) as archive:
+        assert set(archive.namelist()) == set(files)
+        assert archive.testzip() is None
 
 with tempfile.TemporaryDirectory() as temp:
     for suffix in (".zip", ".srom"):
-        for core, revision in [("SGCore", "2026111306"), ("NieoCore", "2026110401")]:
-            core_path = f"dll/{core}.swf"
-            path = Path(temp) / (f"{core}-incremental" + suffix)
-            xml = f'<taomee><ext><item path="{core_path}?{revision}" ver="{revision}" /></ext></taomee>'
-            with zipfile.ZipFile(path, "w") as archive:
-                archive.writestr("config/dll.xml", xml)
-                archive.writestr(core_path, b"FWS" + b"\x00" * 64)
-                archive.writestr("resource/map/999.swf", b"FWS" + b"\x00" * 64)
-            with zipfile.ZipFile(path) as archive:
-                names = set(archive.namelist())
-                assert len(names) == 3 and "Client.swf" not in names
-                assert names.issuperset({"config/dll.xml", core_path})
-                assert archive.testzip() is None
-                loaded = archive.read("config/dll.xml").decode("utf-8")
-                assert f'{core_path}?{revision}' in loaded
-                assert re.search(r'ver="\d{10}"', loaded)
-    # Complete game packs and unrelated native resources must not pass
-    # through the incremental (partial-merge) importer.
-    full_path = Path(temp) / "full.srom"
-    with zipfile.ZipFile(full_path, "w") as archive:
-        archive.writestr("Client.swf", b"FWS" + b"\x00" * 64)
-        archive.writestr("index.html", "<html></html>")
-    with zipfile.ZipFile(full_path) as archive:
-        assert "Client.swf" in archive.namelist()
-    assert 'path == "Client.swf"' in source
+        # Match the user's actual five-entry SGCore/login/ice-cave update.
+        revision = "2026111405"
+        files = {
+            "config/dll.xml": f'<taomee><ext><item path="dll/SGCore.swf?{revision}" ver="{revision}"/></ext></taomee>',
+            "dll/SGCore.swf": b"FWS" + b"\x00" * 64,
+            "login/Login.swf": b"FWS" + b"\x00" * 64,
+            "module/com/robot/module/app/SpriteFusionPanel.swf": b"FWS" + b"\x00" * 64,
+            "module/com/robot/module/game/IcicleGame.swf": b"FWS" + b"\x00" * 64,
+        }
+        fixture(Path(temp) / ("sgcore-login" + suffix), files)
+        assert re.search(r'ver="\d{10}"', files["config/dll.xml"])
+        # Legacy core replacement is still allowed.
+        fixture(Path(temp) / ("legacy" + suffix), {
+            "config/dll.xml": '<item path="dll/NieoCore.swf?2026110401" ver="2026110401"/>',
+            "dll/NieoCore.swf": b"FWS" + b"\x00" * 64,
+        })
+        # No core or version XML required to update normal game resources.
+        fixture(Path(temp) / ("resources-only" + suffix), {
+            "resource/map/999.swf": b"FWS" + b"\x00" * 64,
+            "login/Login.swf": b"FWS" + b"\x00" * 64,
+            "assets/game.json": "{}",
+        })
+        # Config can be updated without requiring a core SWF in the ZIP.
+        fixture(Path(temp) / ("xml-only" + suffix), {
+            "config/dll.xml": '<item path="dll/SGCore.swf?2026111405" ver="2026111405"/>',
+        })
+    full = Path(temp) / "complete.srom"
+    fixture(full, {"Client.swf": b"FWS" + b"\x00" * 64, "index.html": "<html></html>"})
     assert 'throw GameIncrementalError.fullGamePackage' in source
-    assert 'if parent == "config" { return path == "config/dll.xml" }' in source
+    assert 'private static let maxArchiveBytes' in source
 
-print("PASS: SGCore + legacy NieoCore ZIP/SROM fixtures, CRC32, XML-bound revision, safe rollback, full-package guard")
+print("PASS: flexible SGCore/login ZIP/SROM deltas; no XML/core lock; same-version support; rollback and full-import guard")
