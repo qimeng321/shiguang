@@ -38,26 +38,46 @@ assert "importMobilePatch" in model
 assert 'Text("1.06 新功能")' not in app and 'Text("测试功能")' not in app
 assert app.count(".fill(isSelected ? blue : Color.white)") >= 2
 
+# Confirm both supported core names are included in *each* code-path:
+# archive recognition, exact matching XML target revision, and safe rollback.
+assert 'let allowedCores = ["dll/SGCore.swf", "dll/NieoCore.swf"]' in source
+assert 'entries["config/dll.xml"]' in source
+assert 'presentCores.count == 1' in source
+assert 'xml.contains(corePath + "?" + value)' in source
+assert 'let corePath: String' in source
+assert 'corePath: checked.corePath' in source
+assert 'path == "dll/SGCore.swf" || path == "dll/NieoCore.swf"' in source
+assert 'guard value.count == 10' in source
+assert 'if current > checked.targetRevision' in source
+
 with tempfile.TemporaryDirectory() as temp:
     for suffix in (".zip", ".srom"):
-        path = Path(temp) / ("incremental" + suffix)
-        with zipfile.ZipFile(path, "w") as archive:
-            archive.writestr("config/dll.xml",
-                '<taomee><ext><item path="dll/NieoCore.swf?2026110401" ver="2026110401" /></ext></taomee>')
-            archive.writestr("dll/NieoCore.swf", b"FWS" + b"\x00" * 64)
-            archive.writestr("resource/map/999.swf", b"FWS" + b"\x00" * 64)
-        with zipfile.ZipFile(path) as archive:
-            names = set(archive.namelist())
-            assert len(names) == 3 and "Client.swf" not in names
-            assert names.issuperset({"config/dll.xml", "dll/NieoCore.swf"})
-            assert archive.testzip() is None
-            assert re.search(r'ver="2026110401"', archive.read("config/dll.xml").decode("utf-8"))
+        for core, revision in [("SGCore", "2026111306"), ("NieoCore", "2026110401")]:
+            core_path = f"dll/{core}.swf"
+            path = Path(temp) / (f"{core}-incremental" + suffix)
+            xml = f'<taomee><ext><item path="{core_path}?{revision}" ver="{revision}" /></ext></taomee>'
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("config/dll.xml", xml)
+                archive.writestr(core_path, b"FWS" + b"\\x00" * 64)
+                archive.writestr("resource/map/999.swf", b"FWS" + b"\\x00" * 64)
+            with zipfile.ZipFile(path) as archive:
+                names = set(archive.namelist())
+                assert len(names) == 3 and "Client.swf" not in names
+                assert names.issuperset({"config/dll.xml", core_path})
+                assert archive.testzip() is None
+                loaded = archive.read("config/dll.xml").decode("utf-8")
+                assert f'{core_path}?{revision}' in loaded
+                assert re.search(r'ver="\\d{10}"', loaded)
+    # Complete game packs and unrelated native resources must not pass
+    # through the incremental (partial-merge) importer.
     full_path = Path(temp) / "full.srom"
     with zipfile.ZipFile(full_path, "w") as archive:
-        archive.writestr("Client.swf", b"FWS" + b"\x00" * 64)
+        archive.writestr("Client.swf", b"FWS" + b"\\x00" * 64)
         archive.writestr("index.html", "<html></html>")
     with zipfile.ZipFile(full_path) as archive:
         assert "Client.swf" in archive.namelist()
-    assert 'path == "Client.swf"' in source and 'throw GameIncrementalError.fullGamePackage' in source
+    assert 'path == "Client.swf"' in source
+    assert 'throw GameIncrementalError.fullGamePackage' in source
+    assert 'if parent == "config" { return path == "config/dll.xml" }' in source
 
-print("PASS: ZIP/SROM extension handling, ZIP-backed fixtures, UI selection, full-package guard, rollback markers")
+print("PASS: SGCore + legacy NieoCore ZIP/SROM fixtures, CRC32, XML-bound revision, safe rollback, full-package guard")
