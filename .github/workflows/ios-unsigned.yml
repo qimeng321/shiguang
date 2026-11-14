@@ -15,7 +15,7 @@ on:
       - "release/shiguang-1.0.7-b128-home-icon"
       - "release/shiguang-1.0.7-b128-wheel-404fix"
       - "release/shiguang-1.0.7-b128-wheel-macos26"
-      - "test/ios-1.09-b131-battle-stability"
+      - "test/ios-1.10-b132-battle-lab"
 
 jobs:
   static-check:
@@ -37,14 +37,14 @@ jobs:
           model = Path('Sources/LauncherModel.swift').read_text()
           project = Path('ShiguangLauncher.xcodeproj/project.pbxproj').read_text()
           plist = plistlib.loads(Path('Resources/Info.plist').read_bytes())
-          assert plist['CFBundleShortVersionString'] == '1.0.9'
-          assert plist['CFBundleVersion'] == '131'
-          assert plist['CFBundleDisplayName'] == '拾光号1.09测试'
-          assert 'MARKETING_VERSION = 1.0.9;' in project
-          assert 'CURRENT_PROJECT_VERSION = 131;' in project
-          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher.stabilitytest;' in project
-          assert 'Text("测试版 1.09 · 战斗稳定性")' in swift
-          assert 'Build 131' in model and '基于正式版 1.08' in model
+          assert plist['CFBundleShortVersionString'] == '1.0.10'
+          assert plist['CFBundleVersion'] == '132'
+          assert plist['CFBundleDisplayName'] == '拾光号1.10测试'
+          assert 'MARKETING_VERSION = 1.0.10;' in project
+          assert 'CURRENT_PROJECT_VERSION = 132;' in project
+          assert 'PRODUCT_BUNDLE_IDENTIFIER = cn.shiguanghao.launcher.battlelab110;' in project
+          assert 'Text("测试版 1.10 · 战斗稳定性")' in swift
+          assert 'Build 132' in model and '基于正式版 1.08' in model
           assert '?? .saving' in swift and '?? .fps30' in swift
           assert 'GameQualityPreset.saving.rawValue' in swift
           assert 'GameFrameCapPreset.fps30.rawValue' in swift
@@ -53,6 +53,12 @@ jobs:
           assert 'UIApplication.didReceiveMemoryWarningNotification' in swift
           assert 'BattleLoadTrace.shared.snapshot()' in swift
           assert 'BattleLoadTrace.shared.record(path:' in source
+          assert 'func summary() -> String' in source
+          assert 'let maxTracedRequests = 1200' in source
+          assert 'battleHTTPCacheEnabled' in source and 'battleCacheFile' in source
+          assert 'selectedRenderer' in source and 'preferredRenderer=configuredRenderer' in source
+          assert 'GameRendererPreset' in swift and 'battleExperimentPicker' in swift
+          assert '1.10定时采样' in swift and 'NativeMemoryProbe' in swift
           assert 'petfightdll.swf' in source
           assert 'let selectedQuality = compatibilityModeEnabled ? "low" : qualityPreset.ruffleQuality' in source
           assert 'let selectedFrameCap = GameFrameCapPreset.saved.fpsLimit' in source
@@ -63,7 +69,7 @@ jobs:
           assert 'func clearMobilePatch()' in model
           assert 'touchControls.setDelayedTap(window.__shiguangDelayedTapChoice===true)' in source
           assert 'resource/map/1.swf' in model
-          print('PASS: independent 1.09 Build131 low-load battle test configuration')
+          print('PASS: independent 1.10 Build132 battle diagnostic A/B test configuration')
           PY_CHECK
   build:
     needs: static-check
@@ -268,27 +274,27 @@ jobs:
           cd "$RUNNER_TEMP"
           zip -q -r ShiguangLauncher-unsigned.ipa Payload
           cp ShiguangLauncher-unsigned.ipa /tmp/ShiguangLauncher-unsigned.ipa
-      - name: Check independent 1.09 test build metadata
+      - name: Check independent 1.10 test build metadata
         run: |
-          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.9'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '131'
-          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.stabilitytest'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '1.0.10'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx '132'
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$RUNNER_TEMP/Payload/ShiguangLauncher.app/Info.plist" | grep -Fx 'cn.shiguanghao.launcher.battlelab110'
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'touch-controls.js' | wc -l | tr -d ' ')" -ge 1
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name '*.otf' | wc -l | tr -d ' ')" -eq 1
           test -s "$RUNNER_TEMP/Payload/ShiguangLauncher.app/ShiguangLauncher"
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
-      - name: Package 1.09 battle stability test source ZIP
+      - name: Package 1.10 battle stability test source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.09-b131-battle-stability/ --output=/tmp/ShiguangLauncher-v1.09-b131-battle-stability-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.09-b131-battle-stability-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.09-b131-battle-stability-source.zip | grep -Fx 'ShiguangLauncher-v1.09-b131-battle-stability/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.10-b132-battle-lab/ --output=/tmp/ShiguangLauncher-v1.10-b132-battle-lab-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.10-b132-battle-lab-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.10-b132-battle-lab-source.zip | grep -Fx 'ShiguangLauncher-v1.10-b132-battle-lab/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.09-b131-battle-stability-ipa
+          name: ShiguangLauncher-v1.10-b132-battle-lab-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.09-b131-battle-stability-source
-          path: /tmp/ShiguangLauncher-v1.09-b131-battle-stability-source.zip
+          name: ShiguangLauncher-v1.10-b132-battle-lab-source
+          path: /tmp/ShiguangLauncher-v1.10-b132-battle-lab-source.zip
           if-no-files-found: error
