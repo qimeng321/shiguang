@@ -77,7 +77,7 @@ raw = raw.replace(anchor, """        self.gl.delete_texture(Some(&self.texture))
             use std::sync::atomic::Ordering;
             let dropped = F_BITMAP_HANDLES_DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
             if dropped % 128 == 0 {
-                tracing::warn!(
+                log::warn!(
                     "[F-Rust] native_webgl_bitmap_dropped={} created={} (no VRAM measurement)",
                     dropped, F_BITMAP_HANDLES_CREATED.load(Ordering::Relaxed)
                 );
@@ -91,7 +91,7 @@ raw = raw.replace(anchor, """        #[cfg(target_arch = "wasm32")]
             use std::sync::atomic::Ordering;
             let created = F_BITMAP_HANDLES_CREATED.fetch_add(1, Ordering::Relaxed) + 1;
             if created % 128 == 0 {
-                tracing::warn!(
+                log::warn!(
                     "[F-Rust] native_webgl_bitmap_created={} dropped={} (no VRAM measurement)",
                     created, F_BITMAP_HANDLES_DROPPED.load(Ordering::Relaxed)
                 );
