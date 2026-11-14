@@ -23,7 +23,8 @@ OUT="$ROOT/NativeRuffle/lib"
 mkdir -p "$OUT"
 cp target/aarch64-apple-ios/release/libruffle_ios.a "$OUT/libruffle_ios.a"
 test "$(stat -f%z "$OUT/libruffle_ios.a")" -gt 1000000
-nm -g "$OUT/libruffle_ios.a" | grep -q '_shiguang_native_player_create' || {
+nm -g "$OUT/libruffle_ios.a" > "$RUNNER_TEMP/shiguang-rust-symbols.txt"
+grep -Fq '_shiguang_native_player_create' "$RUNNER_TEMP/shiguang-rust-symbols.txt" || {
   echo 'ERROR: native FFI export missing' >&2
   exit 1
 }
