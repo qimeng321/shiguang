@@ -38,5 +38,5 @@ patched = (
     source[m.end():]
 )
 js.write_text(patched,encoding="utf-8")
-assert "[B143] iOS MVP WASM selected" in js.read_text(encoding="utf-8")
+assert "[B143] iOS MVP WASM; original Ruffle quality and DPR kept" in js.read_text(encoding="utf-8")
 print("[B143] Official Nightly MVP WASM selected; renderer, graphics pipeline, DPR unchanged")
