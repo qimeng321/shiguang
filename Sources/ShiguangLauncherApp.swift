@@ -13,7 +13,7 @@ struct ShiguangLauncherApp: App {
             LauncherView()
                 .environmentObject(launcher)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                    LaunchDiagnostics.log("[1.10内存警告] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
+                    LaunchDiagnostics.log("[1.11内存警告] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近资源：" + BattleLoadTrace.shared.snapshot())
                 }
                 // Files → share/open in 拾光号 is a second route for .srom.
                 .onOpenURL { url in
@@ -115,23 +115,22 @@ enum GameFrameCapPreset: String, CaseIterable, Identifiable {
 // Select the rendering backend only for A/B diagnosis. Ruffle may fall back
 // when WebGL or Canvas cannot support a specific game feature.
 enum GameRendererPreset: String, CaseIterable, Identifiable {
-    case automatic, webgl, canvas
+    case automatic
+    case wgpuWebgl = "wgpu-webgl"
     var id: String { rawValue }
     var title: String {
         switch self {
         case .automatic: return "自动"
-        case .webgl: return "WebGL"
-        case .canvas: return "Canvas"
+        case .wgpuWebgl: return "WGPU-WebGL"
         }
     }
     var detail: String {
         switch self {
-        case .automatic: return "Ruffle 默认自动选择；建议先作为对照运行"
-        case .webgl: return "尝试基础 WebGL 后端，对比 GPU 驱动和渲染稳定性"
-        case .canvas: return "尝试 Canvas 后端，速度较慢，可能出现画面差异"
+        case .automatic: return "沿用 1.09/1.10 可进入地图的默认渲染路径"
+        case .wgpuWebgl: return "显式优先使用功能较完整的 WGPU-WebGL；自动模式也可能已选用它，作为配置核对，不保证不同的渲染结果"
         }
     }
-    static let defaultsKey = "shiguang.renderer110"
+    static let defaultsKey = "shiguang.renderer111"
     static var saved: GameRendererPreset {
         GameRendererPreset(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .automatic
     }
@@ -195,7 +194,7 @@ struct LauncherView: View {
                         Text("拾光号")
                             .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundStyle(ink)
-                        Text("测试版 1.10 · 连战实验")
+                        Text("测试版 1.11 · 生命周期诊断")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(blue)
                             .padding(.horizontal, 10)
@@ -700,7 +699,7 @@ struct LauncherView: View {
                 Label("连续战斗实验", systemImage: "flask")
                     .font(.system(size: 16, weight: .bold)).foregroundStyle(ink)
                 Spacer()
-                Text("1.10 专项").font(.system(size: 11, weight: .medium)).foregroundStyle(blue)
+                Text("1.11 专项").font(.system(size: 11, weight: .medium)).foregroundStyle(blue)
             }
             HStack(spacing: 5) {
                 ForEach(GameRendererPreset.allCases) { option in
@@ -730,7 +729,7 @@ struct LauncherView: View {
             Text("默认关闭。开启后只允许部分战斗精灵/技能 SWF 使用短时 HTTP 缓存；不修改美化包，不保证 Ruffle 复用已解码对象。对照时请保持其他设置一致。")
                 .font(.system(size: 11)).foregroundStyle(subtleInk)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("每次更改后重新进入游戏；日志每15秒记录启动器内存和资源累计量。")
+            Text("WebGL/Canvas 在 1.10 中不能正常进地图，已移除。每次更改后重新进入游戏；右上角菜单可手动标记开战/结束，以校对日志的资源波次。")
                 .font(.system(size: 11)).foregroundStyle(subtleInk)
         }
         .padding(15)
@@ -936,6 +935,14 @@ struct GameView: View {
                                     fpsEnabled.toggle()
                                     sendControl("toggleFPS")
                                 }
+                                gameTool("flag.fill", "标记本局开始") {
+                                    BattleLoadTrace.shared.markStart()
+                                    collapseToolMenu()
+                                }
+                                gameTool("checkmark.circle", "标记本局结束") {
+                                    BattleLoadTrace.shared.markEnd()
+                                    collapseToolMenu()
+                                }
                                 // Compact two-column menu; no full-width divider.
                                 gameTool("arrow.clockwise", "刷新游戏") {
                                     collapseToolMenu()
@@ -1047,7 +1054,7 @@ struct GameView: View {
         }
         .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
             guard server != nil else { return }
-            LaunchDiagnostics.log("[1.10定时采样] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
+            LaunchDiagnostics.log("[1.11定时采样] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary())
         }
         .onDisappear {
             server?.leaveGame()
@@ -1155,6 +1162,52 @@ struct GameWebView: UIViewRepresentable {
         configuration.userContentController.addUserScript(WKUserScript(
             source: dprCapScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController.add(context.coordinator, name: "gameDiagnostics")
+        // Read-only graphics and main-thread responsiveness diagnostics. Do
+        // not intercept WebGL getContext, free live Flash objects, or modify
+        // the game's own timers; record observations at low frequency.
+        let battleLifecycleProbe = #"""
+        (function(){
+          var lastTick=Date.now(), observed = new WeakSet();
+          function log(s){try{window.webkit.messageHandlers.gameDiagnostics.postMessage("诊断："+s);}catch(_e){}}
+          function sample(){
+            var now=Date.now(), delay=now-lastTick;
+            lastTick=now;
+            var p=document.querySelector('ruffle-player,ruffle-object,ruffle-embed');
+            var roots=[document];
+            if(p&&p.shadowRoot)roots.push(p.shadowRoot);
+            var canvases=[];
+            roots.forEach(function(root){
+              try{Array.prototype.forEach.call(root.querySelectorAll('canvas'),function(c){canvases.push(c);});}catch(_e){}
+            });
+            var maxPixels=0, largest="";
+            canvases.forEach(function(c){
+              var pixels=(c.width||0)*(c.height||0);
+              if(pixels>maxPixels){maxPixels=pixels;largest=String(c.width)+"x"+String(c.height);}
+              if(!observed.has(c)){
+                observed.add(c);
+                c.addEventListener("webglcontextlost",function(){log("WebGL context lost（仅观测，不阻止默认行为）");});
+                c.addEventListener("webglcontextrestored",function(){log("WebGL context restored");});
+              }
+            });
+            var api="不可用",movie="未知";
+            try{
+              var r=p&&typeof p.ruffle==="function"?p.ruffle():p;
+              if(r){api=String(r.readyState);movie=String(r.isPlaying);}
+            }catch(_e){}
+            log("WebKit JS心跳；可见性="+document.visibilityState+"；画布数量="+canvases.length+
+                "；最大画布="+(largest||"未知")+"；估计像素="+maxPixels+
+                "；播放器readyState="+api+"，isPlaying="+movie+
+                "；心跳间隔="+Math.round(delay/1000)+"秒（Safari后台可能节流）");
+          }
+          window.addEventListener("DOMContentLoaded",function(){
+            lastTick=Date.now();
+            setInterval(sample,15000);
+          });
+        })();
+        """#
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: battleLifecycleProbe, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+
         let diagnostics = #"""
             (function () {
               function report(message) {
@@ -1230,7 +1283,7 @@ struct GameWebView: UIViewRepresentable {
                 } catch(e) { fail(label + '：Ruffle 状态读取失败：' + String(e).slice(0, 130)); }
               }
               window.addEventListener('DOMContentLoaded', function () {
-                status('1.10 战斗连续运行实验：原生DPR=' + String(window.__shiguangNativeDPR || '?')
+                status('1.11 战斗生命周期诊断：原生DPR=' + String(window.__shiguangNativeDPR || '?')
                   + '，实际DPR=' + String(window.devicePixelRatio || '?')
                   + '，覆盖状态=' + (window.__shiguangDPRCapError || '正常'));
                 setTimeout(function () { reportPlayerState('启动5秒'); }, 5000);
@@ -1377,7 +1430,12 @@ struct GameWebView: UIViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
             guard let details = message.body as? String else { return }
-            if details.hasPrefix("状态：") { onStatus(String(details.dropFirst(3))) }
+            if details.hasPrefix("诊断：") {
+                // Keep heartbeat out of SwiftUI state updates; persist for the
+                // abrupt WKWebView termination case even if UI is unresponsive.
+                LaunchDiagnostics.log("[1.11网页探针] " + String(details.dropFirst(3)))
+            }
+            else if details.hasPrefix("状态：") { onStatus(String(details.dropFirst(3))) }
             else if details.hasPrefix("错误：") { onError(String(details.dropFirst(3))) }
             else { onStatus(details) }
         }
@@ -1395,7 +1453,7 @@ struct GameWebView: UIViewRepresentable {
             LaunchDiagnostics.log("[页面生命周期] 主框架开始第\(navigationCount)次导航：\(path)")
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            LaunchDiagnostics.log("[1.10崩溃快照] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
+            LaunchDiagnostics.log("[1.11崩溃快照] " + NativeMemoryProbe.report() + "；" + BattleLoadTrace.shared.summary() + "；最近关键资源：" + BattleLoadTrace.shared.snapshot())
             LaunchDiagnostics.log("[严重诊断] WebKit 内容进程终止，已保留资源与诊断日志；需要手动刷新")
             onError("游戏网页进程已终止，可能存在内存压力或渲染异常。请点「重新加载游戏」重试，并导出 diagnostics.txt 排查。")
         }
