@@ -342,16 +342,16 @@ jobs:
           test "$(find "$RUNNER_TEMP/Payload/ShiguangLauncher.app" -name 'galaxy-navigation.js' | wc -l | tr -d ' ')" -eq 0
       - name: Package official 1.09 source ZIP
         run: |
-          git archive --format=zip --prefix=ShiguangLauncher-v1.09-b136-sgcore-delta-fix/ --output=/tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip HEAD
-          unzip -tq /tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip
-          unzip -Z -1 /tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip | grep -Fx 'ShiguangLauncher-v1.09-b136-nightly-font/Sources/ShiguangLauncherApp.swift'
+          git archive --format=zip --prefix=ShiguangLauncher-v1.09-b136-sgcore-delta-fix/ --output=/tmp/ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source.zip HEAD
+          unzip -tq /tmp/ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source.zip
+          unzip -Z -1 /tmp/ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source.zip | grep -Fx 'ShiguangLauncher-v1.09-b136-sgcore-delta-fix/Sources/ShiguangLauncherApp.swift'
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.09-b136-nightly-font-ipa
+          name: ShiguangLauncher-v1.09-b136-sgcore-delta-fix-ipa
           path: /tmp/ShiguangLauncher-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: ShiguangLauncher-v1.09-b136-nightly-font-source
-          path: /tmp/ShiguangLauncher-v1.09-b136-nightly-font-source.zip
+          name: ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source
+          path: /tmp/ShiguangLauncher-v1.09-b136-sgcore-delta-fix-source.zip
           if-no-files-found: error
